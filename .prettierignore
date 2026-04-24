@@ -1,0 +1,16 @@
+# ESLint
+node_modules
+dist
+deploy
+deploy-portable
+*.min.js
+*.min.css
+
+# Prettier
+package-lock.json
+pnpm-lock.yaml
+
+# Special files with syntax issues
+server/scripts/shims.js
+client/src/views/system/AccountSet.vue
+client/src/views/system/User.vue

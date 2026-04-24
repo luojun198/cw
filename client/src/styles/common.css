@@ -1,0 +1,223 @@
+/* 页面容器统一风格 */
+.page {
+  padding: 16px;
+  min-height: 100%;
+}
+
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+.page-header h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.filter-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* 金额显示样式 */
+.amount-positive {
+  color: #2e7d32;
+}
+
+.amount-negative {
+  color: #c0392b;
+}
+
+.amount-zero {
+  color: #909399;
+}
+
+/* 状态标签样式 */
+.status-draft {
+  color: #909399;
+}
+
+.status-audited {
+  color: #1a4b8c;
+}
+
+.status-posted {
+  color: #2e7d32;
+}
+
+/* 表格优化 - 严肃风格 */
+.el-table {
+  font-size: 14px;
+}
+
+.el-table .cell {
+  padding: 8px 12px;
+}
+
+.el-table__header th {
+  background-color: #e8edf3 !important;
+  color: #2c3e50;
+  font-weight: 600;
+  font-size: 13px;
+}
+
+.el-table__row:hover {
+  background-color: #f0f4f8 !important;
+}
+
+/* 金额列右对齐 */
+.amount-cell {
+  text-align: right;
+  font-family: 'Courier New', monospace;
+}
+
+/* 空状态样式 */
+.empty-state {
+  padding: 60px 0;
+  text-align: center;
+  color: #909399;
+}
+
+.empty-state-icon {
+  font-size: 64px;
+  margin-bottom: 16px;
+  opacity: 0.3;
+}
+
+.empty-state-text {
+  font-size: 14px;
+  margin-bottom: 16px;
+}
+
+.empty-state-action {
+  margin-top: 16px;
+}
+
+/* 加载状态优化 */
+.loading-overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(255, 255, 255, 0.9);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+/* 表单优化 */
+.form-required::before {
+  content: '*';
+  color: #c0392b;
+  margin-right: 4px;
+}
+
+.form-tip {
+  color: #909399;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+.form-error {
+  color: #c0392b;
+  font-size: 12px;
+  line-height: 1.5;
+  margin-top: 4px;
+}
+
+/* 按钮加载状态 */
+.el-button.is-loading {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+/* 卡片优化 - 庄重大气 */
+.el-card {
+  border-radius: 8px;
+  box-shadow: 0 1px 8px 0 rgba(0, 0, 0, 0.06);
+  border: 1px solid #e4e8ed;
+}
+
+.el-card__header {
+  border-bottom: 1px solid #e4e8ed;
+  padding: 14px 20px;
+  font-weight: 600;
+  color: #2c3e50;
+}
+
+.el-card__body {
+  padding: 20px;
+}
+
+/* 对话框优化 */
+.el-dialog__header {
+  border-bottom: 1px solid #e4e8ed;
+  padding: 16px 20px;
+}
+
+.el-dialog__body {
+  padding: 20px;
+}
+
+.el-dialog__footer {
+  border-top: 1px solid #e4e8ed;
+  padding: 12px 20px;
+}
+
+/* 分页优化 */
+.el-pagination {
+  margin-top: 16px;
+  text-align: right;
+}
+
+/* 标签页优化 */
+.el-tabs__item.is-active {
+  font-weight: 600;
+}
+
+/* 响应式优化 */
+@media (max-width: 768px) {
+  .el-table .cell {
+    padding: 6px 8px;
+    font-size: 12px;
+  }
+
+  .el-card__body {
+    padding: 12px;
+  }
+
+  .el-dialog {
+    width: 90% !important;
+  }
+}
+
+/* 打印样式 */
+@media print {
+  .no-print {
+    display: none !important;
+  }
+
+  .el-table {
+    border: 1px solid #ddd;
+  }
+
+  .el-table th,
+  .el-table td {
+    border: 1px solid #ddd;
+    padding: 8px;
+  }
+}
+
+/* 隐藏 el-input-number 的 +/- 按钮 */
+.el-input-number {
+  --el-input-number-controls-height: 0;
+}

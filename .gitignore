@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Database
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
+# Deploy artifacts
+deploy/
+deploy-portable/
+
+# Logs
+*.log
+debug.log
+
+# Misc
+*.zip
+__MACOSX/

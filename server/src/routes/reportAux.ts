@@ -1,0 +1,31 @@
+import { Router } from 'express'
+import { authMiddleware, AuthRequest } from '../middleware/index.ts'
+import { getDb } from '../db/index.ts'
+import { buildAuxBalanceQuery, getAuxBalanceField } from '../services/reportQuery.ts'
+
+const router = Router()
+router.use(authMiddleware)
+
+// ===================== 辅助余额表（按辅助核算项目） =====================
+router.get('/aux-balance', (req: AuthRequest, res) => {
+  const db = getDb()
+  const { year, period, aux_type } = req.query
+  const y = Number(year) || new Date().getFullYear()
+  const p = Number(period) || new Date().getMonth() + 1
+
+  const auxField = getAuxBalanceField(aux_type as string | undefined)
+  if (!auxField) {
+    return res.json({ code: 400, message: '无效的辅助核算类型' })
+  }
+
+  const query = buildAuxBalanceQuery({
+    accountSetId: req.accountSetId || '',
+    year: y,
+    period: p,
+    auxField,
+  })
+  const list = db.prepare(query.sql).all(...query.params)
+  res.json({ code: 0, data: list })
+})
+
+export default router
