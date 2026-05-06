@@ -19,7 +19,7 @@ type TagType = 'success' | 'warning' | 'info' | 'danger' | 'primary'
 const statusMap: Record<string, { text: string; type: TagType }> = {
   draft: { text: '草稿', type: 'info' },
   audited: { text: '已审核', type: 'warning' },
-  posted: { text: '已过账', type: 'success' },
+  posted: { text: '已记账', type: 'success' },
 }
 
 const statusText = computed(() => {

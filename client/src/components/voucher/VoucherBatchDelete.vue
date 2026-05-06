@@ -37,7 +37,7 @@
             {{ previewData.lastVoucherNo || '-' }}
           </div>
           <div v-if="previewData.blockedVoucherNo" style="margin-top: 4px; color: #f56c6c">
-            命中已过账凭证：{{ previewData.blockedVoucherNo }}，当前条件下不可删除
+            命中已记账凭证：{{ previewData.blockedVoucherNo }}，当前条件下不可删除
           </div>
         </div>
       </el-form-item>
@@ -137,7 +137,7 @@ async function handleDelete() {
     await handlePreview()
   }
   if (previewData.value.blockedVoucherNo) {
-    ElMessage.error(`存在已过账凭证，无法删除：${previewData.value.blockedVoucherNo}`)
+    ElMessage.error(`存在已记账凭证，无法删除：${previewData.value.blockedVoucherNo}`)
     return
   }
 

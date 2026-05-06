@@ -1,5 +1,5 @@
 <template>
-  <el-table :data="flatList" border :row-class-name="getRowClass" :span-method="voucherSpanMethod" @selection-change="onSelect" @row-dblclick="handleRowDblclick">
+  <el-table :data="flatList" border height="100%" :row-class-name="getRowClass" :span-method="voucherSpanMethod" @selection-change="onSelect" @row-dblclick="handleRowDblclick">
     <el-table-column type="selection" width="40" :selectable="isSelectableRow" />
     <el-table-column prop="voucher_no" label="凭证号" width="100" align="center" />
     <el-table-column prop="voucher_date" label="日期" width="100" />
@@ -56,7 +56,7 @@
           type="primary"
           size="small"
           @click="emit('post', row)"
-          >过账</el-button
+          >记账</el-button
         >
         <el-button
           v-if="row.status === 'posted'"
@@ -64,7 +64,7 @@
           type="warning"
           size="small"
           @click="emit('unpost', row)"
-          >反过账</el-button
+          >反记账</el-button
         >
       </template>
     </el-table-column>

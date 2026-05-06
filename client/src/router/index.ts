@@ -96,6 +96,12 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/base/InitBalance.vue'),
         meta: { title: '期初余额', icon: 'Coin', parent: '基础设置' },
       },
+      {
+        path: 'base/print-template',
+        name: 'PrintTemplate',
+        component: () => import('@/views/base/PrintTemplate.vue'),
+        meta: { title: '打印模版', icon: 'Printer', parent: '基础设置' },
+      },
       // 凭证管理
       {
         path: 'voucher/entry',

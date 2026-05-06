@@ -49,9 +49,9 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
     const voucherId = row._voucherId || row.id
     await request.post(`/voucher/vouchers/${voucherId}/post`)
     if (!options?.silent) {
-      showSuccess('过账成功')
+      showSuccess('记账成功')
     }
-    addRecord('update', '凭证过账', `过账凭证 ${row.voucher_no || voucherId}`)
+    addRecord('update', '凭证记账', `记账凭证 ${row.voucher_no || voucherId}`)
     if (!options?.skipRefresh) {
       await fetchData()
     }
@@ -61,16 +61,16 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
     const voucherId = row._voucherId || row.id
     if (!options?.skipConfirm) {
       const confirmed = await useConfirm({
-        message: '确认反过账此凭证？',
+        message: '确认反记账此凭证？',
         type: 'warning',
       })
       if (!confirmed) return
     }
     await request.post(`/voucher/vouchers/${voucherId}/unpost`)
     if (!options?.silent) {
-      showSuccess('反过账成功')
+      showSuccess('反记账成功')
     }
-    addRecord('update', '凭证过账', `反过账凭证 ${row.voucher_no || voucherId}`)
+    addRecord('update', '凭证记账', `反记账凭证 ${row.voucher_no || voucherId}`)
     await fetchData()
   }
 
@@ -109,7 +109,7 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
     const postableVouchers = selected.filter(r => r.status !== 'posted')
 
     if (!postableVouchers.length) {
-      showError('当前所选凭证中没有可过账的凭证')
+      showError('当前所选凭证中没有可记账的凭证')
       return
     }
 
@@ -119,7 +119,7 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
         await post(r, { silent: true, skipRefresh: true })
       }
       await fetchData()
-      showOperationSuccess('批量过账', `共过账 ${postableVouchers.length} 张凭证`)
+      showOperationSuccess('批量记账', `共记账 ${postableVouchers.length} 张凭证`)
     } finally {
       batchPosting.value = false
     }
@@ -129,12 +129,12 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
     const unpostableVouchers = selected.filter(r => r.status === 'posted')
 
     if (!unpostableVouchers.length) {
-      showError('当前所选凭证中没有可反过账的凭证')
+      showError('当前所选凭证中没有可反记账的凭证')
       return
     }
 
     const voucherNos = unpostableVouchers.map(v => v.voucher_no || '未知凭证号')
-    const confirmed = await useBatchConfirm('反过账', voucherNos, '此操作将取消凭证的过账状态')
+    const confirmed = await useBatchConfirm('反记账', voucherNos, '此操作将取消凭证的记账状态')
     if (!confirmed) return
 
     batchUnposting.value = true
@@ -142,7 +142,7 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
       for (const r of unpostableVouchers) {
         await unPost(r, { silent: true, skipConfirm: true })
       }
-      showOperationSuccess('批量反过账', `共反过账 ${unpostableVouchers.length} 张凭证`)
+      showOperationSuccess('批量反记账', `共反记账 ${unpostableVouchers.length} 张凭证`)
     } finally {
       batchUnposting.value = false
     }

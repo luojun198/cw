@@ -30,7 +30,7 @@
         <el-checkbox v-model="hideNoActivity">隐藏未发生</el-checkbox>
         <el-divider direction="vertical" />
         <el-checkbox v-model="filters.include_unposted" @change="fetchData">
-          统计未过账凭证
+          统计未记账凭证
         </el-checkbox>
         <el-divider direction="vertical" />
         <el-button type="primary" @click="fetchData">查询</el-button>
@@ -136,6 +136,7 @@
 import { ref, computed, onMounted } from 'vue'
 import request from '@/api/request'
 import type { TableColumnCtx } from 'element-plus'
+import { formatAmount } from '@/utils/format'
 
 const tableRef = ref()
 const list = ref<any[]>([])
@@ -194,10 +195,7 @@ const isBalanced = computed(() => {
 
 function fmt(val: number) {
   if (!val) return ''
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(Math.abs(val))
+  return formatAmount(Math.abs(val))
 }
 
 function headerCellStyle({ column, rowIndex, columnIndex }: any) {

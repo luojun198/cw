@@ -337,6 +337,7 @@ CREATE TABLE IF NOT EXISTS transfer_types (
   code TEXT NOT NULL,
   name TEXT NOT NULL,
   voucher_type TEXT DEFAULT '结转',
+  period_type TEXT DEFAULT 'monthly',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(account_set_id, code)

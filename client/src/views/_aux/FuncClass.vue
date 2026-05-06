@@ -13,7 +13,7 @@
         <el-button type="primary" @click="openDialog('add')">新增分类</el-button>
       </div>
     </div>
-    <el-table :data="filteredData" stripe border>
+    <el-table :data="filteredData" stripe border height="100%">
       <el-table-column prop="code" label="编码" width="120">
         <template #default="{ row }">
           <span v-html="highlightText(row.code)"></span>

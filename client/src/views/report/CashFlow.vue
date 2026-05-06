@@ -142,6 +142,7 @@ import request from '@/api/request'
 import printJS from 'print-js'
 import EmptyState from '@/components/EmptyState.vue'
 import { showOperationError } from '@/composables/useMessage'
+import { formatAmount } from '@/utils/format'
 
 const reportData = ref<any>(null)
 const loading = ref(false)
@@ -151,12 +152,7 @@ const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
 function fmt(val: number | null | undefined): string {
   if (val === null || val === undefined || val === 0) return '—'
   const prefix = val < 0 ? '-' : ''
-  return (
-    prefix +
-    new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(
-      Math.abs(val)
-    )
-  )
+  return prefix + formatAmount(Math.abs(val))
 }
 
 // Vue 3 v-for 对对象只迭代值，需要用数组

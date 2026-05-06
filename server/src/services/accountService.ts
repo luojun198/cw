@@ -152,7 +152,7 @@ export class AccountService {
     if (params.keyword) {
       conditions.push('(name LIKE ? OR code LIKE ?)')
       const keywordPattern = `%${params.keyword}%`
-      sqlParams.push(keywordPattern, keywordPattern)
+      sqlParams.push(keywordPattern, `${params.keyword}%`)
     }
 
     if (params.direction) {

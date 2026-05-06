@@ -139,6 +139,7 @@ import { useRouter } from 'vue-router'
 import { Money, Tickets, Wallet, Document, EditPen, CircleCheck, DataAnalysis, TrendCharts, List, Setting } from '@element-plus/icons-vue'
 import { useUserStore } from '@/stores/user'
 import request from '@/api/request'
+import { formatAmount } from '@/utils/format'
 
 const router = useRouter()
 const userStore = useUserStore()
@@ -190,14 +191,14 @@ function handleQuickLink(link: any) {
 }
 
 function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', { style: 'currency', currency: 'CNY' }).format(val || 0)
+  return '¥' + formatAmount(val || 0)
 }
 
 function getStatusType(s: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
   return ({ draft: 'info', audited: 'success', posted: 'warning' } as any)[s] || 'info'
 }
 function getStatusText(s: string) {
-  return ({ draft: '草稿', audited: '已审核', posted: '已过账' } as any)[s] || s
+  return ({ draft: '草稿', audited: '已审核', posted: '已记账' } as any)[s] || s
 }
 
 const trendMax = computed(() => Math.max(...trend.value.flatMap(t => [t.debit, t.credit]), 1))

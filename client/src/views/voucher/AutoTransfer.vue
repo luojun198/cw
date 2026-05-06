@@ -29,7 +29,7 @@
         </el-button>
       </div>
       <div class="action-help-text">
-        建议先查询状态，再预览本期结转结果，确认无误后生成结转凭证（将自动审核并过账）。
+        建议先查询状态，再预览本期结转结果，确认无误后生成结转凭证（将自动审核并记账）。
         <el-tag type="info" size="small" style="margin-left: 8px">每个结转类型生成一张凭证</el-tag>
       </div>
       <el-alert
@@ -62,6 +62,7 @@
           <div class="preview-type-header">
             <h4>{{ preview.transferTypeName }}</h4>
             <el-tag v-if="preview.alreadyGenerated" type="success" size="small">已生成</el-tag>
+            <el-tag v-else-if="preview.notYetDue" type="info" size="small">{{ preview.notYetDueReason || '未到期' }}</el-tag>
             <el-tag v-else type="warning" size="small">待生成</el-tag>
             <span class="voucher-type-label">凭证类型：{{ preview.voucherType }}</span>
           </div>
@@ -70,8 +71,8 @@
           </div>
           <div v-else-if="preview.entries.length > 0" class="preview-meta">
             <div>分录数：{{ preview.entries.length }}</div>
-            <div>借方合计：{{ formatMoney(preview.totals.debitTotal) }}</div>
-            <div>贷方合计：{{ formatMoney(preview.totals.creditTotal) }}</div>
+            <div>借方合计：{{ formatAmount(preview.totals.debitTotal) }}</div>
+            <div>贷方合计：{{ formatAmount(preview.totals.creditTotal) }}</div>
           </div>
           <el-table
             v-if="!preview.alreadyGenerated && preview.entries.length > 0"
@@ -87,7 +88,7 @@
               <template #default="{ row }">{{ row.direction === 'debit' ? '借' : '贷' }}</template>
             </el-table-column>
             <el-table-column label="金额" width="130" align="right">
-              <template #default="{ row }">{{ formatMoney(row.amount) }}</template>
+              <template #default="{ row }">{{ formatAmount(row.amount) }}</template>
             </el-table-column>
           </el-table>
           <el-divider v-if="index < filteredPreviews.length - 1" />
@@ -126,12 +127,15 @@
 import { computed, ref, onMounted } from 'vue'
 import request from '@/api/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { formatAmount } from '@/utils/format'
 
 interface TransferPreview {
   transferTypeCode: string
   transferTypeName: string
   voucherType: string
   alreadyGenerated: boolean
+  notYetDue?: boolean
+  notYetDueReason?: string
   existingRun: any
   entries: Array<{
     account_code: string
@@ -172,7 +176,7 @@ const hasGeneratedVouchers = computed(() => {
 
 const filteredPreviews = computed(() => {
   if (!previewResult.value?.previews) return []
-  // 只显示已生成的或有数据的结转类型
+  // 只显示已生成的或有数据的结转类型（年末未到期的不显示）
   return previewResult.value.previews.filter(
     p => p.alreadyGenerated || p.entries.length > 0
   )
@@ -188,13 +192,6 @@ const runDisabledReason = computed(() => {
 })
 
 const canRunTransfer = computed(() => !runDisabledReason.value)
-
-function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val || 0)
-}
 
 async function loadStatus() {
   loading.value = true
@@ -230,12 +227,12 @@ async function runTransfer() {
   if (!previewResult.value) return
 
   const pendingCount = previewResult.value.previews.filter(
-    p => !p.alreadyGenerated && p.entries.length > 0
+    p => !p.alreadyGenerated && !p.notYetDue && p.entries.length > 0
   ).length
 
   try {
     await ElMessageBox.confirm(
-      `确认生成 ${form.value.year}年${form.value.period}期 的结转凭证吗？\n\n将生成 ${pendingCount} 张凭证（每个结转类型一张），凭证将自动审核并过账。`,
+      `确认生成 ${form.value.year}年${form.value.period}期 的结转凭证吗？\n\n将生成 ${pendingCount} 张凭证（每个结转类型一张），凭证将自动审核并记账。`,
       '确认生成结转凭证',
       {
         confirmButtonText: '确认生成',
@@ -265,7 +262,7 @@ async function runTransfer() {
 async function revokeTransfer() {
   try {
     await ElMessageBox.confirm(
-      `确认撤销 ${form.value.year}年${form.value.period}期 的所有结转凭证吗？\n\n此操作将删除所有结转凭证并反过账，不可恢复。`,
+      `确认撤销 ${form.value.year}年${form.value.period}期 的所有结转凭证吗？\n\n此操作将删除所有结转凭证并反记账，不可恢复。`,
       '确认撤销结转',
       {
         confirmButtonText: '确认撤销',

@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { readFileSync, existsSync, mkdirSync } from 'fs'
-import { resolve, dirname } from 'path'
+import { resolve, dirname, basename } from 'path'
 import { fileURLToPath } from 'url'
 import { v4 as uuidv4 } from 'uuid'
 
@@ -12,7 +12,7 @@ const PROJECT_ROOT_DIR = resolve(SERVER_ROOT_DIR, '..')
 
 // 便携部署：process.execPath = deploy/node/node.exe，DB 在 deploy/data/
 // pkg 部署：process.pkg 标识，DB 在 exe 同目录/data/
-// 开发环境：argv[1] = server/dist/bundle.mjs，DB 在 deploy/data/
+// 开发环境：使用项目根目录
 function getDeployDir(): string {
   const execPath = process.execPath || ''
   const isPkg = !!process.pkg
@@ -22,11 +22,17 @@ function getDeployDir(): string {
     return dirname(execPath)
   }
 
-  if (execPath.endsWith('node.exe')) {
+  // 检查是否是便携部署（deploy/node/node.exe）
+  // 通过检查 execPath 的父目录名是否为 'node' 来判断
+  const parentDir = dirname(execPath)
+  const parentDirName = basename(parentDir)
+  
+  if (execPath.endsWith('node.exe') && parentDirName === 'node') {
     // 便携 Node.js: deploy/node/node.exe → deploy/
-    return dirname(dirname(execPath))
+    return dirname(parentDir)
   }
 
+  // 开发环境：使用项目根目录
   return PROJECT_ROOT_DIR
 }
 

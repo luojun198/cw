@@ -5,7 +5,7 @@
       <el-button type="primary" @click="openDialog('add')">新增账套</el-button>
     </div>
 
-    <el-table :data="list" stripe border>
+    <el-table :data="list" stripe border height="100%">
       <el-table-column prop="name" label="单位名称" />
       <el-table-column prop="code" label="账套编码" width="120" />
       <el-table-column prop="credit_code" label="统一社会信用代码" width="180" />
@@ -88,6 +88,34 @@
         <el-form-item label="财务负责人">
           <el-input v-model="form.chief_accountant" />
         </el-form-item>
+        <el-form-item label="科目级数">
+          <el-input-number
+            v-if="dialogType === 'add'"
+            v-model="form.account_levels"
+            :min="1" :max="10"
+            :controls="false"
+            style="width: 100px"
+          />
+          <span v-else class="readonly-value">{{ form.account_levels ?? 6 }} 级</span>
+        </el-form-item>
+        <el-form-item label="科目长度">
+          <template v-if="dialogType === 'add'">
+            <div class="code-lengths-row">
+              <template v-for="(_, index) in Array(form.account_levels)" :key="index">
+                <span v-if="index > 0" class="lengths-sep">-</span>
+                <el-input-number
+                  v-model="form.account_code_lengths[index]"
+                  :min="1" :max="9"
+                  :controls="false"
+                  style="width: 52px"
+                />
+              </template>
+            </div>
+          </template>
+          <span v-else class="readonly-value">
+            {{ (form.account_code_lengths || []).slice(0, form.account_levels ?? 6).join(' - ') }}
+          </span>
+        </el-form-item>
         <el-form-item v-if="dialogType === 'edit'" label="状态">
           <el-select v-model="form.status" style="width: 100%">
             <el-option label="启用" value="active" />
@@ -152,9 +180,17 @@ function generateCode() {
 function openDialog(type: string, row?: any) {
   dialogType.value = type
   if (type === 'edit' && row) {
-    form.value = { ...row }
+    form.value = {
+      ...row,
+      account_levels: row.account_levels ?? 6,
+      account_code_lengths: row.account_code_lengths ?? [4,2,2,2,2,2,2,2,2,2],
+    }
   } else {
-    form.value = { start_date: '', name: '', code: generateCode(), status: 'active', template_id: '' }
+    form.value = {
+      start_date: '', name: '', code: generateCode(), status: 'active', template_id: '',
+      account_levels: 6,
+      account_code_lengths: [4,2,2,2,2,2,2,2,2,2],
+    }
   }
   dialogVisible.value = true
 }
@@ -245,6 +281,9 @@ onMounted(() => {
 .page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
 .page-header h3 { margin: 0; }
 .template-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; line-height: 1.4; }
+.readonly-value { color: #606266; font-size: 14px; line-height: 32px; }
+.code-lengths-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.lengths-sep { color: #909399; font-size: 14px; }
 
 /* 状态列样式优化 */
 .status-cell {

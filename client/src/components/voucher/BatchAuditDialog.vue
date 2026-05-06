@@ -5,8 +5,8 @@
         <el-select v-model="form.operation" style="width: 100%">
           <el-option label="审核" value="audit" />
           <el-option label="反审核" value="unaudit" />
-          <el-option label="过账" value="post" />
-          <el-option label="反过账" value="unpost" />
+          <el-option label="记账" value="post" />
+          <el-option label="反记账" value="unpost" />
         </el-select>
       </el-form-item>
       <el-form-item label="日期区间" required>
@@ -85,8 +85,8 @@ const operationLabel = computed(() => {
   const labels: Record<string, string> = {
     audit: '审核',
     unaudit: '反审核',
-    post: '过账',
-    unpost: '反过账',
+    post: '记账',
+    unpost: '反记账',
   }
   return labels[props.form.operation] || '操作'
 })

@@ -21,7 +21,6 @@
             size="large"
             style="width: 100%"
             filterable
-            @change="handleAccountSetChange"
           >
             <el-option
               v-for="item in accountSets"
@@ -47,17 +46,6 @@
             show-password
             @keyup.enter="handleLogin"
           />
-        </el-form-item>
-        <el-form-item prop="captcha">
-          <el-input
-            v-model="form.captcha"
-            placeholder="验证码"
-            prefix-icon="CircleCheck"
-            size="large"
-            style="width: 60%"
-            @keyup.enter="handleLogin"
-          />
-          <img :src="captchaUrl" class="captcha-img" alt="验证码" @click="refreshCaptcha" />
         </el-form-item>
         <el-form-item>
           <el-checkbox v-model="rememberMe">记住账号密码</el-checkbox>
@@ -201,7 +189,7 @@
 import { ref, reactive, onMounted } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-import { getCaptcha, getAccountSets, backupImport, acdImport, type AccountSetItem } from '@/api/auth'
+import { getAccountSets, backupImport, acdImport, type AccountSetItem } from '@/api/auth'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { UploadFilled, Upload, Document } from '@element-plus/icons-vue'
 
@@ -212,8 +200,6 @@ const formRef = ref<FormInstance>()
 const importFormRef = ref<FormInstance>()
 const fileInputRef = ref<HTMLInputElement>()
 const loading = ref(false)
-const captchaId = ref('')
-const captchaUrl = ref('')
 const accountSets = ref<AccountSetItem[]>([])
 
 // 导入相关
@@ -260,7 +246,6 @@ const form = reactive({
   accountSetId: '',
   username: '',
   password: '',
-  captcha: '',
 })
 
 const rememberMe = ref(userStore.rememberMe)
@@ -269,7 +254,6 @@ const rules = {
   accountSetId: [{ required: true, message: '请选择账套', trigger: 'change' }],
   username: [{ required: true, message: '请输入用户名', trigger: 'blur' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
-  captcha: [{ required: true, message: '请输入验证码', trigger: 'blur' }],
 }
 
 async function fetchAccountSets() {
@@ -281,16 +265,6 @@ async function fetchAccountSets() {
   }
 }
 
-async function refreshCaptcha() {
-  const res = await getCaptcha()
-  captchaId.value = res.captchaId
-  captchaUrl.value = res.captchaUrl
-}
-
-function handleAccountSetChange() {
-  refreshCaptcha()
-}
-
 async function handleLogin() {
   const valid = await formRef.value?.validate().catch(() => false)
   if (!valid) return
@@ -299,8 +273,6 @@ async function handleLogin() {
     await userStore.loginAction({
       username: form.username,
       password: form.password,
-      captcha: form.captcha,
-      captchaId: captchaId.value,
       targetAccountSetId: form.accountSetId,
     })
 
@@ -372,7 +344,6 @@ async function handleImport() {
 
     // 自动选中新导入的账套
     form.accountSetId = data.id
-    refreshCaptcha()
 
     ElMessage.info('已自动选中导入的账套，请输入管理员账号登录')
   } catch {
@@ -427,7 +398,6 @@ async function handleAcdImport() {
 
     // 自动选中新导入的账套
     form.accountSetId = data.id
-    refreshCaptcha()
 
     ElMessage.info('已自动选中导入的账套，请使用 admin/123456 登录')
   } catch {
@@ -439,7 +409,6 @@ async function handleAcdImport() {
 
 onMounted(() => {
   fetchAccountSets()
-  refreshCaptcha()
 
   // 如果有保存的用户名，自动填充
   const savedUsername = localStorage.getItem('rememberedUsername')
@@ -485,15 +454,6 @@ onMounted(() => {
   font-size: 12px;
   color: #8ba4be;
   letter-spacing: 1px;
-}
-
-.captcha-img {
-  width: 120px;
-  height: 40px;
-  margin-left: 12px;
-  border-radius: 4px;
-  cursor: pointer;
-  vertical-align: middle;
 }
 
 .login-footer {

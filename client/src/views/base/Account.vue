@@ -11,15 +11,15 @@
         </el-button-group>
         <el-input
           v-model="keyword"
-          placeholder="搜索科目"
+          placeholder="搜索科目编码或名称"
           style="width: 200px; margin-right: 12px"
           clearable
-          @input="fetchData"
+          @input="onSearchInput"
+          @clear="onSearchClear"
         />
         <el-button type="primary" @click="openDialog('add')">新增科目</el-button>
         <el-button :disabled="list.length === 0" @click="exportData">导出</el-button>
         <el-button type="success" @click="importDialogVisible = true">导入</el-button>
-        <el-button type="warning" @click="fillMissingParents">补充父科目</el-button>
         <el-switch
           v-model="showDisabled"
           active-text="显示禁用"
@@ -32,8 +32,7 @@
 
     <el-table
       ref="tableRef"
-      :data="flatList"
-      row-key="id"
+      :data="displayData"
       stripe
       border
       highlight-current-row
@@ -53,24 +52,24 @@
           <span :style="{ paddingLeft: `${((row._depth || row.level || 1) - 1) * 20}px`, display: 'inline-block' }">{{ getDisplayText(row.name) }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="direction" label="余额方向" width="100">
+      <el-table-column label="余额方向" width="100">
         <template #default="{ row }">
           <el-tag :type="row.direction === 'debit' ? 'primary' : 'warning'" size="small">
             {{ row.direction === 'debit' ? '借方' : '贷方' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="is_cash" label="现金" width="60" align="center">
+      <el-table-column label="现金" width="60" align="center">
         <template #default="{ row }">
           <span v-if="row.is_cash">是</span>
         </template>
       </el-table-column>
-      <el-table-column prop="is_bank" label="银行" width="60" align="center">
+      <el-table-column label="银行" width="60" align="center">
         <template #default="{ row }">
           <span v-if="row.is_bank">是</span>
         </template>
       </el-table-column>
-      <el-table-column prop="is_aux" label="辅助核算" min-width="240">
+      <el-table-column label="辅助核算" min-width="240">
         <template #default="{ row }">
           <template v-if="row.is_aux">
             <el-tag
@@ -84,7 +83,7 @@
           </template>
         </template>
       </el-table-column>
-      <el-table-column prop="is_enabled" label="状态" width="80">
+      <el-table-column label="状态" width="80">
         <template #default="{ row }">
           <el-tag :type="row.is_enabled ? 'success' : 'info'" size="small">{{
             row.is_enabled ? '启用' : '禁用'
@@ -249,8 +248,26 @@ const childrenCount = computed(() => {
   return flatList.value.filter(row => row.parent_id === form.value.id).length
 })
 
+// 搜索时直接用后端数据，非搜索时用树形结构
+const displayData = computed(() => keyword.value ? list.value : flatList.value)
+
 // 列宽记忆
 const { getColumnWidth, saveColumnWidth } = useColumnWidthMemory('account-table')
+
+// 搜索防抖
+let searchTimer: ReturnType<typeof setTimeout> | null = null
+function onSearchInput() {
+  if (searchTimer) clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    fetchData()
+  }, 300)
+}
+
+function onSearchClear() {
+  if (searchTimer) clearTimeout(searchTimer)
+  keyword.value = ''
+  fetchData()
+}
 
 // 操作历史
 const { addRecord } = useOperationHistory()
@@ -347,41 +364,6 @@ async function handleDelete(row: any) {
     fetchData()
   } catch (error) {
     showOperationError('删除科目', error)
-  }
-}
-
-async function fillMissingParents() {
-  try {
-    await ElMessageBox.confirm(
-      '此操作将检查所有科目，并自动补充缺失的上级科目（名称用"-"占位）。是否继续？',
-      '补充父科目',
-      {
-        confirmButtonText: '确定',
-        cancelButtonText: '取消',
-        type: 'warning',
-      }
-    )
-
-    const res = await request.post<any>('/base/accounts/fill-missing-parents')
-    if (res.code === 0) {
-      const { checked, created, details } = res.data
-      if (created > 0) {
-        const detailText = details.map((d: any) => `${d.code} (${d.level}级)`).join('、')
-        await ElMessageBox.alert(
-          `共检查 ${checked} 个科目，补充了 ${created} 个父科目：\n${detailText}`,
-          '补充完成',
-          { type: 'success' }
-        )
-      } else {
-        showSuccess(`检查完成：共检查 ${checked} 个科目，无需补充父科目`)
-      }
-      addRecord('update', '会计科目', `补充缺失父科目：新增 ${created} 个`)
-      fetchData()
-    }
-  } catch (error: any) {
-    if (error !== 'cancel') {
-      showOperationError('补充父科目', error)
-    }
   }
 }
 

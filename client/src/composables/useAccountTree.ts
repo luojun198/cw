@@ -8,12 +8,13 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
   const expandedKeys: ComputedRef<string[]> = computed(() => [...expandedSet.value].map(String))
 
   // 扁平化所有行（含 children 嵌套）
-  function flattenRows(nodes: any[], result: any[] = []): any[] {
+  function flattenRows(nodes: any[], result?: any[]): any[] {
+    const arr = result ?? []
     for (const node of nodes) {
-      result.push(node)
-      if (node.children?.length) flattenRows(node.children, result)
+      arr.push(node)
+      if (node.children?.length) flattenRows(node.children, arr)
     }
-    return result
+    return arr
   }
 
   function addDepth(nodes: any[], depth: number = 1): any[] {
@@ -34,8 +35,11 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
       seen.add(item.id)
       map[item.id] = { ...item, children: [] }
     }
+    const pushed = new Set<string>()
     for (const item of list.value) {
-      if (!item.id || !seen.has(item.id)) continue
+      if (!item.id || pushed.has(item.id)) continue
+      if (!map[item.id]) continue
+      pushed.add(item.id)
       if (item.parent_id && map[item.parent_id]) {
         map[item.parent_id].children.push(map[item.id])
       } else {

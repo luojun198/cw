@@ -9,7 +9,7 @@
     "build": "tsc",
     "build:bundle": "node scripts/buildBundle.mjs",
     "start": "node dist/bundle.cjs",
-    "db:init": "node --import tsx/esm src/scripts/initDb.ts",
+    "db:init": "cross-env SCHEMA_DIR=src/db node --import tsx/esm src/scripts/initDb.ts",
     "db:seed": "node --import tsx/esm src/scripts/seedAccounts.ts",
     "db:migrate": "node --import tsx/esm src/scripts/runMigrations.ts up",
     "db:migrate:rollback": "node --import tsx/esm src/scripts/runMigrations.ts down",

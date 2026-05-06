@@ -1026,6 +1026,7 @@ router.post('/templates/:code/execute', (req: AuthRequest, res) => {
           accountSetId: resolvedAccountSetId,
           year,
           period,
+          unitName: (db.prepare('SELECT name FROM account_sets WHERE id = ?').get(resolvedAccountSetId) as any)?.name || '',
         }
       )
 

@@ -7,6 +7,8 @@
           :data="treeSelectData"
           :props="treeSelectProps"
           check-strictly
+          filterable
+          :filter-node-method="filterTreeNode"
           clearable
           placeholder="不选则为顶级科目"
           style="width: 100%"
@@ -160,6 +162,13 @@ const treeSelectProps = {
   value: 'id',
   children: 'children',
   disabled: 'disabled',
+}
+
+function filterTreeNode(value: string, data: any) {
+  if (!value) return true
+  const lower = value.toLowerCase()
+  return (data.name && data.name.toLowerCase().includes(lower)) ||
+         (data.code && data.code.toLowerCase().includes(lower))
 }
 
 watch(

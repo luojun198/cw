@@ -7,6 +7,11 @@
         <el-button type="primary" :disabled="!activeTab" @click="openItemDialog('add')"
           >新增项目</el-button
         >
+        <el-button
+          :disabled="!activeTab"
+          @click="openCatDialog('edit', categories.find(c => c.id === activeTab))"
+          >字段配置</el-button
+        >
         <el-button :disabled="!activeTab || filteredList.length === 0" @click="exportData"
           >导出</el-button
         >
@@ -18,6 +23,12 @@
           :disabled="selectedRows.length === 0"
           @click="batchStatusVisible = true"
           >批量设置状态</el-button
+        >
+        <el-button
+          type="danger"
+          :disabled="selectedRows.length === 0"
+          @click="openBatchDelete"
+          >批量删除</el-button
         >
         <el-switch
           v-model="showClosed"
@@ -60,6 +71,7 @@
       :data="filteredList"
       stripe
       border
+      height="100%"
       style="margin-top: 8px"
       @selection-change="handleSelectionChange"
     >
@@ -281,7 +293,24 @@
       </template>
     </el-dialog>
 
-    <!-- 批量设置状态对话框 -->
+    <!-- 批量删除对话框 -->
+    <el-dialog v-model="batchDeleteVisible" title="批量删除" width="400px">
+      <p style="margin-bottom: 12px; color: #606266">
+        已选择 <strong>{{ selectedRows.length }}</strong> 个项目
+      </p>
+      <p style="color: #909399; font-size: 13px">
+        系统将自动跳过已被科目或凭证使用的项目，仅删除未使用的项目。
+      </p>
+      <template #footer>
+        <el-button @click="batchDeleteVisible = false">取消</el-button>
+        <el-button
+          type="danger"
+          :loading="batchDeleteSaving"
+          @click="handleBatchDelete"
+          >确认删除</el-button
+        >
+      </template>
+    </el-dialog>
     <el-dialog v-model="batchStatusVisible" title="批量设置状态" width="400px">
       <p style="margin-bottom: 12px; color: #606266">
         已选择 <strong>{{ selectedRows.length }}</strong> 个项目，将统一设置为：
@@ -392,6 +421,9 @@ const selectedRows = ref<any[]>([])
 const batchStatusVisible = ref(false)
 const batchStatusValue = ref<'active' | 'closed'>('closed')
 const batchStatusSaving = ref(false)
+
+const batchDeleteVisible = ref(false)
+const batchDeleteSaving = ref(false)
 
 function handleSelectionChange(rows: any[]) {
   selectedRows.value = rows
@@ -678,6 +710,43 @@ async function handleBatchStatus() {
     showOperationError('批量设置状态', error)
   } finally {
     batchStatusSaving.value = false
+  }
+}
+
+// ========== 批量删除 ==========
+function openBatchDelete() {
+  batchDeleteVisible.value = true
+}
+
+async function handleBatchDelete() {
+  batchDeleteSaving.value = true
+  let successCount = 0
+  let failCount = 0
+
+  try {
+    for (const row of selectedRows.value) {
+      try {
+        await request.delete(`/base/aux-items/${row.id}`)
+        successCount++
+      } catch {
+        failCount++
+      }
+    }
+
+    if (successCount > 0) {
+      showSuccess(`已删除 ${successCount} 个项目${failCount > 0 ? `，${failCount} 个因已使用而跳过` : ''}`)
+    } else if (failCount > 0) {
+      showError('所选项目全部已被科目或凭证使用，无法删除')
+    }
+
+    batchDeleteVisible.value = false
+    selectedRows.value = []
+    tableRef.value?.clearSelection()
+    await fetchData()
+  } catch (error) {
+    showOperationError('批量删除', error)
+  } finally {
+    batchDeleteSaving.value = false
   }
 }
 

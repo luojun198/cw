@@ -151,6 +151,7 @@ const menuGroups = computed(() => [
       { path: '/report/dynamic', title: '报表维护' },
       { path: '/base/project', title: '核算项目' },
       { path: '/base/init-balance', title: '期初余额' },
+      { path: '/base/print-template', title: '打印模版' },
     ],
   },
   {

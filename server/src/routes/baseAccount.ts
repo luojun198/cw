@@ -195,20 +195,4 @@ router.get('/accounts/:id/realtime-balance', (req: AuthRequest, res) => {
 })
 
 // 检查并补充缺失的父科目
-router.post('/accounts/fill-missing-parents', operationLog('补充缺失父科目', '基础设置'), (req: AuthRequest, res) => {
-  const db = getDb()
-  const service = new AccountService(db)
-
-  try {
-    const result = service.fillMissingParentAccounts(req.accountSetId || '')
-    res.json({
-      code: 0,
-      message: `检查完成：共检查 ${result.checked} 个科目，补充 ${result.created} 个父科目`,
-      data: result,
-    })
-  } catch (error: any) {
-    return res.status(400).json({ code: 400, message: error.message || '补充父科目失败' })
-  }
-})
-
 export default router

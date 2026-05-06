@@ -465,24 +465,24 @@ function insertTransferTypes(accountSetId: string) {
   const db = getDb()
 
   const transferTypes = [
-    { id: '1', code: '10', name: '结转本期收', voucherType: '结转' },
-    { id: '2', code: '20', name: '结转本期支', voucherType: '结转' },
-    { id: '3', code: '60', name: '结转盈余(口)', voucherType: '结转' },
-    { id: '4', code: '70', name: '结转累计盈', voucherType: '结转' },
-    { id: '5', code: '80', name: '结转财政拨', voucherType: '结转' },
-    { id: '6', code: '82', name: '结转非财政', voucherType: '结转' },
-    { id: '7', code: '84', name: '结转其他资', voucherType: '结转' },
-    { id: '8', code: '86', name: '结转经营(口)', voucherType: '结转' },
-    { id: '9', code: '88', name: '财政拨款结', voucherType: '结转' },
+    { id: '1', code: '10', name: '结转本期收', voucherType: '结转', periodType: 'monthly' },
+    { id: '2', code: '20', name: '结转本期支', voucherType: '结转', periodType: 'monthly' },
+    { id: '3', code: '60', name: '结转盈余(口)', voucherType: '结转', periodType: 'yearly' },
+    { id: '4', code: '70', name: '结转累计盈', voucherType: '结转', periodType: 'yearly' },
+    { id: '5', code: '80', name: '结转财政拨', voucherType: '结转', periodType: 'yearly' },
+    { id: '6', code: '82', name: '结转非财政', voucherType: '结转', periodType: 'yearly' },
+    { id: '7', code: '84', name: '结转其他资', voucherType: '结转', periodType: 'yearly' },
+    { id: '8', code: '86', name: '结转经营(口)', voucherType: '结转', periodType: 'yearly' },
+    { id: '9', code: '88', name: '财政拨款结', voucherType: '结转', periodType: 'yearly' },
   ]
 
   const insert = db.prepare(`
-    INSERT OR IGNORE INTO transfer_types (id, code, name, voucher_type, account_set_id)
-    VALUES (?, ?, ?, ?, ?)
+    INSERT OR IGNORE INTO transfer_types (id, code, name, voucher_type, period_type, account_set_id)
+    VALUES (?, ?, ?, ?, ?, ?)
   `)
 
   for (const t of transferTypes) {
-    insert.run(t.id, t.code, t.name, t.voucherType, accountSetId)
+    insert.run(t.id, t.code, t.name, t.voucherType, t.periodType, accountSetId)
   }
 }
 

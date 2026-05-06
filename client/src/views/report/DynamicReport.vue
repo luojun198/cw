@@ -509,6 +509,7 @@ const selectedRowIndex = ref<number | null>(null)
 const selectedColIndex = ref<number | null>(null)
 const selectedRanges = ref<CellRange[]>([])
 const isDraggingSelection = ref(false)
+const justFinishedDrag = ref(false)
 const dragSelectionStart = ref<{ rowIndex: number; colIndex: number } | null>(null)
 const dragSelectionEnd = ref<{ rowIndex: number; colIndex: number } | null>(null)
 const activeEditorRef = ref<HTMLTextAreaElement | null>(null)
@@ -617,11 +618,14 @@ const summaryText = computed(() => {
 const isBalanceTemplate = computed(() => selectedCode.value === '1')
 
 const canMergeSelection = computed(() => {
-  if (bulkSelectionMode.value === 'range' && selectedRanges.value.length > 0) {
+  if (bulkSelectionMode.value !== 'range' || selectedRanges.value.length === 0) return false
+  // 单个连续矩形（拖选 / Shift）
+  if (selectedRanges.value.length === 1) {
     const r = selectedRanges.value[0]
     return r.endRow > r.startRow || r.endCol > r.startCol
   }
-  return false
+  // 多个独立单格（Ctrl+点击）：只要超过 1 个格就可以合并
+  return true
 })
 
 const canUnmergeSelection = computed(() => {
@@ -1430,7 +1434,9 @@ function buildSheetRows(sheet: TemplateSheet) {
             activeSheetName.value === sheet.id,
           isEditing,
           editorValue: isEditing ? inlineEditorValue.value : '',
-          textAlign: getCellTextAlign(cell),
+          textAlign: (showExecutionResult.value && executionCell?.numeric_value != null)
+            ? 'right'
+            : getCellTextAlign(cell),
           verticalAlign: getCellVerticalAlign(cell),
           colSpan,
           rowSpan,
@@ -1581,6 +1587,10 @@ function stopDragSelection() {
       // 没有拖动，恢复单选（让 click 事件处理）
       selectedRanges.value = []
       bulkSelectionMode.value = 'none'
+    } else {
+      // 拖选了多个单元格，标记一下，阻止后续 click 清空选区
+      justFinishedDrag.value = true
+      setTimeout(() => { justFinishedDrag.value = false }, 100)
     }
   }
   isDraggingSelection.value = false
@@ -1648,7 +1658,8 @@ function selectGridCell(cell: SheetDisplayCell, event?: MouseEvent) {
     return
   }
 
-  // 普通点击：单选
+  // 普通点击：单选（如果刚完成拖选则跳过，保留选区）
+  if (justFinishedDrag.value) return
   clearStructureSelection()
   selectedRanges.value = []
 
@@ -2078,7 +2089,15 @@ async function deleteCol() {
 
 async function mergeSelection() {
   if (!selectedCode.value || selectedRanges.value.length === 0) return
-  const r = selectedRanges.value[0]
+
+  // 计算所有选中 range 的最小包围矩形
+  const allRanges = selectedRanges.value
+  const r = {
+    startRow: Math.min(...allRanges.map(x => x.startRow)),
+    startCol: Math.min(...allRanges.map(x => x.startCol)),
+    endRow:   Math.max(...allRanges.map(x => x.endRow)),
+    endCol:   Math.max(...allRanges.map(x => x.endCol)),
+  }
   const colSpan = r.endCol - r.startCol + 1
   const rowSpan = r.endRow - r.startRow + 1
   if (colSpan <= 1 && rowSpan <= 1) return
@@ -2086,11 +2105,10 @@ async function mergeSelection() {
   const sheet = templateData.value?.sheets.find(item => item.id === activeSheetName.value)
   if (!sheet) return
 
-  // 找到左上角单元格，设置 merge_info
+  // 找到左上角单元格，不存在时用空单元格占位
   const originCell = sheet.cells.find(
     c => c.row_index === r.startRow && c.col_index === r.startCol
-  )
-  if (!originCell) return
+  ) ?? null
 
   // 先取消该区域内已有的合并
   for (const cell of sheet.cells) {
@@ -2115,14 +2133,14 @@ async function mergeSelection() {
 
   // 设置左上角的 merge_info
   updateDraftCell({
-    id: originCell.id,
+    id: originCell?.id,
     row_index: r.startRow,
     col_index: r.startCol,
-    cell_type: originCell.cell_type || 'text',
-    text_value: originCell.text_value,
-    formula_text: originCell.formula_text,
-    format_text: originCell.format_text,
-    style_key: originCell.style_key,
+    cell_type: originCell?.cell_type || 'text',
+    text_value: originCell?.text_value ?? null,
+    formula_text: originCell?.formula_text ?? null,
+    format_text: originCell?.format_text ?? null,
+    style_key: originCell?.style_key ?? null,
     merge_info: JSON.stringify({ colSpan, rowSpan }),
   })
 

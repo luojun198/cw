@@ -264,7 +264,8 @@ export function getNextVoucherNo(params: {
         )
       ) as max_no
       FROM vouchers
-      WHERE account_set_id=? AND year=? AND period=? AND (voucher_type_id=? OR (voucher_type_id IS NULL AND ? IS NULL))`
+      WHERE account_set_id=? AND year=? AND period=? 
+        AND (voucher_type_id=? OR (voucher_type_id IS NULL AND ? IS NULL))`
     )
     .get(params.accountSetId, params.year, params.period, effectiveTypeId, effectiveTypeId) as any
 
@@ -760,6 +761,10 @@ export function deleteVoucherRecords(db: {
   }
 
   const transaction = db.transaction(() => {
+    // 删除凭证附件
+    db.prepare('DELETE FROM voucher_attachments WHERE voucher_id=?').run(voucherId)
+    // 删除关联的自动结转运行记录
+    db.prepare('DELETE FROM auto_transfer_runs WHERE voucher_id=?').run(voucherId)
     // 删除凭证分录
     db.prepare('DELETE FROM voucher_entries WHERE voucher_id=?').run(voucherId)
     // 删除凭证主表

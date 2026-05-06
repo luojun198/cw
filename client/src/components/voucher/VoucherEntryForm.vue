@@ -138,6 +138,7 @@
 
           <el-table-column label="会计科目" min-width="260">
             <template #default="{ row }">
+              <div @dblclick="emit('quickCreateAccount', row)" style="width: 100%">
               <el-autocomplete
                 ref="accountInputRefs"
                 :model-value="getAccountInput(row)"
@@ -158,7 +159,7 @@
                     class="account-suggestion-item"
                     :class="{ 'is-parent-account': item.isParent }"
                     :style="{ cursor: item.isParent ? 'not-allowed' : 'pointer' }"
-                    @click.stop="item.isParent && $event.preventDefault()"
+                    @click="item.isParent ? $event.stopPropagation() : undefined"
                   >
                     <span
                       :style="{
@@ -184,6 +185,7 @@
                   </div>
                 </template>
               </el-autocomplete>
+              </div>
             </template>
           </el-table-column>
 
@@ -192,7 +194,6 @@
               <el-input-number
                 v-model="row.debit_amount"
                 :precision="2"
-                :min="0"
                 :controls="false"
                 style="width: 140px"
                 placeholder="0.00"
@@ -209,7 +210,6 @@
               <el-input-number
                 v-model="row.credit_amount"
                 :precision="2"
-                :min="0"
                 :controls="false"
                 style="width: 140px"
                 placeholder="0.00"
@@ -274,6 +274,7 @@
                 :value="item.id"
               />
             </el-select>
+            <el-button size="small" type="primary" plain @click="openAddAuxItemDialog(cat)">+ 新建</el-button>
             <!-- 凭证录入显示的自定义字段 -->
             <template v-if="currentEntry[`_${cat.code}_id`] && getVoucherFields(cat).length > 0">
               <div v-for="field in getVoucherFields(cat)" :key="field.field_key" class="voucher-aux-row-field">
@@ -293,6 +294,56 @@
         </div>
       </div>
 
+      <!-- 新建辅助项目弹窗 -->
+      <el-dialog
+        v-model="addAuxItemDialogVisible"
+        :title="`新建${addAuxItemCat?.name || '辅助项目'}`"
+        width="420px"
+        append-to-body
+        @keydown.enter.prevent="submitAddAuxItem"
+      >
+        <el-form label-width="80px">
+          <el-form-item label="名称" required>
+            <el-input v-model="addAuxItemName" :placeholder="`请输入${addAuxItemCat?.name || ''}名称`" />
+          </el-form-item>
+          <!-- 档案必填的自定义字段 -->
+          <template v-for="field in addAuxItemRequiredFields" :key="field.field_key">
+            <el-form-item :label="field.field_name" required>
+              <el-input
+                v-if="field.field_type === 'text'"
+                v-model="addAuxItemFieldValues[field.field_key]"
+                :placeholder="`请输入${field.field_name}`"
+              />
+              <el-input-number
+                v-else-if="field.field_type === 'number'"
+                v-model="addAuxItemFieldValues[field.field_key]"
+                :controls="false"
+                style="width: 100%"
+              />
+              <el-date-picker
+                v-else-if="field.field_type === 'date'"
+                v-model="addAuxItemFieldValues[field.field_key]"
+                type="date"
+                value-format="YYYY-MM-DD"
+                style="width: 100%"
+              />
+              <el-select
+                v-else-if="field.field_type === 'select'"
+                v-model="addAuxItemFieldValues[field.field_key]"
+                clearable
+                style="width: 100%"
+              >
+                <el-option v-for="opt in parseFieldOpts(field.options_json)" :key="opt" :label="opt" :value="opt" />
+              </el-select>
+            </el-form-item>
+          </template>
+        </el-form>
+        <template #footer>
+          <el-button @click="addAuxItemDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="addAuxItemLoading" @click="submitAddAuxItem">确定</el-button>
+        </template>
+      </el-dialog>
+
       <div class="voucher-paper-remark">
         <span class="remark-label">附注</span>
         <el-input v-model="form.remark" placeholder="凭证备注" />
@@ -302,10 +353,12 @@
         <div class="attachment-inline">
           <el-icon><Document /></el-icon>
           <span class="attachment-label">附件</span>
-          <el-button size="small" type="primary" plain @click="triggerFileInput">
-            <el-icon><Upload /></el-icon>
-            上传
-          </el-button>
+          <el-tooltip content="Ctrl+F" placement="top">
+            <el-button size="small" type="primary" plain @click="triggerFileInput">
+              <el-icon><Upload /></el-icon>
+              上传
+            </el-button>
+          </el-tooltip>
           <template v-if="attachments.length > 0">
             <el-tag
               v-for="file in attachments"
@@ -366,7 +419,18 @@
       <div class="dialog-footer-enhanced">
         <div class="submit-controls">
           <el-button @click="handleClose">取消</el-button>
-          <el-button type="primary" :loading="props.submitLoading" @click="emit('submit')">保存凭证</el-button>
+          <el-tooltip v-if="props.mode === 'edit' && props.form.id" content="打印当前凭证" placement="top">
+            <el-button type="info" plain @click="emit('print')">
+              <el-icon><Printer /></el-icon>
+              打印
+            </el-button>
+          </el-tooltip>
+          <el-tooltip content="Ctrl+S" placement="top">
+            <el-button type="primary" :loading="props.submitLoading" @click="emit('submit')">保存凭证</el-button>
+          </el-tooltip>
+          <el-tooltip content="Ctrl+N" placement="top">
+            <el-button type="success" :loading="props.submitLoading" @click="emit('submit-and-add')">保存并新增</el-button>
+          </el-tooltip>
         </div>
       </div>
     </template>
@@ -374,12 +438,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, toRefs, nextTick } from 'vue'
+import { ref, watch, toRefs, nextTick, computed } from 'vue'
 import type { VoucherForm, VoucherEntry } from '@/composables/useVoucherForm'
 import { useKeyboardShortcuts, commonShortcuts } from '@/composables/useKeyboardShortcuts'
 import { showSuccess, showError } from '@/composables/useMessage'
 import request from '@/api/request'
-import { Document, Upload, Download } from '@element-plus/icons-vue'
+import { Document, Upload, Download, Printer } from '@element-plus/icons-vue'
+import { formatAmount } from '@/utils/format'
 
 interface NavigationInfo {
   current: number
@@ -422,11 +487,15 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   'ai-summary': []
   submit: []
+  'submit-and-add': []
   'update:attachments': [attachments: any[]]
   'queue-upload': [files: File[]]
   'remove-queued-upload': [fileKey: string]
   navigate: [direction: 'first' | 'previous' | 'next' | 'last']
   'clear-current-entry': []
+  'add-aux-item': [item: { id: string; name: string; type: string }, catCode: string]
+  print: []
+  quickCreateAccount: [row: any]
 }>()
 
 // 处理更多操作命令
@@ -672,7 +741,7 @@ function getSummary() {
 }
 
 function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2 }).format(val || 0)
+  return formatAmount(val || 0)
 }
 
 function handleClose() {
@@ -731,10 +800,74 @@ watch(() => [props.currentEntry?.account_id, props.currentEntry?.debit_amount, p
   balanceFetchTimer = setTimeout(fetchCurrentEntryBalance, 300)
 }, { immediate: true })
 
+// ========== 新建辅助项目 ==========
+
+const addAuxItemDialogVisible = ref(false)
+const addAuxItemCat = ref<any>(null)
+const addAuxItemCode = ref('')
+const addAuxItemName = ref('')
+const addAuxItemFieldValues = ref<Record<string, any>>({})
+const addAuxItemLoading = ref(false)
+
+const addAuxItemRequiredFields = computed(() => {
+  if (!addAuxItemCat.value?.fields) return []
+  return addAuxItemCat.value.fields.filter((f: any) => f.is_enabled !== 0 && f.required_in_archive)
+})
+
+function openAddAuxItemDialog(cat: any) {
+  addAuxItemCat.value = cat
+  // 自动生成编码：取当前类别最大数字编码 +1，补零到6位
+  const items = props.auxItemsByCategory[cat.id] || []
+  const nextCode = items.reduce((max: number, item: any) => {
+    const n = parseInt(String(item.code || ''), 10)
+    return isNaN(n) ? max : Math.max(max, n)
+  }, 0) + 1
+  addAuxItemCode.value = String(nextCode).padStart(6, '0')
+  addAuxItemName.value = ''
+  addAuxItemFieldValues.value = {}
+  addAuxItemDialogVisible.value = true
+}
+
+async function submitAddAuxItem() {
+  const code = addAuxItemCode.value.trim()
+  const name = addAuxItemName.value.trim()
+  if (!name) {
+    showError('名称不能为空')
+    return
+  }
+  // 校验档案必填字段
+  for (const field of addAuxItemRequiredFields.value) {
+    const val = addAuxItemFieldValues.value[field.field_key]
+    if (val === undefined || val === null || String(val).trim() === '') {
+      showError(`"${field.field_name}" 为必填字段`)
+      return
+    }
+  }
+  const cat = addAuxItemCat.value
+  if (!cat) return
+  addAuxItemLoading.value = true
+  try {
+    const res = await request.post<any>('/base/aux-items', {
+      code,
+      name,
+      type: cat.id,
+      field_values: addAuxItemFieldValues.value,
+    })
+    const newItem = { id: res.data.id, name, code, type: cat.id }
+    emit('add-aux-item', newItem, cat.code)
+    addAuxItemDialogVisible.value = false
+    showSuccess(`已新建${cat.name}：${name}`)
+  } catch (e: any) {
+    showError(e?.response?.data?.message || '新建失败')
+  } finally {
+    addAuxItemLoading.value = false
+  }
+}
+
 // ========== 辅助核算自定义字段（凭证录入） ==========
 
 function getVoucherFields(cat: any) {
-  return (cat.fields || []).filter((f: any) => f.is_enabled !== 0 && f.show_in_voucher)
+  return (cat.fields || []).filter((f: any) => f.is_enabled !== 0)
 }
 
 function parseFieldOpts(optionsJson: string | null): string[] {
@@ -781,24 +914,23 @@ function onCreditEnter(row: VoucherEntry) {
 
 function onDebitKeydown(row: VoucherEntry, event: KeyboardEvent) {
   const key = event.key
-  if (key === '=' || key === '-') {
+  if (key === '=') {
     event.preventDefault()
-    if (key === '=') {
-      // = → 自动平衡：以贷方合计为基准，填入借方，使凭证平衡
-      // 例如：贷方合计1000，在借方按=则借方自动填1000
-      const targetAmount = props.totalCredit
-      if (targetAmount > 0) {
-        row.debit_amount = targetAmount
-        props.onAmountChange(row, 'debit')
-      }
-    } else {
-      // - → 互换方向：当前借方金额移到贷方，清空借方
-      const debit = row.debit_amount || 0
-      if (debit > 0) {
-        row.credit_amount = debit
-        row.debit_amount = 0
-        props.onAmountChange(row, 'credit')
-      }
+    // = → 自动平衡：计算使借贷平衡所需的差额填入当前行借方
+    const otherDebit = props.totalDebit - (row.debit_amount || 0)
+    const diff = +(props.totalCredit - otherDebit).toFixed(2)
+    if (diff !== 0) {
+      row.debit_amount = diff
+      props.onAmountChange(row, 'debit')
+    }
+  } else if (key === ' ') {
+    event.preventDefault()
+    // 空格 → 互换方向：当前借方金额移到贷方，清空借方
+    const debit = row.debit_amount || 0
+    if (debit !== 0) {
+      row.credit_amount = debit
+      row.debit_amount = 0
+      props.onAmountChange(row, 'credit')
     }
   }
 }
@@ -807,24 +939,23 @@ function onDebitKeydown(row: VoucherEntry, event: KeyboardEvent) {
 
 function onCreditKeydown(row: VoucherEntry, event: KeyboardEvent) {
   const key = event.key
-  if (key === '=' || key === '-') {
+  if (key === '=') {
     event.preventDefault()
-    if (key === '=') {
-      // = → 自动平衡：以借方合计为基准，填入贷方，使凭证平衡
-      // 例如：借方合计500，在贷方按=则贷方自动填500
-      const targetAmount = props.totalDebit
-      if (targetAmount > 0) {
-        row.credit_amount = targetAmount
-        props.onAmountChange(row, 'credit')
-      }
-    } else {
-      // - → 互换方向：当前贷方金额移到借方，清空贷方
-      const credit = row.credit_amount || 0
-      if (credit > 0) {
-        row.debit_amount = credit
-        row.credit_amount = 0
-        props.onAmountChange(row, 'debit')
-      }
+    // = → 自动平衡：计算使借贷平衡所需的差额填入当前行贷方
+    const otherCredit = props.totalCredit - (row.credit_amount || 0)
+    const diff = +(props.totalDebit - otherCredit).toFixed(2)
+    if (diff !== 0) {
+      row.credit_amount = diff
+      props.onAmountChange(row, 'credit')
+    }
+  } else if (key === ' ') {
+    event.preventDefault()
+    // 空格 → 互换方向：当前贷方金额移到借方，清空贷方
+    const credit = row.credit_amount || 0
+    if (credit !== 0) {
+      row.debit_amount = credit
+      row.credit_amount = 0
+      props.onAmountChange(row, 'debit')
     }
   }
 }
@@ -1058,6 +1189,20 @@ function queryAccountSuggestions(
     return code.includes(query) || name.includes(query)
   })
 
+  // 如果匹配到父科目，把其下所有叶子子科目也加入结果（去重）
+  if (matchedParent.length > 0) {
+    const matchedLeafIds = new Set(matchedLeaf.map(a => a.id))
+    for (const parent of matchedParent) {
+      const parentCode = String(parent.code || '')
+      for (const leaf of leafAccounts) {
+        if (!matchedLeafIds.has(leaf.id) && String(leaf.code || '').startsWith(parentCode)) {
+          matchedLeaf.push(leaf)
+          matchedLeafIds.add(leaf.id)
+        }
+      }
+    }
+  }
+
   matchedLeaf.sort((a, b) => {
     const aCode = String(a.code || '').toLowerCase()
     const bCode = String(b.code || '').toLowerCase()
@@ -1080,8 +1225,8 @@ function queryAccountSuggestions(
   const addedParents = new Set<string>()
 
   for (const leaf of matchedLeaf.slice(0, 50)) {
-    // 找到该叶子科目的直接父科目
-    const parent = matchedParent.find(p =>
+    // 找到该叶子科目的直接父科目（优先从匹配的父科目中找，再从全部父科目中找）
+    const parent = parentAccounts.find(p =>
       String(leaf.code || '').startsWith(String(p.code || '')) && leaf.id !== p.id
     )
     if (parent && !addedParents.has(parent.id)) {
@@ -1192,51 +1337,39 @@ function onAccountDelete(row: any, event: KeyboardEvent) {
 
 // 上下键导航时跳过父科目
 function onAccountArrowKey(row: any, event: KeyboardEvent, direction: 'up' | 'down') {
-  // 使用 nextTick 确保在 autocomplete 默认行为之后执行
   event.preventDefault()
 
   nextTick(() => {
-    const autocompleteEl = event.target as HTMLElement
     const suggestionPanel = document.querySelector('.el-autocomplete-suggestion')
-
     if (!suggestionPanel) return
 
-    // 获取所有建议项
     const items = Array.from(suggestionPanel.querySelectorAll('.el-autocomplete-suggestion__list li'))
     if (items.length === 0) return
 
-    // 找到当前高亮的项
-    let currentIndex = items.findIndex(item => item.classList.contains('highlighted'))
+    // Element Plus 用 is-active 标记当前高亮项
+    let currentIndex = items.findIndex(item => item.classList.contains('is-active'))
 
-    // 如果没有高亮项，根据方向选择第一个或最后一个非父科目项
     if (currentIndex === -1) {
-      if (direction === 'down') {
-        currentIndex = -1
-      } else {
-        currentIndex = items.length
-      }
+      currentIndex = direction === 'down' ? -1 : items.length
     }
 
     const step = direction === 'down' ? 1 : -1
     let nextIndex = currentIndex
     let attempts = 0
 
-    // 查找下一个非父科目项
     while (attempts < items.length) {
       nextIndex += step
 
-      // 循环边界处理
       if (nextIndex < 0) nextIndex = items.length - 1
       if (nextIndex >= items.length) nextIndex = 0
 
-      // 检查该项是否是父科目
       const item = items[nextIndex]
       const isParent = item.querySelector('.is-parent-account') !== null
 
       if (!isParent) {
-        // 找到非父科目项，设置高亮
-        items.forEach(item => item.classList.remove('highlighted'))
-        item.classList.add('highlighted')
+        // 移除所有高亮，设置新高亮
+        items.forEach(i => i.classList.remove('is-active'))
+        item.classList.add('is-active')
         item.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
         break
       }
@@ -1251,6 +1384,16 @@ useKeyboardShortcuts([
   commonShortcuts.save(() => {
     if (visible.value) {
       emit('submit')
+    }
+  }),
+  commonShortcuts.add(() => {
+    if (visible.value) {
+      emit('submit-and-add')
+    }
+  }),
+  commonShortcuts.search(() => {
+    if (visible.value) {
+      triggerFileInput()
     }
   }),
   commonShortcuts.close(() => {

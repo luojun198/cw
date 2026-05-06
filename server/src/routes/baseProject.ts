@@ -371,6 +371,8 @@ router.delete(
   (req: AuthRequest, res) => {
     const { id } = req.params
     const db = getDb()
+
+    // 检查是否被科目使用
     const rows = db
       .prepare('SELECT aux_types FROM accounts WHERE account_set_id=? AND aux_types IS NOT NULL')
       .all(req.accountSetId) as any[]
@@ -387,6 +389,17 @@ router.delete(
         /* ignore */
       }
     }
+
+    // 检查是否被凭证分录使用
+    const usedEntry = db.prepare(`
+      SELECT id FROM voucher_entries
+      WHERE account_set_id=? AND (dept_id=? OR project_id=? OR supplier_id=? OR person_id=? OR func_class_id=?)
+      LIMIT 1
+    `).get(req.accountSetId, id, id, id, id, id) as any
+    if (usedEntry) {
+      return res.status(400).json({ code: 400, message: '该核算项目已被凭证使用，无法删除' })
+    }
+
     db.prepare('DELETE FROM aux_items WHERE id=?').run(id)
     res.json({ code: 0, message: '删除成功' })
   }

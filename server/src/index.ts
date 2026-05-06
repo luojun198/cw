@@ -17,8 +17,9 @@ import multer from 'multer'
 import { basename, resolve } from 'path'
 import { initDatabase } from './db/index.ts'
 import { runMigrations } from './db/migrations.ts'
-import { migrations } from './scripts/migrationList.ts'
+import { migrations } from './db/migrationList.ts'
 import { initDefaultAccountSet } from './scripts/seedAccounts.ts'
+import { initDefaultPrintTemplate } from './scripts/initPrintTemplate.ts'
 import { log } from './utils/logger.ts'
 
 // 路由
@@ -29,6 +30,7 @@ import baseAccountRoutes from './routes/baseAccount.ts'
 import baseVoucherTypeRoutes from './routes/baseVoucherType.ts'
 import baseProjectRoutes from './routes/baseProject.ts'
 import baseInitBalanceRoutes from './routes/baseInitBalance.ts'
+import basePrintTemplateRoutes from './routes/basePrintTemplate.ts'
 import voucherRoutes from './routes/voucher.ts'
 import voucherAuditRoutes from './routes/voucherAudit.ts'
 import voucherPostingRoutes from './routes/voucherPosting.ts'
@@ -115,6 +117,7 @@ app.use('/api/base', baseAccountRoutes)
 app.use('/api/base', baseVoucherTypeRoutes)
 app.use('/api/base', baseProjectRoutes)
 app.use('/api/base', baseInitBalanceRoutes)
+app.use('/api/base', basePrintTemplateRoutes)
 app.use('/api/voucher', voucherRoutes)
 app.use('/api/voucher', voucherAuditRoutes)
 app.use('/api/voucher', voucherPostingRoutes)
@@ -164,6 +167,14 @@ app.get('*', (req, res, next) => {
 // 初始化默认数据
 initDefaultAccountSet('行政事业单位财务账套')
 log.info('默认账套初始化完成')
+
+// 初始化默认打印模版
+try {
+  initDefaultPrintTemplate()
+  log.info('默认打印模版初始化完成')
+} catch (error) {
+  log.error('默认打印模版初始化失败:', error)
+}
 
 // 404 处理（必须在所有路由之后）
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.ts'

@@ -506,7 +506,69 @@ router.get('/vouchers', (req: AuthRequest, res) => {
     end_date,
     account_id,
     auditor_id,
+    voucher_type_ids,
+    sortField,
+    sortOrder,
+    ...rest
   } = req.query
+
+  const voucherTypeIds =
+    typeof voucher_type_ids === 'string' && voucher_type_ids.trim()
+      ? voucher_type_ids.split(',').filter(id => id.trim())
+      : undefined
+
+  // 提取辅助核算项目筛选参数（格式：aux_<categoryId>=<itemId>）
+  const auxItemsInput: Record<string, string> = {}
+  // 提取辅助核算自定义字段筛选参数（格式：aux_field_<categoryId>_<fieldKey>=<value>）
+  const auxFieldsInput: Record<string, string> = {}
+  for (const [key, value] of Object.entries(rest)) {
+    if (key.startsWith('aux_field_') && typeof value === 'string' && value) {
+      const fieldKey = key.substring(10) // 去掉 aux_field_ 前缀，得到 categoryId_fieldKey
+      auxFieldsInput[fieldKey] = value
+    } else if (key.startsWith('aux_') && typeof value === 'string' && value) {
+      const categoryId = key.substring(4)
+      auxItemsInput[categoryId] = value
+    }
+  }
+
+  // 将 categoryId 转换为 categoryCode（aux_data 使用 code 作为 key）
+  const auxItems: Record<string, string> = {}
+  const auxFields: Record<string, string> = {}
+  
+  if (Object.keys(auxItemsInput).length > 0 || Object.keys(auxFieldsInput).length > 0) {
+    const categoryIds = [
+      ...Object.keys(auxItemsInput),
+      ...Object.keys(auxFieldsInput).map(k => k.split('_')[0])
+    ]
+    const uniqueCategoryIds = [...new Set(categoryIds)]
+    
+    if (uniqueCategoryIds.length > 0) {
+      const placeholders = uniqueCategoryIds.map(() => '?').join(',')
+      const categories = db
+        .prepare(`SELECT id, code FROM aux_categories WHERE id IN (${placeholders})`)
+        .all(...uniqueCategoryIds) as Array<{ id: string; code: string }>
+      
+      const categoryCodeMap = new Map(categories.map(c => [c.id, c.code]))
+      
+      // 转换 auxItems：categoryId -> categoryCode
+      for (const [categoryId, itemId] of Object.entries(auxItemsInput)) {
+        const code = categoryCodeMap.get(categoryId)
+        if (code) {
+          auxItems[code] = itemId
+        }
+      }
+      
+      // 转换 auxFields：categoryId_fieldKey -> categoryCode_fieldKey
+      for (const [key, value] of Object.entries(auxFieldsInput)) {
+        const [categoryId, ...fieldKeyParts] = key.split('_')
+        const fieldKey = fieldKeyParts.join('_')
+        const code = categoryCodeMap.get(categoryId)
+        if (code && fieldKey) {
+          auxFields[`${code}_${fieldKey}`] = value
+        }
+      }
+    }
+  }
 
   const query = buildVoucherListQuery({
     accountSetId: req.accountSetId || '',
@@ -520,6 +582,11 @@ router.get('/vouchers', (req: AuthRequest, res) => {
     endDate: end_date as string | undefined,
     accountId: account_id as string | undefined,
     auditorId: auditor_id as string | undefined,
+    voucherTypeIds,
+    auxItems: Object.keys(auxItems).length > 0 ? auxItems : undefined,
+    auxFields: Object.keys(auxFields).length > 0 ? auxFields : undefined,
+    sortField: sortField as string | undefined,
+    sortOrder: sortOrder as string | undefined,
   })
 
   const total = (db.prepare(query.countSql).get(...query.countParams) as any).count
@@ -823,5 +890,235 @@ router.delete(
     }
   }
 )
+
+// ===================== 打印数据接口 =====================
+
+// 获取单张凭证打印数据
+router.get('/print-data/:id', authMiddleware, (req: AuthRequest, res) => {
+  const { id } = req.params
+  const db = getDb()
+
+  try {
+    // 获取凭证基本信息
+    const voucher = getVoucherById({ db, voucherId: id })
+    if (!voucher || voucher.account_set_id !== req.accountSetId) {
+      return res.status(404).json({ code: 404, message: '凭证不存在' })
+    }
+
+    // 获取凭证详情（包含分录）
+    const detail = getVoucherDetail({ db, voucherId: id })
+    if (!detail) {
+      return res.status(404).json({ code: 404, message: '凭证详情不存在' })
+    }
+
+    // 获取使用单位名称（优先读 system_params 中的 unit_name，回退到账套名称）
+    const accountSet = db
+      .prepare('SELECT name FROM account_sets WHERE id = ?')
+      .get(req.accountSetId || '') as any
+    const unitNameParam = db
+      .prepare(`SELECT param_value FROM system_params WHERE account_set_id = ? AND param_key = 'unit_name'`)
+      .get(req.accountSetId || '') as any
+    const unitName = unitNameParam?.param_value || accountSet?.name || ''
+
+    // 格式化分录数据（direction+amount → debit/credit）
+    const entries = detail.entries.map((entry: any) => {
+      // 解析辅助项目数据
+      let auxData = null
+      if (entry.aux_data) {
+        try {
+          auxData = typeof entry.aux_data === 'string' ? JSON.parse(entry.aux_data) : entry.aux_data
+        } catch (e) {
+          console.error('解析辅助项目数据失败:', e)
+        }
+      }
+
+      return {
+        summary: entry.summary || '',
+        account_code: entry.account_code || '',
+        account_name: entry.account_name || '',
+        debit: entry.direction === 'debit' ? (entry.amount || 0) : 0,
+        credit: entry.direction === 'credit' ? (entry.amount || 0) : 0,
+        aux_items: entry.aux_items || [],
+        aux_data: auxData,
+      }
+    })
+
+    // 计算合计（calculateVoucherTotals 返回 debitTotal/creditTotal）
+    const totals = calculateVoucherTotals(detail.entries)
+
+    // 获取制单人信息
+    const creator = db
+      .prepare('SELECT username FROM users WHERE id = ?')
+      .get(detail.maker_id) as any
+
+    res.json({
+      code: 0,
+      data: {
+        id: detail.id,
+        voucher_no: detail.voucher_no,
+        date: detail.voucher_date || '',
+        voucher_type: detail.voucher_type_name || '',
+        attachments: detail.attachments || 0,
+        account_set_name: unitName,
+        entries,
+        total_debit: totals.debitTotal,
+        total_credit: totals.creditTotal,
+        maker: detail.maker_name || creator?.username || '',
+        auditor: detail.auditor_name || '',
+        poster: detail.poster_name || '',
+        supervisor: '',
+        created_by: creator?.username || '',
+        created_at: detail.created_at,
+      },
+    })
+  } catch (error) {
+    console.error('获取凭证打印数据失败:', error)
+    res.status(500).json({ code: 500, message: '获取凭证打印数据失败' })
+  }
+})
+
+// 批量获取凭证打印数据
+router.post('/print-data/batch', authMiddleware, (req: AuthRequest, res) => {
+  const { voucher_ids, voucher_type, voucher_type_ids, start_date, end_date, voucher_no_start, voucher_no_end } = req.body
+  const db = getDb()
+
+  try {
+    let voucherList: any[] = []
+
+    // 如果提供了凭证ID列表，直接查询
+    if (voucher_ids && Array.isArray(voucher_ids) && voucher_ids.length > 0) {
+      const placeholders = voucher_ids.map(() => '?').join(',')
+      voucherList = db
+        .prepare(
+          `SELECT v.id, v.voucher_no, v.voucher_date, v.attachments, v.maker_id, v.created_at,
+                  v.maker_name, v.auditor_name, v.poster_name,
+                  vt.name as voucher_type_name
+           FROM vouchers v
+           LEFT JOIN voucher_types vt ON v.voucher_type_id = vt.id
+           WHERE v.account_set_id = ? AND v.id IN (${placeholders})
+           ORDER BY v.voucher_date, v.voucher_no`
+        )
+        .all(req.accountSetId || '', ...voucher_ids)
+    }
+    // 否则根据筛选条件查询
+    else {
+      // 至少需要一个筛选条件
+      const hasTypeFilter = voucher_type || (voucher_type_ids && Array.isArray(voucher_type_ids) && voucher_type_ids.length > 0)
+      const hasDateFilter = start_date && end_date
+      const hasNoFilter = voucher_no_start || voucher_no_end
+      if (!hasTypeFilter && !hasDateFilter && !hasNoFilter) {
+        return res.status(400).json({ code: 400, message: '请提供凭证ID列表或筛选条件' })
+      }
+
+      let sql = `SELECT v.id, v.voucher_no, v.voucher_date, v.attachments, v.maker_id, v.created_at,
+                        v.maker_name, v.auditor_name, v.poster_name,
+                        vt.name as voucher_type_name
+                 FROM vouchers v
+                 LEFT JOIN voucher_types vt ON v.voucher_type_id = vt.id
+                 WHERE v.account_set_id = ?`
+      const params: any[] = [req.accountSetId || '']
+
+      // 凭证类型筛选：优先用 voucher_type_ids（ID 数组），兼容旧的 voucher_type（名称）
+      if (voucher_type_ids && Array.isArray(voucher_type_ids) && voucher_type_ids.length > 0) {
+        const ph = voucher_type_ids.map(() => '?').join(',')
+        sql += ` AND v.voucher_type_id IN (${ph})`
+        params.push(...voucher_type_ids)
+      } else if (voucher_type) {
+        sql += ' AND vt.name = ?'
+        params.push(voucher_type)
+      }
+
+      // 日期区间
+      if (start_date && end_date) {
+        sql += ' AND v.voucher_date >= ? AND v.voucher_date <= ?'
+        params.push(start_date, end_date)
+      }
+
+      // 凭证号范围
+      if (voucher_no_start) {
+        sql += ' AND v.voucher_no >= ?'
+        params.push(voucher_no_start)
+      }
+      if (voucher_no_end) {
+        sql += ' AND v.voucher_no <= ?'
+        params.push(voucher_no_end)
+      }
+
+      sql += ' ORDER BY v.voucher_date, v.voucher_no'
+
+      voucherList = db.prepare(sql).all(...params)
+    }
+
+    if (voucherList.length === 0) {
+      return res.json({ code: 0, data: [] })
+    }
+
+    // 获取使用单位名称（优先读 system_params 中的 unit_name，回退到账套名称）
+    const accountSet = db
+      .prepare('SELECT name FROM account_sets WHERE id = ?')
+      .get(req.accountSetId || '') as any
+    const unitNameParam = db
+      .prepare(`SELECT param_value FROM system_params WHERE account_set_id = ? AND param_key = 'unit_name'`)
+      .get(req.accountSetId || '') as any
+    const unitName = unitNameParam?.param_value || accountSet?.name || ''
+
+    // 批量获取每张凭证的详细数据
+    const printDataList = voucherList.map((voucher: any) => {
+      const detail = getVoucherDetail({ db, voucherId: voucher.id })
+      if (!detail) return null
+
+      const entries = detail.entries.map((entry: any) => {
+        // 解析辅助项目数据
+        let auxData = null
+        if (entry.aux_data) {
+          try {
+            auxData = typeof entry.aux_data === 'string' ? JSON.parse(entry.aux_data) : entry.aux_data
+          } catch (e) {
+            console.error('解析辅助项目数据失败:', e)
+          }
+        }
+
+        return {
+          summary: entry.summary || '',
+          account_code: entry.account_code || '',
+          account_name: entry.account_name || '',
+          debit: entry.direction === 'debit' ? (entry.amount || 0) : 0,
+          credit: entry.direction === 'credit' ? (entry.amount || 0) : 0,
+          aux_items: entry.aux_items || [],
+          aux_data: auxData,
+        }
+      })
+
+      const totals = calculateVoucherTotals(detail.entries)
+
+      const creator = db
+        .prepare('SELECT username FROM users WHERE id = ?')
+        .get(voucher.maker_id) as any
+
+      return {
+        id: voucher.id,
+        voucher_no: voucher.voucher_no,
+        date: voucher.voucher_date || '',
+        voucher_type: voucher.voucher_type_name || '',
+        attachments: voucher.attachments || 0,
+        account_set_name: unitName,
+        entries,
+        total_debit: totals.debitTotal,
+        total_credit: totals.creditTotal,
+        maker: voucher.maker_name || creator?.username || '',
+        auditor: voucher.auditor_name || '',
+        poster: voucher.poster_name || '',
+        supervisor: '',
+        created_by: creator?.username || '',
+        created_at: voucher.created_at,
+      }
+    }).filter(Boolean)
+
+    res.json({ code: 0, data: printDataList })
+  } catch (error) {
+    console.error('批量获取凭证打印数据失败:', error)
+    res.status(500).json({ code: 500, message: '批量获取凭证打印数据失败' })
+  }
+})
 
 export default router

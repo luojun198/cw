@@ -74,13 +74,13 @@ export function useBatchAuditDialog(fetchData: () => Promise<void>) {
     }
     if (batchAuditPreviewBlockedVoucherNo.value) {
       const operation = batchAuditForm.value.operation
-      const operationLabel = { audit: '审核', unaudit: '反审核', post: '过账', unpost: '反过账' }[operation] || '操作'
+      const operationLabel = { audit: '审核', unaudit: '反审核', post: '记账', unpost: '反记账' }[operation] || '操作'
       ElMessage.error(`存在不符合条件的凭证，无法${operationLabel}：${batchAuditPreviewBlockedVoucherNo.value}`)
       return
     }
 
     const operation = batchAuditForm.value.operation
-    const operationLabel = { audit: '审核', unaudit: '反审核', post: '过账', unpost: '反过账' }[operation] || '操作'
+    const operationLabel = { audit: '审核', unaudit: '反审核', post: '记账', unpost: '反记账' }[operation] || '操作'
 
     await ElMessageBox.confirm(
       `当前条件预计${operationLabel} ${batchAuditPreviewCount.value ?? 0} 张凭证，是否继续？`,

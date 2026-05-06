@@ -794,7 +794,9 @@ export function buildTransferPreviewByType(params: {
   const executableItems = normalizedItems.filter(item => {
     const fromCode = String(item.from_code || '').trim()
     const toCode = String(item.to_code || '').trim()
-    return Boolean(fromCode && toCode)
+    // 汇总模式：转出源只有 from_code，转入目标只有 to_code，两者都需保留
+    // 一对一模式：同时有 from_code 和 to_code
+    return Boolean(fromCode || toCode)
   })
 
   if (executableItems.length === 0) {
@@ -860,9 +862,9 @@ export function buildAllTransferPreviews(params: {
   // 获取所有结转类型
   const transferTypes = params.db
     .prepare(
-      'SELECT code, name, voucher_type FROM transfer_types WHERE account_set_id=? ORDER BY code'
+      'SELECT code, name, voucher_type, period_type FROM transfer_types WHERE account_set_id=? ORDER BY code'
     )
-    .all(params.accountSetId) as Array<{ code: string; name: string; voucher_type: string }>
+    .all(params.accountSetId) as Array<{ code: string; name: string; voucher_type: string; period_type: string }>
 
   if (transferTypes.length === 0) {
     return {
@@ -892,6 +894,22 @@ export function buildAllTransferPreviews(params: {
         voucherType: type.voucher_type,
         alreadyGenerated: true,
         existingRun,
+        entries: [],
+        totals: { debitTotal: 0, creditTotal: 0 },
+      })
+      continue
+    }
+
+    // 年末结转类型仅在12月可执行
+    if (type.period_type === 'yearly' && params.period !== 12) {
+      previews.push({
+        transferTypeCode: type.code,
+        transferTypeName: type.name,
+        voucherType: type.voucher_type,
+        alreadyGenerated: false,
+        notYetDue: true,
+        notYetDueReason: '年末结转，仅12月可执行',
+        existingRun: null,
         entries: [],
         totals: { debitTotal: 0, creditTotal: 0 },
       })
@@ -1397,8 +1415,8 @@ export function createAllTransferVouchers(params: {
 
   // 获取所有结转类型
   const transferTypes = params.db
-    .prepare('SELECT code, name FROM transfer_types WHERE account_set_id=? ORDER BY code')
-    .all(params.accountSetId) as Array<{ code: string; name: string }>
+    .prepare('SELECT code, name, period_type FROM transfer_types WHERE account_set_id=? ORDER BY code')
+    .all(params.accountSetId) as Array<{ code: string; name: string; period_type: string }>
 
   if (transferTypes.length === 0) {
     return {
@@ -1424,6 +1442,19 @@ export function createAllTransferVouchers(params: {
         transferTypeName: type.name,
         skipped: true,
         reason: '该结转类型已生成凭证',
+        voucherId: null,
+        voucherNo: null,
+      })
+      continue
+    }
+
+    // 年末结转类型仅在12月可执行
+    if (type.period_type === 'yearly' && params.period !== 12) {
+      results.push({
+        transferTypeCode: type.code,
+        transferTypeName: type.name,
+        skipped: true,
+        reason: '年末结转，仅12月可执行',
         voucherId: null,
         voucherNo: null,
       })

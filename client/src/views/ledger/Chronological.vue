@@ -24,7 +24,7 @@
           style="width: 140px"
         />
         <el-checkbox v-model="filters.include_unposted" @change="fetchData" style="margin-left: 12px">
-          统计未过账凭证
+          统计未记账凭证
         </el-checkbox>
         <el-button type="primary" @click="fetchData">查询</el-button>
         <el-button @click="exportData">导出Excel</el-button>
@@ -40,12 +40,12 @@
       <el-table-column prop="summary" label="摘要" :width="widths['summary'] || 180" />
       <el-table-column label="借方金额" :width="widths['借方金额'] || 140" align="right">
         <template #default="{ row }">{{
-          row.direction === 'debit' ? formatMoney(row.amount) : ''
+          row.direction === 'debit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
       <el-table-column label="贷方金额" :width="widths['贷方金额'] || 140" align="right">
         <template #default="{ row }">{{
-          row.direction === 'credit' ? formatMoney(row.amount) : ''
+          row.direction === 'credit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
       <el-table-column prop="maker_name" label="制单人" :width="widths['maker_name'] || 80" />
@@ -69,6 +69,7 @@
 import { ref, onMounted } from 'vue'
 import request from '@/api/request'
 import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { formatAmount } from '@/utils/format'
 
 const list = ref<any[]>([])
 const total = ref(0)
@@ -82,14 +83,6 @@ const filters = ref<any>({
   include_unposted: true,
 })
 const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
-
-function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    style: 'currency',
-    currency: 'CNY',
-    minimumFractionDigits: 2,
-  }).format(val || 0)
-}
 
 const tableRef = ref()
 const { widths, onDragEnd } = useColumnWidthMemory('ledger_chronological')

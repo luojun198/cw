@@ -5,7 +5,7 @@
       <el-button type="primary" @click="openDialog('add')">新增用户</el-button>
     </div>
 
-    <el-table :data="list" stripe border>
+    <el-table :data="list" stripe border height="100%">
       <el-table-column prop="username" label="用户名" width="120" />
       <el-table-column prop="nickname" label="姓名" width="120" />
       <el-table-column prop="account_set_name" label="所属账套" />

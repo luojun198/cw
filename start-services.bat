@@ -9,7 +9,7 @@ echo ========================================
 echo.
 
 echo [1/4] Releasing ports...
-for %%p in (3000 5000 8080 8000 9000 5173 5174 5175) do (
+for %%p in (3005 5173 5174 5175) do (
     for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":%%p "') do (
         taskkill /PID %%a /F >nul 2>&1
     )
@@ -35,6 +35,6 @@ echo.
 echo ========================================
 echo  All services started successfully!
 echo  Frontend : http://localhost:5175
-echo  Backend  : http://localhost:5000
+echo  Backend  : http://localhost:3005
 echo ========================================
 echo.

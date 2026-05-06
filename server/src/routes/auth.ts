@@ -73,24 +73,12 @@ router.get('/captcha', (req, res) => {
 
 // 登录
 router.post('/login', async (req, res) => {
-  const { username, password, captcha, captchaId, targetAccountSetId } = req.body
+  const { username, password, targetAccountSetId } = req.body
   if (!username || !password) {
     return res.status(400).json({ code: 400, message: '用户名和密码不能为空' })
   }
 
   const db = getDb()
-
-  // 验证验证码
-  if (captchaId && captcha) {
-    const stored = db
-      .prepare('SELECT param_value FROM system_params WHERE param_key = ?')
-      .get(`captcha:${captchaId}`) as any
-    if (!stored || stored.param_value !== String(captcha).trim()) {
-      return res.status(400).json({ code: 400, message: '验证码错误' })
-    }
-    // 验证成功后删除验证码
-    db.prepare('DELETE FROM system_params WHERE param_key = ?').run(`captcha:${captchaId}`)
-  }
 
   // 如果指定了目标账套，按账套+用户名查找；否则按用户名查找
   let user: any

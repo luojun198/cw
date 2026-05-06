@@ -31,7 +31,7 @@
           {{ showAdvancedFilter ? '收起' : '高级筛选' }}
         </el-button>
         <el-checkbox v-model="filters.include_unposted" @change="fetchData" style="margin-left: 12px">
-          统计未过账凭证
+          统计未记账凭证
         </el-checkbox>
         <el-button @click="exportData">导出Excel</el-button>
       </div>
@@ -91,12 +91,12 @@
       <el-table-column prop="summary" label="摘要" :width="widths['summary'] || 180" />
       <el-table-column label="借方" :width="widths['借方'] || 140" align="right">
         <template #default="{ row }">{{
-          row.direction === 'debit' ? formatMoney(row.amount) : ''
+          row.direction === 'debit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
       <el-table-column label="贷方" :width="widths['贷方'] || 140" align="right">
         <template #default="{ row }">{{
-          row.direction === 'credit' ? formatMoney(row.amount) : ''
+          row.direction === 'credit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
       <el-table-column label="方向" :width="widths['方向'] || 60" align="center">
@@ -105,7 +105,7 @@
         </template>
       </el-table-column>
       <el-table-column label="余额" :width="widths['余额'] || 140" align="right">
-        <template #default="{ row }">{{ formatMoney(Math.abs(row.running_balance)) }}</template>
+        <template #default="{ row }">{{ formatAmount(Math.abs(row.running_balance)) }}</template>
       </el-table-column>
     </el-table>
   </div>
@@ -117,6 +117,7 @@ import { useRoute } from 'vue-router'
 import request from '@/api/request'
 import type { TableColumnCtx } from 'element-plus'
 import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { formatAmount } from '@/utils/format'
 
 const route = useRoute()
 const initBalance = ref(0)
@@ -151,13 +152,6 @@ watch(() => filters.value.account_id, (newVal) => {
   }
 })
 
-function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val || 0)
-}
-
 function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
   const { columns, data } = param
   const sums: string[] = []
@@ -175,12 +169,12 @@ function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
     // 借方
     if (index === 3) {
       const total = data.reduce((sum, row) => sum + (row.direction === 'debit' ? row.amount : 0), 0)
-      sums[index] = formatMoney(total)
+      sums[index] = formatAmount(total)
     }
     // 贷方
     else if (index === 4) {
       const total = data.reduce((sum, row) => sum + (row.direction === 'credit' ? row.amount : 0), 0)
-      sums[index] = formatMoney(total)
+      sums[index] = formatAmount(total)
     }
     // 方向
     else if (index === 5) {
@@ -194,7 +188,7 @@ function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
     else if (index === 6) {
       const lastRow = data[data.length - 1]
       if (lastRow) {
-        sums[index] = formatMoney(Math.abs(lastRow.running_balance))
+        sums[index] = formatAmount(Math.abs(lastRow.running_balance))
       }
     }
   })

@@ -1,10 +1,11 @@
-import { getBalance, getPeriodSum, type BalanceQueryDb } from './reportBalance.ts'
+import { getBalance, getPeriodSum, getPeriodRangeSum, getPeriodRangeSumExcludeTransfer, type BalanceQueryDb } from './reportBalance.ts'
 
 type ExecuteContext = {
   db: BalanceQueryDb
   accountSetId: string
   year: number
   period: number
+  unitName?: string
 }
 
 type TemplateCellInput = {
@@ -56,16 +57,12 @@ function isNumericValue(value: string) {
   return /^-?\d+(\.\d+)?$/.test(value.trim())
 }
 
-function formatNumber(value: number, formatText: string | null) {
+function formatNumber(value: number, _formatText: string | null) {
   if (!Number.isFinite(value)) return ''
-  if (formatText && /0\.00|#,##0\.00/.test(formatText)) {
-    return new Intl.NumberFormat('zh-CN', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    }).format(value)
-  }
-  if (Number.isInteger(value)) return String(value)
-  return String(Number(value.toFixed(2)))
+  return new Intl.NumberFormat('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(value)
 }
 
 function splitArguments(value: string) {
@@ -194,6 +191,21 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext) {
         result = getSideBalance(context, accountCode, 0, 'credit')
         break
       }
+      case 'jqy': {
+        // @jqy(科目编码, 起始期间, 截止期间)
+        // 99 表示当前期（context.period），数字表示具体月份
+        // 排除结转凭证，取结转前净发生额，按科目自然余额方向计算
+        const fromPeriodRaw = args[1] === undefined || args[1] === '' ? '99' : String(args[1]).trim()
+        const toPeriodRaw = args[2] === undefined || args[2] === '' ? '99' : String(args[2]).trim()
+        const fromPeriod = fromPeriodRaw === '99' ? context.period : Number(fromPeriodRaw)
+        const toPeriod = toPeriodRaw === '99' ? context.period : Number(toPeriodRaw)
+        const rangeSum = getPeriodRangeSumExcludeTransfer(context.db, context.accountSetId, accountCode, context.year, fromPeriod, toPeriod)
+        const direction = getAccountDirection(context.db, context.accountSetId, accountCode)
+        result = direction === 'debit'
+          ? rangeSum.debit - rangeSum.credit
+          : rangeSum.credit - rangeSum.debit
+        break
+      }
       default:
         throw new Error(`暂不支持公式函数 @${name}`)
     }
@@ -308,72 +320,149 @@ function executeFormula(formulaText: string, context: ExecuteContext, cellValues
   return safeEvaluateExpression(expression)
 }
 
+function extractCellRefs(expression: string): string[] {
+  const refs: string[] = []
+  const re = /\$?([A-Z]+)\$?(\d+)/gi
+  let m: RegExpExecArray | null
+  while ((m = re.exec(expression)) !== null) {
+    refs.push(`${m[1].toUpperCase()}${m[2]}`)
+  }
+  return refs
+}
+
+function topoSortCells(cells: TemplateCellInput[]): TemplateCellInput[] {
+  // 建立 address -> cell 映射
+  const addrMap = new Map<string, TemplateCellInput>()
+  for (const cell of cells) {
+    addrMap.set(getCellAddress(cell.row_index, cell.col_index), cell)
+  }
+
+  const visited = new Set<string>()
+  const result: TemplateCellInput[] = []
+
+  function visit(cell: TemplateCellInput, stack: Set<string>) {
+    const addr = getCellAddress(cell.row_index, cell.col_index)
+    if (visited.has(addr)) return
+    if (stack.has(addr)) return // 循环引用，跳过
+    stack.add(addr)
+
+    const formulaSource = cell.formula_text || cell.text_value || ''
+    if (cell.cell_type === 'formula' || isFormulaLike(formulaSource)) {
+      for (const ref of extractCellRefs(formulaSource)) {
+        const dep = addrMap.get(ref)
+        if (dep) visit(dep, stack)
+      }
+    }
+
+    stack.delete(addr)
+    visited.add(addr)
+    result.push(cell)
+  }
+
+  // 先按行列顺序遍历，保证稳定性
+  const sorted = cells.slice().sort((a, b) => a.row_index - b.row_index || a.col_index - b.col_index)
+  for (const cell of sorted) {
+    visit(cell, new Set())
+  }
+  return result
+}
+
+function applyTextPlaceholders(text: string, context: ExecuteContext): string {
+  if (!text || !text.includes('%')) return text
+  const month = String(context.period).padStart(2, '0')
+  const day = '01'
+  // 先替换组合形式（%yh%mh%dh 连写，% 被共用），再替换单独形式
+  // 每个占位符支持有无尾部 %（如 %U 和 %U% 都能匹配）
+  return text
+    .replace(/%yh%mh%dh(%|(?=[^a-z]|$))/gi, `${context.year}年${month}月${day}日`)
+    .replace(/%yh%mh(%|(?=[^a-z]|$))/gi, `${context.year}年${month}月`)
+    .replace(/%yh(%|(?=[^a-z]|$))/gi, `${context.year}年`)
+    .replace(/%mh(%|(?=[^a-z]|$))/gi, `${month}月`)
+    .replace(/%dh(%|(?=[^a-z]|$))/gi, `${day}日`)
+    .replace(/%U(%|(?=[^a-z]|$))/gi, context.unitName || '')
+}
+
+function executeCell(
+  cell: TemplateCellInput,
+  context: ExecuteContext,
+  cellValues: Map<string, number>
+) {
+  const address = getCellAddress(cell.row_index, cell.col_index)
+  const formulaSource = cell.formula_text || cell.text_value || ''
+  const shouldTreatAsFormula = cell.cell_type === 'formula' || isFormulaLike(formulaSource)
+  const rawValue = shouldTreatAsFormula ? formulaSource : cell.text_value || ''
+
+  try {
+    if (shouldTreatAsFormula && formulaSource) {
+      const numericValue = executeFormula(formulaSource, context, cellValues)
+      cellValues.set(address, numericValue)
+      return {
+        ...cell,
+        address,
+        raw_value: rawValue,
+        display_value: formatNumber(numericValue, cell.format_text),
+        numeric_value: numericValue,
+        status: 'ok' as const,
+        error: null,
+      }
+    }
+
+    const textValue = cell.text_value || ''
+    if (cell.cell_type === 'number' && isNumericValue(textValue)) {
+      const numericValue = Number(textValue)
+      cellValues.set(address, numericValue)
+      return {
+        ...cell,
+        address,
+        raw_value: rawValue,
+        display_value: formatNumber(numericValue, cell.format_text),
+        numeric_value: numericValue,
+        status: 'ok' as const,
+        error: null,
+      }
+    }
+
+    return {
+      ...cell,
+      address,
+      raw_value: rawValue,
+      display_value: applyTextPlaceholders(textValue, context),
+      numeric_value: null,
+      status: 'ok' as const,
+      error: null,
+    }
+  } catch (error) {
+    return {
+      ...cell,
+      address,
+      raw_value: rawValue,
+      display_value: '#ERROR',
+      numeric_value: null,
+      status: 'error' as const,
+      error: error instanceof Error ? error.message : '公式执行失败',
+    }
+  }
+}
+
 export function executeTemplateSheets(sheets: TemplateSheetInput[], context: ExecuteContext): ExecutedTemplateSheet[] {
   return sheets
     .slice()
     .sort((a, b) => a.sheet_index - b.sheet_index)
     .map(sheet => {
       const cellValues = new Map<string, number>()
+      // 拓扑排序：被依赖的单元格先执行，解决 =B6+B8 引用下方单元格的问题
+      const orderedCells = topoSortCells(sheet.cells)
+      // 按拓扑顺序执行，结果 Map 保持原始行列顺序输出
+      const resultMap = new Map<string, ReturnType<typeof executeCell>>()
+      for (const cell of orderedCells) {
+        const executed = executeCell(cell, context, cellValues)
+        resultMap.set(executed.address, executed)
+      }
+      // 按原始行列顺序输出
       const executedCells = sheet.cells
         .slice()
         .sort((a, b) => a.row_index - b.row_index || a.col_index - b.col_index)
-        .map(cell => {
-          const address = getCellAddress(cell.row_index, cell.col_index)
-          const formulaSource = cell.formula_text || cell.text_value || ''
-          const shouldTreatAsFormula = cell.cell_type === 'formula' || isFormulaLike(formulaSource)
-          const rawValue = shouldTreatAsFormula ? formulaSource : cell.text_value || ''
-
-          try {
-            if (shouldTreatAsFormula && formulaSource) {
-              const numericValue = executeFormula(formulaSource, context, cellValues)
-              cellValues.set(address, numericValue)
-              return {
-                ...cell,
-                address,
-                raw_value: rawValue,
-                display_value: formatNumber(numericValue, cell.format_text),
-                numeric_value: numericValue,
-                status: 'ok' as const,
-                error: null,
-              }
-            }
-
-            const textValue = cell.text_value || ''
-            if (cell.cell_type === 'number' && isNumericValue(textValue)) {
-              const numericValue = Number(textValue)
-              cellValues.set(address, numericValue)
-              return {
-                ...cell,
-                address,
-                raw_value: rawValue,
-                display_value: formatNumber(numericValue, cell.format_text),
-                numeric_value: numericValue,
-                status: 'ok' as const,
-                error: null,
-              }
-            }
-
-            return {
-              ...cell,
-              address,
-              raw_value: rawValue,
-              display_value: textValue,
-              numeric_value: null,
-              status: 'ok' as const,
-              error: null,
-            }
-          } catch (error) {
-            return {
-              ...cell,
-              address,
-              raw_value: rawValue,
-              display_value: '#ERROR',
-              numeric_value: null,
-              status: 'error' as const,
-              error: error instanceof Error ? error.message : '公式执行失败',
-            }
-          }
-        })
+        .map(cell => resultMap.get(getCellAddress(cell.row_index, cell.col_index))!)
 
       return {
         ...sheet,

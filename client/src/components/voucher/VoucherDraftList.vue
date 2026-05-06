@@ -108,6 +108,7 @@
 import { computed, ref } from 'vue'
 import { useTableSearch } from '@/composables/useTableSearch'
 import { SortUp, SortDown } from '@element-plus/icons-vue'
+import { formatAmount } from '@/utils/format'
 
 interface SortConfig {
   field: string
@@ -182,7 +183,7 @@ function toggleOrder() {
 }
 
 function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', { minimumFractionDigits: 2 }).format(val || 0)
+  return formatAmount(val || 0)
 }
 
 function getVoucherSeq(voucherNo: string) {

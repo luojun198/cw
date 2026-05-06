@@ -21,7 +21,7 @@
       </div>
     </el-card>
 
-    <el-table :data="list" stripe border style="margin-top: 16px" :loading="loading">
+    <el-table :data="list" stripe border height="100%" style="margin-top: 16px" :loading="loading">
       <el-table-column prop="created_at" label="时间" width="180" />
       <el-table-column prop="username" label="操作用户" width="120" />
       <el-table-column prop="action" label="操作" width="150" />

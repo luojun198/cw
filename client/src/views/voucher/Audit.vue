@@ -17,30 +17,31 @@
           placeholder="搜索凭证号、摘要、科目、金额..."
           clearable
           @clear="clearSearch"
+          @keydown.enter="onSearch"
           style="width: 240px"
         >
           <template #prefix>
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
-        <el-select v-model="sortField" placeholder="排序字段" style="width: 130px">
+        <el-select v-model="sortField" placeholder="排序字段" style="width: 130px" @change="(val: string) => onSortChange(val, sortOrder)">
           <el-option label="凭证日期" value="voucher_date" />
           <el-option label="凭证号" value="voucher_no" />
           <el-option label="借方金额" value="debit_amount" />
           <el-option label="贷方金额" value="credit_amount" />
           <el-option label="创建时间" value="created_at" />
         </el-select>
-        <el-select v-model="sortOrder" placeholder="排序方式" style="width: 100px">
+        <el-select v-model="sortOrder" placeholder="排序方式" style="width: 100px" @change="(val: string) => onSortChange(sortField, val)">
           <el-option label="升序" value="asc" />
           <el-option label="降序" value="desc" />
         </el-select>
-        <el-button type="primary" @click="fetchData">查询</el-button>
-        <el-button type="success" plain @click="batchAuditVisible = true">批量操作</el-button>
+        <el-button type="primary" @click="onSearch">查询</el-button>
       </div>
     </div>
 
     <VoucherAuditTable
-      :flat-list="filteredData"
+      style="flex: 1; min-height: 0; overflow: hidden"
+      :flat-list="flatList"
       :is-selectable-row="isSelectableRow"
       :get-row-class="getRowClass"
       :aux-categories="auxCategories"
@@ -52,7 +53,7 @@
       @unpost="unPost"
     />
 
-    <div style="margin-top: 12px">
+    <div style="margin-top: 12px; flex-shrink: 0">
       <el-button type="success" :disabled="!selected.length" @click="handleSelectedBatchAudit"
         >批量审核</el-button
       >
@@ -68,16 +69,41 @@
         :disabled="!selected.length"
         :loading="batchPosting"
         @click="handleBatchPost"
-        >批量过账</el-button
+        >批量记账</el-button
       >
       <el-button
-        type="warning"
+        type="info"
+        plain
         :disabled="!selected.length"
-        :loading="batchUnposting"
-        @click="handleBatchUnpost"
-        >批量反过账</el-button
+        @click="handlePrint"
       >
+        <el-icon><Printer /></el-icon>
+        打印
+      </el-button>
+      <el-button type="info" plain @click="batchPrintVisible = true">
+        <el-icon><Printer /></el-icon>
+        批量打印
+      </el-button>
       <span style="margin-left: 12px; color: #909399">已选 {{ selected.length }} 张</span>
+    </div>
+
+    <div class="pagination-bar">
+      <span class="pagination-text">共 {{ pagination.total }} 条</span>
+      <el-select v-model="pagination.pageSize" style="width: 95px" @change="onPageSizeChange">
+        <el-option label="10条" :value="10" />
+        <el-option label="20条" :value="20" />
+        <el-option label="50条" :value="50" />
+        <el-option label="100条" :value="100" />
+        <el-option label="全部" :value="-1" />
+      </el-select>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        :total="pagination.total"
+        :page-size="pagination.pageSize"
+        layout="prev, pager, next, jumper"
+        :pager-count="5"
+        @current-change="onPageChange"
+      />
     </div>
 
     <BatchAuditDialog
@@ -103,33 +129,52 @@
       @unpost="handleDetailUnPost"
       @edit="handleDetailEdit"
     />
+
+    <PrintDialog
+      v-model="printDialogVisible"
+      :voucher-ids="printVoucherIds"
+      :mode="printMode"
+    />
+
+    <BatchPrintDialog
+      v-model="batchPrintVisible"
+      :default-date-range="dateRange || []"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onActivated, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { Search } from '@element-plus/icons-vue'
+import { Search, Printer } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import VoucherAuditTable from '@/components/voucher/VoucherAuditTable.vue'
 import BatchAuditDialog from '@/components/voucher/BatchAuditDialog.vue'
 import VoucherDetailDialog from '@/components/voucher/VoucherDetailDialog.vue'
+import PrintDialog from '@/components/print/PrintDialog.vue'
+import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
 import { useVoucherAuditData } from '@/composables/useVoucherAuditData'
 import { useVoucherAuditActions } from '@/composables/useVoucherAuditActions'
 import { useBatchAuditDialog } from '@/composables/useBatchAuditDialog'
+import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 
 const {
   selected,
   dateRange,
   voucherTypes,
-  filteredData,
+  flatList,
   searchKeyword,
   sortField,
   sortOrder,
+  pagination,
   clearSearch,
   isSelectableRow,
   getRowClass,
   onSelect,
+  onSortChange,
+  onPageChange,
+  onPageSizeChange,
+  onSearch,
   fetchData,
   fetchVoucherTypes,
   fetchSystemParams,
@@ -221,6 +266,18 @@ async function handleBatchUnpost() {
   selected.value = []
 }
 
+const printDialogVisible = ref(false)
+const printVoucherIds = ref<number[]>([])
+const printMode = ref<'single' | 'batch'>('batch')
+const batchPrintVisible = ref(false)
+
+function handlePrint() {
+  if (!selected.value.length) return
+  printVoucherIds.value = selected.value.map((v: any) => v.id || v._voucherId).filter(Boolean)
+  printMode.value = 'batch'
+  printDialogVisible.value = true
+}
+
 async function handleSelectedBatchAudit() {
   await batchAudit(selected.value)
   selected.value = []
@@ -245,6 +302,16 @@ onMounted(async () => {
   await Promise.all([fetchVoucherTypes(), fetchSystemParams(), fetchAuxCategories()])
   await fetchData()
 })
+
+onActivated(async () => {
+  await Promise.all([fetchVoucherTypes(), fetchSystemParams(), fetchAuxCategories()])
+  await fetchData()
+})
+
+useKeyboardShortcuts([
+  { key: 'e', ctrl: true, handler: () => { batchAuditVisible.value = true }, description: 'Ctrl+E 批量操作' },
+  { key: 'd', ctrl: true, handler: () => handleBatchUnpost(), description: 'Ctrl+D 批量反记账' },
+])
 </script>
 
 <style scoped>

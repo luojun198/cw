@@ -11,6 +11,14 @@
         <el-divider direction="vertical" />
         <el-button type="primary" plain :disabled="!selectedDraftId" @click="handleEditDraft">编辑</el-button>
         <el-button type="danger" plain :disabled="!selectedDraftId" @click="handleDeleteDraftSelected">删除</el-button>
+        <el-button type="info" plain :disabled="!selectedDraftId" @click="handlePrint">
+          <el-icon><Printer /></el-icon>
+          打印
+        </el-button>
+        <el-button type="info" plain @click="batchPrintVisible = true">
+          <el-icon><Printer /></el-icon>
+          批量打印
+        </el-button>
         <el-button type="primary" @click="openVoucherDialog()">新增凭证</el-button>
       </div>
     </div>
@@ -36,6 +44,14 @@
       :voucher-types="voucherTypes"
       @success="fetchDraftVouchers"
     />
+
+    <PrintDialog
+      v-model="printDialogVisible"
+      :voucher-ids="printVoucherIds"
+      mode="single"
+    />
+
+    <BatchPrintDialog v-model="batchPrintVisible" />
 
     <!-- 重新排号对话框 -->
     <el-dialog
@@ -113,22 +129,49 @@
       @remove-queued-upload="removeQueuedUpload"
       @ai-summary="handleAiSummary"
       @submit="handleSubmit"
+      @submit-and-add="handleSubmitAndAdd"
       @navigate="handleNavigate"
       @clear-current-entry="handleClearCurrentEntry"
+      @add-aux-item="handleAddAuxItem"
+      @quick-create-account="handleQuickCreateAccount"
+      @print="handlePrintCurrent"
+    />
+
+    <AccountDialog
+      v-model="quickAddAccountVisible"
+      mode="add"
+      title="快速新增科目"
+      :form="accountForm"
+      :parent-usage="parentUsage"
+      :tree-select-data="treeSelectData"
+      :get-available-cats="getAvailableCats"
+      :get-aux-items-by-cat="getAuxItemsByCat"
+      :on-aux-cat-change="onAuxCatChange"
+      :add-aux="addAux"
+      :remove-aux="removeAux"
+      :saving="quickAccountSaving"
+      @parent-change="handleQuickParentChange"
+      @save="saveQuickAccount"
     />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, nextTick } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, computed, onMounted, onActivated, watch, nextTick } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
+import { Printer } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import VoucherDraftList from '@/components/voucher/VoucherDraftList.vue'
 import VoucherBatchDelete from '@/components/voucher/VoucherBatchDelete.vue'
 import VoucherEntryForm from '@/components/voucher/VoucherEntryForm.vue'
+import AccountDialog from '@/components/base/AccountDialog.vue'
+import PrintDialog from '@/components/print/PrintDialog.vue'
+import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
 import { useVoucherForm } from '@/composables/useVoucherForm'
 import { useAuxiliaryAccounting } from '@/composables/useAuxiliaryAccounting'
+import { useAccountForm } from '@/composables/useAccountForm'
+import { useAccountTree } from '@/composables/useAccountTree'
 import { showSuccess, showError, showWarning, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { useKeyboardShortcuts, commonShortcuts } from '@/composables/useKeyboardShortcuts'
@@ -146,6 +189,9 @@ const draftLoading = ref(false)
 const pageLoading = ref(false)
 const submitLoading = ref(false)
 const batchDeleteVisible = ref(false)
+const printDialogVisible = ref(false)
+const printVoucherIds = ref<number[]>([])
+const batchPrintVisible = ref(false)
 const draftListRef = ref<any>(null)
 const selectedDraftId = ref<string>('')
 
@@ -174,6 +220,23 @@ function handleDeleteDraftSelected() {
   if (!selectedDraftId.value) return
   const row = sortedVouchers.value.find((v: any) => v.id === selectedDraftId.value)
   if (row) handleDeleteDraft(row)
+}
+
+function handlePrint() {
+  if (!selectedDraftId.value) return
+  const row = sortedVouchers.value.find((v: any) => v.id === selectedDraftId.value)
+  if (row && row.id) {
+    printVoucherIds.value = [row.id]
+    printDialogVisible.value = true
+  }
+}
+
+// 在编辑对话框内打印当前凭证
+function handlePrintCurrent() {
+  if (form.value.id) {
+    printVoucherIds.value = [form.value.id]
+    printDialogVisible.value = true
+  }
 }
 
 async function handleInsertDraft() {
@@ -296,6 +359,30 @@ const {
   onAmountChange,
   getAuxCategoryIds,
 } = useAuxiliaryAccounting(accounts, auxCategories, auxItems, currentEntry)
+
+// 快速新增科目
+const tableRefForTree = ref<any>(null)
+const {
+  form: accountForm,
+  parentUsage,
+  getAvailableCats,
+  getAuxItemsByCat,
+  onAuxCatChange,
+  addAux,
+  removeAux,
+  onParentChange,
+  createAddForm,
+  buildSavePayload,
+} = useAccountForm(auxCategories, auxItems)
+const { treeData, getTreeSelectData, flattenRows: treeFlattenRows } = useAccountTree(accounts, tableRefForTree)
+const treeSelectData = computed(() => getTreeSelectData(accountForm.value.id))
+const quickAddAccountVisible = ref(false)
+const quickAddRow = ref<any>(null)
+const quickAccountSaving = ref(false)
+
+function handleQuickParentChange(parentId: string) {
+  onParentChange(parentId, treeData.value, treeFlattenRows)
+}
 
 // 操作历史记录
 const { addRecord } = useOperationHistory()
@@ -519,6 +606,47 @@ function handleClearCurrentEntry() {
   currentEntry.value = null
 }
 
+async function handleAddAuxItem(item: { id: string; name: string; type: string }, catCode: string) {
+  // 刷新辅助项目列表
+  const res = await request.get<any[]>('/base/aux-items')
+  auxItems.value = res.data
+  // 自动选中新建的项目
+  if (currentEntry.value) {
+    currentEntry.value[`_${catCode}_id`] = item.id
+  }
+}
+
+function handleQuickCreateAccount(row: any) {
+  quickAddRow.value = row
+  accountForm.value = createAddForm()
+  quickAddAccountVisible.value = true
+}
+
+async function saveQuickAccount() {
+  quickAccountSaving.value = true
+  try {
+    const payload = buildSavePayload()
+    await request.post('/base/accounts', payload)
+    quickAddAccountVisible.value = false
+    // 刷新科目列表
+    await fetchOptions()
+    // 自动选中新科目
+    const acc = accounts.value.find((a: any) => a.code === payload.code)
+    if (acc && quickAddRow.value) {
+      quickAddRow.value.account_id = acc.id
+      quickAddRow.value.account_code = acc.code
+      quickAddRow.value.account_name = acc.name
+      onAccountChange(quickAddRow.value)
+      setCurrentEntry(quickAddRow.value)
+    }
+    showSuccess('科目新增成功')
+  } catch (error: any) {
+    showOperationError('新增科目', error)
+  } finally {
+    quickAccountSaving.value = false
+  }
+}
+
 async function handleAiSummary() {
   try {
     const res = await request.post<{ summary: string }>('/voucher/vouchers/ai/summary', {
@@ -544,7 +672,7 @@ async function handleSubmit() {
   }
 
   const validEntries = form.value.entries.filter(
-    (e: any) => e.account_id && ((e.debit_amount || 0) > 0 || (e.credit_amount || 0) > 0)
+    (e: any) => e.account_id && ((e.debit_amount || 0) !== 0 || (e.credit_amount || 0) !== 0)
   )
 
   if (validEntries.length === 0) {
@@ -600,8 +728,8 @@ async function handleSubmit() {
       const credit = e.credit_amount || 0
       return {
         ...e,
-        direction: debit > 0 ? 'debit' : 'credit',
-        amount: debit > 0 ? debit : credit,
+        direction: debit !== 0 ? 'debit' : 'credit',
+        amount: debit !== 0 ? debit : credit,
       }
     }),
   }
@@ -650,6 +778,15 @@ async function handleSubmit() {
     showOperationError(dialogMode.value === 'edit' ? '修改凭证' : '保存凭证', error)
   } finally {
     submitLoading.value = false
+  }
+}
+
+async function handleSubmitAndAdd() {
+  await handleSubmit()
+  // handleSubmit 成功后 dialogVisible 会变为 false，再重新打开新增
+  if (!dialogVisible.value) {
+    await nextTick()
+    openVoucherDialog('add')
   }
 }
 
@@ -716,6 +853,16 @@ async function fetchOptions() {
 }
 
 const route = useRoute()
+const router = useRouter()
+
+function handleActionQuery() {
+  if (route.query.action === 'add') {
+    router.replace({ query: {} })
+    nextTick(() => {
+      openVoucherDialog('add')
+    })
+  }
+}
 
 onMounted(async () => {
   pageLoading.value = true
@@ -724,13 +871,13 @@ onMounted(async () => {
   } finally {
     pageLoading.value = false
   }
+  handleActionQuery()
+})
 
-  // 从主页"新增凭证"跳转过来时，数据加载完成后自动打开新增对话框
-  if (route.query.action === 'add') {
-    nextTick(() => {
-      openVoucherDialog('add')
-    })
-  }
+onActivated(() => {
+  fetchOptions()
+  fetchDraftVouchers()
+  handleActionQuery()
 })
 
 // 键盘快捷键

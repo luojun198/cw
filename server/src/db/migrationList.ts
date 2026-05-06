@@ -269,4 +269,61 @@ export const migrations: Migration[] = [
       `)
     }
   },
+  {
+    version: 6,
+    name: 'add_print_templates_table',
+    up: (db) => {
+      // 添加打印模版表
+      db.exec(`
+        -- 创建打印模版表
+        CREATE TABLE IF NOT EXISTS print_templates (
+          id TEXT PRIMARY KEY,
+          account_set_id TEXT NOT NULL REFERENCES account_sets(id),
+          name TEXT NOT NULL,
+          paper_size TEXT NOT NULL DEFAULT 'custom' CHECK(paper_size IN ('custom', 'A4', 'A5')),
+          paper_width REAL NOT NULL DEFAULT 220,
+          paper_height REAL NOT NULL DEFAULT 140,
+          margin_top REAL NOT NULL DEFAULT 15,
+          margin_bottom REAL NOT NULL DEFAULT 15,
+          margin_left REAL NOT NULL DEFAULT 10,
+          margin_right REAL NOT NULL DEFAULT 10,
+          elements TEXT NOT NULL DEFAULT '[]',
+          is_default INTEGER NOT NULL DEFAULT 0,
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+        );
+
+        -- 创建索引
+        CREATE INDEX IF NOT EXISTS idx_print_templates_account_set
+          ON print_templates(account_set_id);
+        CREATE INDEX IF NOT EXISTS idx_print_templates_default
+          ON print_templates(account_set_id, is_default);
+      `)
+    },
+    down: (db) => {
+      // 回滚：删除打印模版表
+      db.exec(`
+        DROP INDEX IF EXISTS idx_print_templates_account_set;
+        DROP INDEX IF EXISTS idx_print_templates_default;
+        DROP TABLE IF EXISTS print_templates;
+      `)
+    }
+  },
+  {
+    version: 7,
+    name: 'add_init_balance_detail_fields',
+    up: (db) => {
+      // 期初余额表新增年初借贷方、账前借贷方字段
+      db.prepare('ALTER TABLE init_balances ADD COLUMN opening_debit REAL NOT NULL DEFAULT 0').run()
+      db.prepare('ALTER TABLE init_balances ADD COLUMN opening_credit REAL NOT NULL DEFAULT 0').run()
+      db.prepare('ALTER TABLE init_balances ADD COLUMN pre_book_debit REAL NOT NULL DEFAULT 0').run()
+      db.prepare('ALTER TABLE init_balances ADD COLUMN pre_book_credit REAL NOT NULL DEFAULT 0').run()
+    },
+    down: (db) => {
+      db.prepare('ALTER TABLE init_balances DROP COLUMN opening_debit').run()
+      db.prepare('ALTER TABLE init_balances DROP COLUMN opening_credit').run()
+      db.prepare('ALTER TABLE init_balances DROP COLUMN pre_book_debit').run()
+      db.prepare('ALTER TABLE init_balances DROP COLUMN pre_book_credit').run()
+    }
+  },
 ]

@@ -4,7 +4,7 @@
       <h3>凭证类型</h3>
       <el-button type="primary" @click="openDialog('add')">新增类型</el-button>
     </div>
-    <el-table :data="list" stripe border>
+    <el-table :data="list" stripe border height="100%">
       <el-table-column prop="name" label="类型名称" />
       <el-table-column prop="code" label="编码" width="100" />
       <el-table-column prop="prefix" label="前缀" width="100" />

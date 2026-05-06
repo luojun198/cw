@@ -42,6 +42,14 @@
             </template>
           </el-table-column>
           <el-table-column prop="voucherType" label="凭证类型" width="100" />
+          <el-table-column prop="periodType" label="结转周期" width="100">
+            <template #default="{ row }">
+              <el-select v-model="row.periodType" size="small" style="width: 80px">
+                <el-option label="月度" value="monthly" />
+                <el-option label="年末" value="yearly" />
+              </el-select>
+            </template>
+          </el-table-column>
           <el-table-column width="80">
             <template #default="scope">
               <el-button size="small" @click.stop="deleteTransferType(scope.row)">删除</el-button>
@@ -179,6 +187,7 @@ interface TransferType {
   code: string
   name: string
   voucherType: string
+  periodType: string
 }
 
 interface TransferItem {
@@ -354,7 +363,8 @@ function addTransferType() {
     id: Date.now().toString(),
     code: (transferTypes.value.length + 1).toString().padStart(2, '0'),
     name: '新结转类型',
-    voucherType: '结转'
+    voucherType: '结转',
+    periodType: 'monthly',
   }
   transferTypes.value.push(newType)
   selectedType.value = newType

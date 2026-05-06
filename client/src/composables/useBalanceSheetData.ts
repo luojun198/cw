@@ -1,5 +1,6 @@
 import { computed } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
+import { formatAmount as formatAmountUtil } from '@/utils/format'
 
 // 科目名称映射
 export const accountNames: Record<string, string> = {
@@ -108,10 +109,7 @@ export const deductionNames: Record<string, string> = {
 
 export function formatAmount(val: number | null | undefined): string {
   if (val === null || val === undefined || val === 0) return '—'
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val)
+  return formatAmountUtil(val)
 }
 
 export function useBalanceSheetData(reportData: Ref<any>) {

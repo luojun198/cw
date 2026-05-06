@@ -13,6 +13,7 @@ export const migrations: Migration[] = [
           code TEXT NOT NULL,
           name TEXT NOT NULL,
           voucher_type TEXT DEFAULT '结转',
+          period_type TEXT DEFAULT 'monthly',
           created_at TEXT NOT NULL DEFAULT (datetime('now')),
           updated_at TEXT NOT NULL DEFAULT (datetime('now')),
           UNIQUE(account_set_id, code)
@@ -218,6 +219,32 @@ export const migrations: Migration[] = [
         ALTER TABLE report_sheets DROP COLUMN col_widths;
         ALTER TABLE report_sheets DROP COLUMN row_heights;
       `)
+    },
+  },
+  {
+    version: 3,
+    name: 'add_transfer_type_period_type',
+    up: (db) => {
+      db.exec(`ALTER TABLE transfer_types ADD COLUMN period_type TEXT DEFAULT 'monthly'`)
+    },
+    down: (db) => {
+      db.exec(`ALTER TABLE transfer_types DROP COLUMN period_type`)
+    },
+  },
+  {
+    version: 4,
+    name: 'add_init_balance_detail_fields',
+    up: (db) => {
+      db.prepare('ALTER TABLE init_balances ADD COLUMN opening_debit REAL NOT NULL DEFAULT 0').run()
+      db.prepare('ALTER TABLE init_balances ADD COLUMN opening_credit REAL NOT NULL DEFAULT 0').run()
+      db.prepare('ALTER TABLE init_balances ADD COLUMN pre_book_debit REAL NOT NULL DEFAULT 0').run()
+      db.prepare('ALTER TABLE init_balances ADD COLUMN pre_book_credit REAL NOT NULL DEFAULT 0').run()
+    },
+    down: (db) => {
+      db.prepare('ALTER TABLE init_balances DROP COLUMN opening_debit').run()
+      db.prepare('ALTER TABLE init_balances DROP COLUMN opening_credit').run()
+      db.prepare('ALTER TABLE init_balances DROP COLUMN pre_book_debit').run()
+      db.prepare('ALTER TABLE init_balances DROP COLUMN pre_book_credit').run()
     },
   },
 ]

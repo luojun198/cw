@@ -400,12 +400,20 @@ router.get('/balance', (req: AuthRequest, res) => {
     if (row.init_balance > 0) {
       if (row.direction === 'debit') summary.totalInitDebit += row.init_balance
       else summary.totalInitCredit += row.init_balance
+    } else if (row.init_balance < 0) {
+      // 负数余额反向显示
+      if (row.direction === 'debit') summary.totalInitCredit += Math.abs(row.init_balance)
+      else summary.totalInitDebit += Math.abs(row.init_balance)
     }
     summary.totalDebit += row.current_debit
     summary.totalCredit += row.current_credit
     if (row.end_balance > 0) {
       if (row.direction === 'debit') summary.totalEndDebit += row.end_balance
       else summary.totalEndCredit += row.end_balance
+    } else if (row.end_balance < 0) {
+      // 负数余额反向显示
+      if (row.direction === 'debit') summary.totalEndCredit += Math.abs(row.end_balance)
+      else summary.totalEndDebit += Math.abs(row.end_balance)
     }
   }
 
@@ -667,65 +675,84 @@ router.get('/aux-balance', (req: AuthRequest, res) => {
   const { aux_category_ids, aux_ids, start_date, end_date, account_code, include_unposted } = req.query
   const accountSetId = req.accountSetId!
 
-  // 参数验证
-  if (!aux_category_ids || !aux_ids) {
-    return res.status(400).json({ code: 1, error: '缺少必要参数：aux_category_ids 和 aux_ids' })
+  // 参数验证：aux_category_ids 必填，aux_ids 可选（不传时查类别下所有项目）
+  if (!aux_category_ids) {
+    return res.status(400).json({ code: 1, error: '缺少必要参数：aux_category_ids' })
   }
 
-  // 将逗号分隔的字符串转为数组
   const categoryIdArray = (aux_category_ids as string).split(',').filter(id => id.trim())
-  const auxIdArray = (aux_ids as string).split(',').filter(id => id.trim())
+  const auxIdArray = aux_ids ? (aux_ids as string).split(',').filter(id => id.trim()) : []
 
-  if (categoryIdArray.length === 0 || auxIdArray.length === 0) {
-    return res.status(400).json({ code: 1, error: '参数不能为空' })
+  if (categoryIdArray.length === 0) {
+    return res.status(400).json({ code: 1, error: '辅助类别不能为空' })
   }
 
-  // 构建凭证状态过滤条件
   const statusValue = include_unposted === 'true' ? ['draft', 'audited', 'posted'] : ['posted']
 
   try {
-    // 查询辅助项目信息，获取它们的类别code
-    const itemsPlaceholders = auxIdArray.map(() => '?').join(',')
-    const itemsSql = `
-      SELECT ai.id, ai.code, ai.name, ai.type, ac.code as category_code, ac.name as category_name
-      FROM aux_items ai
-      LEFT JOIN aux_categories ac ON ac.id = ai.type
-      WHERE ai.id IN (${itemsPlaceholders}) AND ai.account_set_id = ?
-    `
-    const items = db.prepare(itemsSql).all(...auxIdArray, accountSetId) as any[]
+    // 查询辅助项目信息：如果指定了 aux_ids 则按 ID 查，否则查类别下所有项目
+    let items: any[]
+    if (auxIdArray.length > 0) {
+      const itemsPlaceholders = auxIdArray.map(() => '?').join(',')
+      const itemsSql = `
+        SELECT ai.id, ai.code, ai.name, ai.type as category_id, ac.code as category_code, ac.name as category_name
+        FROM aux_items ai
+        LEFT JOIN aux_categories ac ON ac.id = ai.type
+        WHERE ai.id IN (${itemsPlaceholders}) AND ai.account_set_id = ?
+      `
+      items = db.prepare(itemsSql).all(...auxIdArray, accountSetId) as any[]
+    } else {
+      // 查询所选类别下的所有辅助项目
+      const catPlaceholders = categoryIdArray.map(() => '?').join(',')
+      const itemsSql = `
+        SELECT ai.id, ai.code, ai.name, ai.type as category_id, ac.code as category_code, ac.name as category_name
+        FROM aux_items ai
+        LEFT JOIN aux_categories ac ON ac.id = ai.type
+        WHERE ai.type IN (${catPlaceholders}) AND ai.account_set_id = ?
+        ORDER BY ac.code, ai.code
+      `
+      items = db.prepare(itemsSql).all(...categoryIdArray, accountSetId) as any[]
+    }
 
     if (items.length === 0) {
-      return res.json({ code: 0, data: [] })
+      return res.json({ code: 0, data: [], categoryFields: {} })
     }
 
-    // 按类别分组查询
+    // 查询所选类别的自定义字段定义
+    const catPlaceholders = categoryIdArray.map(() => '?').join(',')
+    const fieldDefs = db.prepare(`
+      SELECT f.category_id, f.field_key, f.field_name, f.sort_order
+      FROM aux_category_fields f
+      WHERE f.category_id IN (${catPlaceholders}) AND f.is_enabled = 1
+      ORDER BY f.category_id, f.sort_order
+    `).all(...categoryIdArray) as any[]
+
+    // 按 category_id 分组字段定义，同时记录 category_code
+    const categoryMeta = db.prepare(`
+      SELECT id, code, name FROM aux_categories WHERE id IN (${catPlaceholders})
+    `).all(...categoryIdArray) as any[]
+
+    // categoryFields: { [category_code]: { name, fields: [{field_key, field_name}] } }
+    const categoryFields: Record<string, { name: string; fields: { field_key: string; field_name: string }[] }> = {}
+    for (const cat of categoryMeta) {
+      categoryFields[cat.code] = {
+        name: cat.name,
+        fields: fieldDefs.filter(f => f.category_id === cat.id).map(f => ({ field_key: f.field_key, field_name: f.field_name })),
+      }
+    }
+
+    // 按类别分组查询余额
     const results: any[] = []
 
-    // 字段映射：根据类别code映射到voucher_entries表的字段
-    const fieldMap: Record<string, string> = {
-      dept: 'dept_id',
-      project: 'project_id',
-      supplier: 'supplier_id',
-      person: 'person_id',
-      func_class: 'func_class_id'
-    }
-
     for (const item of items) {
-      const fieldName = fieldMap[item.category_code]
-      if (!fieldName) continue
-
-      const nameField = fieldName.replace('_id', '_name')
-
-      // 构建基础查询条件（不包含日期范围）
       const statusPlaceholders = statusValue.map(() => '?').join(',')
       const baseConditions = [
         've.account_set_id = ?',
         `v.status IN (${statusPlaceholders})`,
-        `ve.${fieldName} = ?`
+        `json_extract(ve.aux_data, '$.${item.category_code}.id') = ?`,
       ]
       const baseParams: any[] = [accountSetId, ...statusValue, item.id]
 
-      // 添加科目编码筛选
       if (account_code) {
         baseConditions.push('ve.account_code LIKE ?')
         baseParams.push(`${account_code}%`)
@@ -736,7 +763,9 @@ router.get('/aux-balance', (req: AuthRequest, res) => {
           '${item.id}' as aux_id,
           '${item.code}' as aux_code,
           '${item.name}' as aux_name,
+          '${item.category_code}' as category_code,
           '${item.category_name}' as category_name,
+          MAX(json_extract(ve.aux_data, '$.${item.category_code}.field_values')) as field_values_json,
           COALESCE(SUM(CASE
             WHEN v.voucher_date < ? THEN
               CASE WHEN ve.direction = 'debit' THEN ve.amount ELSE -ve.amount END
@@ -751,29 +780,37 @@ router.get('/aux-balance', (req: AuthRequest, res) => {
             THEN ve.amount ELSE 0
           END), 0) as current_credit,
           COALESCE(SUM(CASE
-            WHEN ve.direction = 'debit' THEN ve.amount ELSE -ve.amount END
-          ), 0) as end_balance
+            WHEN v.voucher_date <= ? THEN
+              CASE WHEN ve.direction = 'debit' THEN ve.amount ELSE -ve.amount END
+            ELSE 0
+          END), 0) as end_balance
         FROM voucher_entries ve
         JOIN vouchers v ON v.id = ve.voucher_id
         WHERE ${baseConditions.join(' AND ')}
       `
 
       const balanceParams = [
-        ...baseParams,
         start_date || '1900-01-01',
         start_date || '1900-01-01',
         end_date || '9999-12-31',
         start_date || '1900-01-01',
-        end_date || '9999-12-31'
+        end_date || '9999-12-31',
+        end_date || '9999-12-31',
+        ...baseParams,
       ]
 
       const result = db.prepare(sql).get(...balanceParams) as any
       if (result && (result.init_balance !== 0 || result.current_debit !== 0 || result.current_credit !== 0 || result.end_balance !== 0)) {
-        results.push(result)
+        // 解析 field_values_json
+        let field_values: Record<string, any> = {}
+        try {
+          if (result.field_values_json) field_values = JSON.parse(result.field_values_json)
+        } catch {}
+        results.push({ ...result, field_values, field_values_json: undefined })
       }
     }
 
-    res.json({ code: 0, data: results })
+    res.json({ code: 0, data: results, categoryFields })
   } catch (error: any) {
     console.error('辅助项目余额表查询失败:', error)
     res.status(500).json({ code: 1, error: error.message || '查询失败' })
@@ -799,16 +836,16 @@ router.get('/aux-detail', (req: AuthRequest, res) => {
   } = req.query
   const accountSetId = req.accountSetId!
 
-  // 参数验证
-  if (!aux_category_ids || !aux_ids) {
-    return res.status(400).json({ code: 1, error: '缺少必要参数：aux_category_ids 和 aux_ids' })
+  // 参数验证：aux_category_ids 必填，aux_ids 可选（不传时查类别下所有项目）
+  if (!aux_category_ids) {
+    return res.status(400).json({ code: 1, error: '缺少必要参数：aux_category_ids' })
   }
 
   const categoryIdArray = (aux_category_ids as string).split(',').filter(id => id.trim())
-  const auxIdArray = (aux_ids as string).split(',').filter(id => id.trim())
+  const auxIdArray = aux_ids ? (aux_ids as string).split(',').filter(id => id.trim()) : []
 
-  if (categoryIdArray.length === 0 || auxIdArray.length === 0) {
-    return res.status(400).json({ code: 1, error: '参数不能为空' })
+  if (categoryIdArray.length === 0) {
+    return res.status(400).json({ code: 1, error: '辅助类别不能为空' })
   }
 
   // 构建凭证状态过滤条件
@@ -816,41 +853,66 @@ router.get('/aux-detail', (req: AuthRequest, res) => {
   const statusPlaceholders = statusValue.map(() => '?').join(',')
 
   try {
-    // 查询辅助项目信息
-    const itemsPlaceholders = auxIdArray.map(() => '?').join(',')
-    const itemsSql = `
-      SELECT ai.id, ai.code, ai.name, ai.type, ac.code as category_code, ac.name as category_name
-      FROM aux_items ai
-      LEFT JOIN aux_categories ac ON ac.id = ai.type
-      WHERE ai.id IN (${itemsPlaceholders}) AND ai.account_set_id = ?
-    `
-    const items = db.prepare(itemsSql).all(...auxIdArray, accountSetId) as any[]
-
-    if (items.length === 0) {
-      return res.json({ code: 0, data: [], initBalance: 0 })
+    // 查询辅助项目信息：如果指定了 aux_ids 则按 ID 查，否则查类别下所有项目
+    let items: any[]
+    if (auxIdArray.length > 0) {
+      const itemsPlaceholders = auxIdArray.map(() => '?').join(',')
+      const itemsSql = `
+        SELECT ai.id, ai.code, ai.name, ai.type, ac.code as category_code, ac.name as category_name
+        FROM aux_items ai
+        LEFT JOIN aux_categories ac ON ac.id = ai.type
+        WHERE ai.id IN (${itemsPlaceholders}) AND ai.account_set_id = ?
+      `
+      items = db.prepare(itemsSql).all(...auxIdArray, accountSetId) as any[]
+    } else {
+      const catPlaceholders = categoryIdArray.map(() => '?').join(',')
+      const itemsSql = `
+        SELECT ai.id, ai.code, ai.name, ai.type, ac.code as category_code, ac.name as category_name
+        FROM aux_items ai
+        LEFT JOIN aux_categories ac ON ac.id = ai.type
+        WHERE ai.type IN (${catPlaceholders}) AND ai.account_set_id = ?
+        ORDER BY ac.code, ai.code
+      `
+      items = db.prepare(itemsSql).all(...categoryIdArray, accountSetId) as any[]
     }
 
-    // 字段映射
-    const fieldMap: Record<string, string> = {
-      dept: 'dept_id',
-      project: 'project_id',
-      supplier: 'supplier_id',
-      person: 'person_id',
-      func_class: 'func_class_id'
+    if (items.length === 0) {
+      return res.json({ code: 0, data: [], initBalance: 0, categoryFields: {} })
+    }
+
+    // 查询所选类别的自定义字段定义
+    const catPlaceholders2 = categoryIdArray.map(() => '?').join(',')
+    const fieldDefs = db.prepare(`
+      SELECT f.category_id, f.field_key, f.field_name, f.sort_order
+      FROM aux_category_fields f
+      WHERE f.category_id IN (${catPlaceholders2}) AND f.is_enabled = 1
+      ORDER BY f.category_id, f.sort_order
+    `).all(...categoryIdArray) as any[]
+
+    const categoryMeta = db.prepare(`
+      SELECT id, code, name FROM aux_categories WHERE id IN (${catPlaceholders2})
+    `).all(...categoryIdArray) as any[]
+
+    const categoryFields: Record<string, { name: string; fields: { field_key: string; field_name: string }[] }> = {}
+    for (const cat of categoryMeta) {
+      categoryFields[cat.code] = {
+        name: cat.name,
+        fields: fieldDefs.filter((f: any) => f.category_id === cat.id).map((f: any) => ({ field_key: f.field_key, field_name: f.field_name })),
+      }
     }
 
     let allEntries: any[] = []
     let totalInitBalance = 0
 
     for (const item of items) {
-      const fieldName = fieldMap[item.category_code]
-      if (!fieldName) continue
+      // 辅助核算数据存储在 aux_data JSON 字段，用 json_extract 匹配
+      const auxCondition = `json_extract(ve.aux_data, '$.${item.category_code}.id') = ?`
 
       // 构建条件
       const conditions = [
         've.account_set_id = ?',
         `v.status IN (${statusPlaceholders})`,
-        `ve.${fieldName} = ?`
+        auxCondition,
       ]
       const params: any[] = [accountSetId, ...statusValue, item.id]
 
@@ -891,7 +953,7 @@ router.get('/aux-detail', (req: AuthRequest, res) => {
       const initConditions = [
         've.account_set_id = ?',
         `v.status IN (${statusPlaceholders})`,
-        `ve.${fieldName} = ?`
+        `json_extract(ve.aux_data, '$.${item.category_code}.id') = ?`,
       ]
       const initParams: any[] = [accountSetId, ...statusValue, item.id]
       if (start_date) {
@@ -911,7 +973,7 @@ router.get('/aux-detail', (req: AuthRequest, res) => {
       const initResult = db.prepare(initSql).get(...initParams) as any
       totalInitBalance += initResult?.init_balance || 0
 
-      // 查询明细分录
+      // 查询明细分录（增加 category_code 和 field_values）
       const detailSql = `
         SELECT
           v.voucher_date,
@@ -923,13 +985,24 @@ router.get('/aux-detail', (req: AuthRequest, res) => {
           ve.amount,
           '${item.id}' as aux_id,
           '${item.name}' as aux_name,
-          '${item.category_name}' as category_name
+          '${item.category_code}' as category_code,
+          '${item.category_name}' as category_name,
+          json_extract(ve.aux_data, '$.${item.category_code}.field_values') as field_values_json
         FROM voucher_entries ve
         JOIN vouchers v ON v.id = ve.voucher_id
         WHERE ${conditions.join(' AND ')}
         ORDER BY v.voucher_date, v.voucher_no, ve.seq
       `
       const entries = db.prepare(detailSql).all(...params) as any[]
+      // 解析 field_values_json
+      for (const entry of entries) {
+        let field_values: Record<string, any> = {}
+        try {
+          if (entry.field_values_json) field_values = JSON.parse(entry.field_values_json)
+        } catch {}
+        entry.field_values = field_values
+        delete entry.field_values_json
+      }
       allEntries.push(...entries)
     }
 
@@ -945,6 +1018,7 @@ router.get('/aux-detail', (req: AuthRequest, res) => {
       code: 0,
       data: allEntries,
       initBalance: totalInitBalance,
+      categoryFields,
     })
   } catch (error: any) {
     console.error('辅助项目明细账查询失败:', error)

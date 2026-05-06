@@ -23,12 +23,26 @@ router.get('/account-sets', (req: AuthRequest, res) => {
   }>
   const hasCreatedAt = accountSetColumns.some(column => column.name === 'created_at')
   const orderBy = hasCreatedAt ? 'created_at DESC' : 'name ASC'
-  const list = db.prepare(`SELECT * FROM account_sets ORDER BY ${orderBy}`).all()
-  res.json({ code: 0, data: list })
+  const list = db.prepare(`SELECT * FROM account_sets ORDER BY ${orderBy}`).all() as any[]
+  // 附带每个账套的科目级数和科目长度
+  const result = list.map(row => {
+    const levels = db.prepare(
+      `SELECT param_value FROM system_params WHERE account_set_id=? AND param_key='account_levels' LIMIT 1`
+    ).get(row.id) as any
+    const lengths = db.prepare(
+      `SELECT param_value FROM system_params WHERE account_set_id=? AND param_key='account_code_lengths' LIMIT 1`
+    ).get(row.id) as any
+    return {
+      ...row,
+      account_levels: levels ? parseInt(levels.param_value) || 6 : 6,
+      account_code_lengths: lengths ? (() => { try { return JSON.parse(lengths.param_value) } catch { return [4,2,2,2,2,2] } })() : [4,2,2,2,2,2],
+    }
+  })
+  res.json({ code: 0, data: result })
 })
 
 router.post('/account-sets', operationLog('创建账套', '系统管理'), (req: AuthRequest, res) => {
-  const { name, code, credit_code, fiscal_year, start_date, unit_leader, chief_accountant } =
+  const { name, code, credit_code, fiscal_year, start_date, unit_leader, chief_accountant, account_levels, account_code_lengths } =
     req.body
   if (!name) {
     return res.status(400).json({ code: 400, message: '名称不能为空' })
@@ -65,6 +79,16 @@ router.post('/account-sets', operationLog('创建账套', '系统管理'), (req:
     unit_leader,
     chief_accountant
   )
+
+  // 写入科目级数和科目长度到 system_params
+  const finalLevels = account_levels || 6
+  const finalLengths = Array.isArray(account_code_lengths) ? account_code_lengths : [4,2,2,2,2,2]
+  db.prepare(
+    `INSERT OR REPLACE INTO system_params (id, account_set_id, param_key, param_value) VALUES (?, ?, ?, ?)`
+  ).run(uuidv4(), id, 'account_levels', String(finalLevels))
+  db.prepare(
+    `INSERT OR REPLACE INTO system_params (id, account_set_id, param_key, param_value) VALUES (?, ?, ?, ?)`
+  ).run(uuidv4(), id, 'account_code_lengths', JSON.stringify(finalLengths.slice(0, finalLevels)))
 
   // 自动创建超级管理员 admin/admin123
   const adminRole = db.prepare("SELECT id FROM roles WHERE code = 'admin'").get() as any
@@ -474,10 +498,43 @@ router.delete('/roles/:id', operationLog('删除角色', '系统管理'), (req: 
 router.get('/params', (req: AuthRequest, res) => {
   const db = getDb()
   const { accountSetId } = req.query
+  const asId = (accountSetId as string) || req.accountSetId
   const list = db
     .prepare(`SELECT * FROM system_params WHERE account_set_id IS NULL OR account_set_id = ?`)
-    .all(accountSetId || req.accountSetId)
-  res.json({ code: 0, data: list })
+    .all(asId)
+
+  // 附带账套基本信息（建账日期）
+  const accountSet = db.prepare('SELECT name, start_date FROM account_sets WHERE id = ?').get(asId) as any
+
+  // 当前会计区间：取最新凭证的 year/period，若无凭证则取 fiscal_year + 当前月
+  const latestVoucher = db
+    .prepare('SELECT year, period FROM vouchers WHERE account_set_id = ? AND status = ? ORDER BY year DESC, period DESC LIMIT 1')
+    .get(asId, 'posted') as any
+  let currentYear: number
+  let currentPeriod: number
+  if (latestVoucher) {
+    currentYear = latestVoucher.year
+    currentPeriod = latestVoucher.period
+  } else {
+    const as = db.prepare('SELECT fiscal_year FROM account_sets WHERE id = ?').get(asId) as any
+    currentYear = as?.fiscal_year || new Date().getFullYear()
+    currentPeriod = new Date().getMonth() + 1
+  }
+
+  // 使用单位名称：优先读 system_params 中的 unit_name，没有则回退到账套名称
+  const unitNameParam = list.find((p: any) => p.param_key === 'unit_name') as any
+  const unitName = unitNameParam?.param_value || accountSet?.name || ''
+
+  res.json({
+    code: 0,
+    data: list,
+    meta: {
+      unit_name: unitName,
+      start_date: accountSet?.start_date || '',
+      current_year: currentYear,
+      current_period: currentPeriod,
+    },
+  })
 })
 
 router.put('/params', operationLog('修改系统参数', '系统管理'), (req: AuthRequest, res) => {
@@ -505,6 +562,7 @@ router.get('/transfer-types', (req: AuthRequest, res) => {
     code: item.code,
     name: item.name,
     voucherType: item.voucher_type,
+    periodType: item.period_type || 'monthly',
   }))
   res.json({ code: 0, data: list })
 })
@@ -518,11 +576,10 @@ router.put('/transfer-types', operationLog('修改结转类型', '系统管理')
 
   // 插入新的类型
   const insert = db.prepare(
-    'INSERT INTO transfer_types (id, code, name, voucher_type, account_set_id) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO transfer_types (id, code, name, voucher_type, period_type, account_set_id) VALUES (?, ?, ?, ?, ?, ?)'
   )
-
   for (const t of types) {
-    insert.run(t.id || uuidv4(), t.code, t.name, t.voucherType || '结转', req.accountSetId)
+    insert.run(t.id || uuidv4(), t.code, t.name, t.voucherType || '结转', t.periodType || 'monthly', req.accountSetId)
   }
 
   res.json({ code: 0, message: '保存成功' })

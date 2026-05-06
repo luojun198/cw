@@ -5,7 +5,7 @@
       <el-button type="primary" @click="openDialog('add')">新增角色</el-button>
     </div>
 
-    <el-table :data="list" stripe border>
+    <el-table :data="list" stripe border height="100%">
       <el-table-column prop="name" label="角色名称" width="150" />
       <el-table-column prop="code" label="角色编码" width="120" />
       <el-table-column prop="description" label="描述" />

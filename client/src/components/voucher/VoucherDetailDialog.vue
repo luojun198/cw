@@ -57,8 +57,8 @@
         <div class="footer-left">
           <el-button v-if="detail?.status === 'draft'" type="success" @click="handleAudit">审核</el-button>
           <el-button v-if="detail?.status === 'audited'" type="warning" @click="handleUnAudit">反审核</el-button>
-          <el-button v-if="detail?.status === 'audited'" type="primary" @click="handlePost">过账</el-button>
-          <el-button v-if="detail?.status === 'posted'" type="warning" @click="handleUnPost">反过账</el-button>
+          <el-button v-if="detail?.status === 'audited'" type="primary" @click="handlePost">记账</el-button>
+          <el-button v-if="detail?.status === 'posted'" type="warning" @click="handleUnPost">反记账</el-button>
         </div>
         <div class="footer-right">
           <el-button v-if="detail?.status !== 'draft'" type="primary" @click="handleEdit">编辑</el-button>

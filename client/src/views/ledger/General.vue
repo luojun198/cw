@@ -41,7 +41,7 @@
         </el-checkbox-group>
         <el-divider direction="vertical" />
         <el-checkbox v-model="filters.include_unposted" @change="fetchData">
-          统计未过账凭证
+          统计未记账凭证
         </el-checkbox>
         <el-divider direction="vertical" />
         <el-button type="primary" @click="fetchData">查询</el-button>
@@ -91,24 +91,24 @@
         </el-table-column>
         <el-table-column label="余额" :width="widths['余额'] || 100" align="right">
           <template #default="{ row }">
-            {{ row.init_balance !== 0 ? formatMoney(Math.abs(row.init_balance)) : (hideZero ? '' : formatMoney(0)) }}
+            {{ row.init_balance !== 0 ? formatAmount(Math.abs(row.init_balance)) : (hideZero ? '' : formatAmount(0)) }}
           </template>
         </el-table-column>
       </el-table-column>
       <el-table-column label="本期发生额" align="center">
         <el-table-column label="借方" :width="widths['借方'] || 120" align="right">
-          <template #default="{ row }">{{ row.current_debit && row.current_debit > 0 ? formatMoney(row.current_debit) : (hideZero ? '' : formatMoney(0)) }}</template>
+          <template #default="{ row }">{{ row.current_debit && row.current_debit > 0 ? formatAmount(row.current_debit) : (hideZero ? '' : formatAmount(0)) }}</template>
         </el-table-column>
         <el-table-column label="贷方" :width="widths['贷方'] || 120" align="right">
-          <template #default="{ row }">{{ row.current_credit && row.current_credit > 0 ? formatMoney(row.current_credit) : (hideZero ? '' : formatMoney(0)) }}</template>
+          <template #default="{ row }">{{ row.current_credit && row.current_credit > 0 ? formatAmount(row.current_credit) : (hideZero ? '' : formatAmount(0)) }}</template>
         </el-table-column>
       </el-table-column>
       <el-table-column label="本年累计发生额" align="center">
         <el-table-column label="借方" prop="year_debit" :width="widths['year_debit'] || 120" align="right">
-          <template #default="{ row }">{{ row.year_debit && row.year_debit > 0 ? formatMoney(row.year_debit) : (hideZero ? '' : formatMoney(0)) }}</template>
+          <template #default="{ row }">{{ row.year_debit && row.year_debit > 0 ? formatAmount(row.year_debit) : (hideZero ? '' : formatAmount(0)) }}</template>
         </el-table-column>
         <el-table-column label="贷方" prop="year_credit" :width="widths['year_credit'] || 120" align="right">
-          <template #default="{ row }">{{ row.year_credit && row.year_credit > 0 ? formatMoney(row.year_credit) : (hideZero ? '' : formatMoney(0)) }}</template>
+          <template #default="{ row }">{{ row.year_credit && row.year_credit > 0 ? formatAmount(row.year_credit) : (hideZero ? '' : formatAmount(0)) }}</template>
         </el-table-column>
       </el-table-column>
       <el-table-column label="期末余额" align="center">
@@ -129,7 +129,7 @@
         </el-table-column>
         <el-table-column label="余额" prop="end_balance" :width="widths['end_balance'] || 100" align="right">
           <template #default="{ row }">
-            {{ row.end_balance !== 0 ? formatMoney(Math.abs(row.end_balance)) : (hideZero ? '' : formatMoney(0)) }}
+            {{ row.end_balance !== 0 ? formatAmount(Math.abs(row.end_balance)) : (hideZero ? '' : formatAmount(0)) }}
           </template>
         </el-table-column>
       </el-table-column>
@@ -143,6 +143,7 @@ import { useRouter } from 'vue-router'
 import request from '@/api/request'
 import type { TableColumnCtx } from 'element-plus'
 import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { formatAmount } from '@/utils/format'
 
 const router = useRouter()
 const tableRef = ref()
@@ -161,13 +162,6 @@ const filters = ref<any>({
   filter_types: ['init_balance', 'has_amount', 'has_balance'],
   include_unposted: true,
 })
-
-function formatMoney(val: number) {
-  return new Intl.NumberFormat('zh-CN', {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(val || 0)
-}
 
 function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
   const { columns, data } = param
@@ -195,27 +189,27 @@ function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
       const debitTotal = data.reduce((sum, row) => sum + (row.init_balance > 0 && row.direction === 'debit' ? row.init_balance : 0), 0)
       const creditTotal = data.reduce((sum, row) => sum + (row.init_balance > 0 && row.direction === 'credit' ? row.init_balance : 0), 0)
       const netBalance = debitTotal - creditTotal
-      sums[index] = formatMoney(Math.abs(netBalance))
+      sums[index] = formatAmount(Math.abs(netBalance))
     }
     // 本期发生额借方
     else if (index === 4) {
       const total = data.reduce((sum, row) => sum + (row.current_debit || 0), 0)
-      sums[index] = formatMoney(total)
+      sums[index] = formatAmount(total)
     }
     // 本期发生额贷方
     else if (index === 5) {
       const total = data.reduce((sum, row) => sum + (row.current_credit || 0), 0)
-      sums[index] = formatMoney(total)
+      sums[index] = formatAmount(total)
     }
     // 本年累计发生额借方
     else if (index === 6) {
       const total = data.reduce((sum, row) => sum + (row.year_debit || 0), 0)
-      sums[index] = formatMoney(total)
+      sums[index] = formatAmount(total)
     }
     // 本年累计发生额贷方
     else if (index === 7) {
       const total = data.reduce((sum, row) => sum + (row.year_credit || 0), 0)
-      sums[index] = formatMoney(total)
+      sums[index] = formatAmount(total)
     }
     // 期末余额方向
     else if (index === 8) {
@@ -229,7 +223,7 @@ function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
       const debitTotal = data.reduce((sum, row) => sum + (row.end_balance > 0 && row.direction === 'debit' ? row.end_balance : 0), 0)
       const creditTotal = data.reduce((sum, row) => sum + (row.end_balance > 0 && row.direction === 'credit' ? row.end_balance : 0), 0)
       const netBalance = debitTotal - creditTotal
-      sums[index] = formatMoney(Math.abs(netBalance))
+      sums[index] = formatAmount(Math.abs(netBalance))
     }
   })
 
