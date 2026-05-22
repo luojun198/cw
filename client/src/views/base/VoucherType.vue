@@ -1,15 +1,36 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h3>凭证类型</h3>
-      <el-button type="primary" @click="openDialog('add')">新增类型</el-button>
+  <div class="page voucher-type-page">
+    <div class="page-header voucher-type-header">
+      <div class="voucher-type-title">
+        <h3>凭证类型</h3>
+        <span>{{ list.length }} 个类型</span>
+      </div>
+      <el-button type="primary" size="small" @click="openDialog('add')">新增类型</el-button>
     </div>
-    <el-table :data="list" stripe border height="100%">
-      <el-table-column prop="name" label="类型名称" />
-      <el-table-column prop="code" label="编码" width="100" />
-      <el-table-column prop="prefix" label="前缀" width="100" />
-      <el-table-column prop="description" label="描述" />
-      <el-table-column label="操作" width="160">
+    <el-table
+      ref="tableRef"
+      :data="list"
+      stripe
+      border
+      size="small"
+      height="calc(100vh - 108px)"
+      class="voucher-type-table"
+      :row-style="{ height: '30px' }"
+      :cell-style="{ padding: '0' }"
+      :header-cell-style="{ padding: '4px 0' }"
+      @header-dragend="onDragEnd"
+    >
+      <el-table-column prop="code" label="编码" :width="colWidth('code', 120)">
+        <template #default="{ row }">
+          <span class="voucher-type-code">{{ row.code }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column prop="name" label="类型名称" :width="colWidth('name', 220)">
+        <template #default="{ row }">
+          <span class="voucher-type-name">{{ row.name }}</span>
+        </template>
+      </el-table-column>
+      <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 112)" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openDialog('edit', row)"
             >编辑</el-button
@@ -20,14 +41,10 @@
     </el-table>
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="450px">
       <el-form :model="form" label-width="100px">
-        <el-form-item label="类型名称" required><el-input v-model="form.name" /></el-form-item>
         <el-form-item label="编码" required
           ><el-input v-model="form.code" :disabled="dialogType === 'edit'"
         /></el-form-item>
-        <el-form-item label="前缀"><el-input v-model="form.prefix" /></el-form-item>
-        <el-form-item label="描述"
-          ><el-input v-model="form.description" type="textarea" :rows="2"
-        /></el-form-item>
+        <el-form-item label="类型名称" required><el-input v-model="form.name" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
@@ -42,7 +59,10 @@ import { ref, computed, onMounted } from 'vue'
 import request from '@/api/request'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm } from '@/composables/useConfirm'
+import { useBaseDataStore } from '@/stores/baseData'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
+const { tableRef, onDragEnd, colWidth } = useListColumnWidth('base_voucher_type')
 const list = ref<any[]>([])
 const dialogVisible = ref(false)
 const dialogType = ref('add')
@@ -56,19 +76,24 @@ async function fetchData() {
 
 function openDialog(t: string, row?: any) {
   dialogType.value = t
-  form.value = t === 'add' ? {} : { ...row }
+  form.value = t === 'add' ? { code: '', name: '' } : { ...row }
   dialogVisible.value = true
 }
 
 async function handleSave() {
   try {
+    const payload = {
+      ...form.value,
+      description: '',
+    }
     if (dialogType.value === 'add') {
-      await request.post('/base/voucher-types', form.value)
+      await request.post('/base/voucher-types', payload)
       showSuccess('凭证类型新增成功')
     } else {
-      await request.put(`/base/voucher-types/${form.value.id}`, form.value)
+      await request.put(`/base/voucher-types/${form.value.id}`, payload)
       showSuccess('凭证类型修改成功')
     }
+    useBaseDataStore().invalidate()
     dialogVisible.value = false
     fetchData()
   } catch (error) {
@@ -82,6 +107,7 @@ async function handleDelete(row: any) {
 
   try {
     await request.delete(`/base/voucher-types/${row.id}`)
+    useBaseDataStore().invalidate()
     showSuccess('删除成功')
     fetchData()
   } catch (error) {
@@ -94,15 +120,85 @@ onMounted(fetchData)
 
 <style scoped>
 .page {
-  padding: 16px;
+  height: calc(100vh - 60px);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--el-fill-color-lighter);
 }
+
 .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
 }
+
 .page-header h3 {
   margin: 0;
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.voucher-type-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.voucher-type-title span {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.voucher-type-table {
+  flex: 1;
+  min-height: 0;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.voucher-type-code {
+  font-family: 'SF Mono', 'Menlo', 'Consolas', monospace;
+  color: var(--el-color-primary);
+  font-weight: 600;
+}
+
+.voucher-type-name {
+  color: var(--el-text-color-primary);
+  font-weight: 500;
+}
+
+:deep(.voucher-type-table .el-table__cell) {
+  padding: 2px 0 !important;
+}
+
+:deep(.voucher-type-table th.el-table__cell) {
+  padding: 5px 0 !important;
+  background: var(--el-fill-color-light) !important;
+  color: var(--el-text-color-regular);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:deep(.voucher-type-table .el-table__row) {
+  height: 30px;
+}
+
+:deep(.voucher-type-table .cell) {
+  min-height: 24px;
+  line-height: 24px;
+  padding: 0 6px !important;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+:deep(.voucher-type-table .el-button--small) {
+  height: 22px;
+  padding: 0 4px;
 }
 </style>

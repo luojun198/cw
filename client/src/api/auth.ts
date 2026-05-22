@@ -7,16 +7,35 @@ export interface AccountSetItem {
   code: string
 }
 
-export function getAccountSets(): Promise<ApiResponse<AccountSetItem[]>> {
-  return request.get('/auth/account-sets')
+export function getAccountSets(config?: {
+  silent?: boolean
+}): Promise<ApiResponse<AccountSetItem[]>> {
+  return request.get('/auth/account-sets', {
+    skipErrorToast: config?.silent,
+  })
+}
+
+export interface UserItem {
+  username: string
+  nickname: string
+}
+
+export function getUsersByAccountSet(
+  accountSetId: string,
+  config?: { silent?: boolean }
+): Promise<ApiResponse<UserItem[]>> {
+  return request.get(`/auth/users-by-account-set/${encodeURIComponent(accountSetId)}`, {
+    skipErrorToast: config?.silent,
+  })
 }
 
 export interface LoginForm {
   username: string
   password: string
-  captcha: string
-  captchaId: string
+  captcha?: string
+  captchaId?: string
   targetAccountSetId?: string
+  forceLogin?: boolean
 }
 
 export function login(data: LoginForm): Promise<LoginResponse> {
@@ -49,6 +68,20 @@ export function switchAccountSet(accountSetId: string): Promise<SwitchAccountSet
   }) as unknown as Promise<SwitchAccountSetResponse>
 }
 
+export interface SwitchOperatorForm {
+  username: string
+  password: string
+  forceLogin?: boolean
+}
+
+export function switchOperator(data: SwitchOperatorForm): Promise<LoginResponse> {
+  // 密码错误时后端返回 401，但此场景应停留在切换对话框由调用方提示错误，不应跳登录页
+  return request.post('/auth/switch-operator', data, {
+    skipAuthRedirect: true,
+    skipErrorToast: true,
+  }) as unknown as Promise<LoginResponse>
+}
+
 export interface BackupImportResult {
   id: string
   name: string
@@ -64,17 +97,11 @@ export interface BackupImportResult {
 
 export function backupImport(
   file: File,
-  name: string,
-  code: string,
-  fiscalYear?: number,
-  startDate?: string
+  name: string
 ): Promise<ApiResponse<BackupImportResult>> {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('name', name)
-  formData.append('code', code)
-  if (fiscalYear) formData.append('fiscal_year', String(fiscalYear))
-  if (startDate) formData.append('start_date', startDate)
   return request.post('/auth/backup-import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })
@@ -99,17 +126,11 @@ export interface AcdImportResult {
 
 export function acdImport(
   file: File,
-  name: string,
-  code: string,
-  fiscalYear?: number,
-  startDate?: string
+  name: string
 ): Promise<ApiResponse<AcdImportResult>> {
   const formData = new FormData()
   formData.append('file', file)
   formData.append('name', name)
-  formData.append('code', code)
-  if (fiscalYear) formData.append('fiscal_year', String(fiscalYear))
-  if (startDate) formData.append('start_date', startDate)
   return request.post('/auth/acd-import', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })

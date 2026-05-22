@@ -34,13 +34,17 @@ export function useTableSearch<T extends Record<string, any>>(
   /**
    * 高亮匹配的文本
    */
+  function escapeHtml(raw: string): string {
+    return raw.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
+  }
+
   function highlightText(text: string | number | null | undefined): string {
     if (text === null || text === undefined) return ''
-    const str = String(text)
+    const str = escapeHtml(String(text))
     if (!searchKeyword.value.trim()) return str
 
     const keyword = searchKeyword.value.trim()
-    const regex = new RegExp(`(${escapeRegExp(keyword)})`, 'gi')
+    const regex = new RegExp(`(${escapeRegExp(escapeHtml(keyword))})`, 'gi')
     return str.replace(regex, '<mark style="background: #ffeb3b; padding: 0 2px;">$1</mark>')
   }
 

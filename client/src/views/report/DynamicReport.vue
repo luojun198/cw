@@ -39,8 +39,23 @@
           >保存模板</el-button
         >
         <el-button type="success" :loading="executing" @click="() => promptAndExecuteTemplate()">生成报表</el-button>
+        <el-button v-if="isDirectReportMode" @click="handlePrint">打印</el-button>
+        <el-button v-if="selectedCode" @click="handleExport">导出 Excel</el-button>
+        <el-switch
+          v-if="!isDirectReportMode && selectedCode"
+          v-model="isEnabledModel"
+          inline-prompt
+          active-text="启用"
+          inactive-text="停用"
+          :loading="enabledSwitching"
+          @change="handleEnabledChange"
+        />
         <el-button v-if="!isDirectReportMode" type="warning" @click="triggerImport">导入 Excel</el-button>
-        <el-button v-if="!isDirectReportMode" type="primary" plain @click="promptCreateReport">新增报表</el-button>
+        <el-button v-if="!isDirectReportMode" type="primary" plain @click="openCreateReportDialog">
+          新增报表
+        </el-button>
+        <el-button v-if="!isDirectReportMode && selectedCode" plain @click="openEditMetaDialog">修改编码</el-button>
+        <el-button v-if="!isDirectReportMode && selectedCode" type="danger" plain @click="handleDeleteTemplate">删除模板</el-button>
         <input
           v-if="!isDirectReportMode"
           ref="fileInputRef"
@@ -50,6 +65,33 @@
           @change="handleFileImport"
         />
       </div>
+      <el-alert
+        v-if="isCashFlowTemplate && isDirectReportMode"
+        type="info"
+        :closable="false"
+        show-icon
+        class="cash-flow-hint"
+        title="正式报送以本表为准；可用「科目估算」页核对静态口径与分录差异"
+      >
+        <template #default>
+          <el-button
+            type="primary"
+            link
+            @click="
+              router.push({
+                path: '/report/cash-flow',
+                query: {
+                  year: String(filters.year),
+                  period: String(filters.period),
+                  scope: 'month',
+                },
+              })
+            "
+          >
+            打开现金流量表(估算)对比
+          </el-button>
+        </template>
+      </el-alert>
       <div v-if="!isDirectReportMode" class="formula-edit-row">
         <span class="formula-label">单元格 {{ selectedPositionLabel || '-' }}</span>
         <el-input
@@ -349,6 +391,97 @@
 
       <EmptyState v-else-if="!loading" type="data" description="请选择一个已导入的报表模板" />
     </el-card>
+
+    <el-dialog
+      v-model="createDialogVisible"
+      title="新增报表"
+      width="520px"
+      :close-on-click-modal="false"
+      destroy-on-close
+      @closed="resetCreateReportForm"
+    >
+      <el-form label-width="96px" class="create-report-form" @submit.prevent>
+        <el-form-item label="报表编码" required>
+          <el-input
+            v-model="createForm.code"
+            placeholder="自动编号，可修改"
+            maxlength="32"
+            clearable
+          />
+          <div class="form-tip">新建时自动取当前最大编码 +1，仅支持字母与数字</div>
+        </el-form-item>
+        <el-form-item label="报表名称" required>
+          <el-input
+            v-model="createForm.name"
+            placeholder="选择文件后自动填入，可修改"
+            maxlength="100"
+            clearable
+          />
+        </el-form-item>
+        <el-form-item label="模板文件" required>
+          <el-upload
+            class="create-report-upload"
+            drag
+            :auto-upload="false"
+            :limit="1"
+            accept=".xls,.xlsx"
+            :file-list="createFileList"
+            :on-change="handleCreateFileChange"
+            :on-remove="handleCreateFileRemove"
+            :on-exceed="handleCreateFileExceed"
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">将 Excel 拖到此处，或<em>点击上传</em></div>
+            <template #tip>
+              <div class="el-upload__tip">支持 .xls / .xlsx，名称默认取文件名（不含扩展名）</div>
+            </template>
+          </el-upload>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="createDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="createSubmitting" @click="submitCreateReport">
+          确定导入
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="editMetaDialogVisible"
+      title="修改报表编码"
+      width="480px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <el-form label-width="96px" @submit.prevent>
+        <el-form-item label="报表编码" required>
+          <el-input
+            v-model="editMetaForm.code"
+            placeholder="字母 / 数字 / 下划线"
+            maxlength="32"
+            clearable
+          />
+          <div class="form-tip">
+            导航栏按编码升序排列，修改编码即可改变报表的显示顺序。<br />
+            若新编码已被其他报表使用，两者编码将自动互换。
+          </div>
+        </el-form-item>
+        <el-form-item label="报表名称">
+          <el-input
+            v-model="editMetaForm.name"
+            placeholder="留空则不修改名称"
+            maxlength="100"
+            clearable
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editMetaDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editMetaSubmitting" @click="submitEditMeta">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -360,14 +493,17 @@ import request from '@/api/request'
 import {
   getTemplateDetail,
   saveTemplateCells,
+  REPORT_LONG_REQUEST_TIMEOUT,
+  REPORT_EXECUTE_REQUEST_TIMEOUT,
   type TemplateDetailData,
   type UpdateReportCellPayload,
 } from '@/api/reportTemplate'
 import EmptyState from '@/components/EmptyState.vue'
 import { useDynamicReportEditor } from '@/composables/useDynamicReportEditor'
 import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
-import { showOperationError, showSuccess } from '@/composables/useMessage'
-import { ArrowDown } from '@element-plus/icons-vue'
+import { showOperationError, showSuccess, showError } from '@/composables/useMessage'
+import { ArrowDown, UploadFilled } from '@element-plus/icons-vue'
+import type { UploadFile, UploadUserFile } from 'element-plus'
 
 type TemplateListItem = {
   id: string
@@ -594,6 +730,11 @@ const selectedPositionLabel = computed(() => {
 })
 
 const directReportMeta = computed(() => {
+  // 来自侧边栏报表管理的 ?view=1 快速查看模式
+  if (route.query.view === '1' && route.params.code) {
+    const template = templates.value.find(t => t.code === route.params.code)
+    return { title: template?.name || '报表查看', code: String(route.params.code), autoRun: true }
+  }
   const meta = route.meta || {}
   const title = typeof meta.title === 'string' ? meta.title : ''
   const code = typeof meta.dynamicReportCode === 'string' ? meta.dynamicReportCode : ''
@@ -605,6 +746,7 @@ const isDirectReportMode = computed(() => Boolean(directReportMeta.value))
 const pageTitle = computed(() => directReportMeta.value?.title || templateData.value?.definition.name || '动态报表设计器')
 const hasPromptedDirectExecution = ref(false)
 const hasTriggeredAutoRunForPath = ref('')
+const reportGeneratePromptVisible = ref(false)
 
 const summaryText = computed(() => {
   if (!templateData.value) return ''
@@ -616,6 +758,7 @@ const summaryText = computed(() => {
 })
 
 const isBalanceTemplate = computed(() => selectedCode.value === '1')
+const isCashFlowTemplate = computed(() => selectedCode.value === '3')
 
 const canMergeSelection = computed(() => {
   if (bulkSelectionMode.value !== 'range' || selectedRanges.value.length === 0) return false
@@ -726,8 +869,20 @@ function getCellUnderline(cell: CellStyleSource | null | undefined): boolean {
 }
 
 function getCellFontFamily(cell: CellStyleSource | null | undefined): string {
-  const match = (cell?.style_key || '').match(/\bfont-family-([a-zA-Z0-9-]+)\b/)
-  return match ? match[1] : ''
+  const styleKey = cell?.style_key || ''
+  const match = styleKey.match(/\bfont-family-([^\s]+)/)
+  if (!match) return ''
+  const token = match[1]
+  const fontMap: Record<string, string> = {
+    SimSun: 'SimSun',
+    NSimSun: 'NSimSun',
+    KaiTi: 'KaiTi',
+    SimHei: 'SimHei',
+    FangSong: 'FangSong',
+    'Microsoft-YaHei': 'Microsoft YaHei',
+    Microsoft: 'Microsoft YaHei',
+  }
+  return fontMap[token] || token.replace(/-/g, ' ')
 }
 
 function getCellBorderColor(cell: CellStyleSource | null | undefined): string {
@@ -1888,7 +2043,9 @@ async function pollExecuteTask(taskId: string) {
   const intervalMs = 1000
 
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
-    const taskRes = await request.get<ExecuteTaskStatusResponse>(`/report/tasks/${taskId}`)
+    const taskRes = await request.get<ExecuteTaskStatusResponse>(`/report/tasks/${taskId}`, {
+      timeout: REPORT_EXECUTE_REQUEST_TIMEOUT,
+    })
     const task = taskRes.data
 
     if (!task) {
@@ -1918,7 +2075,8 @@ async function executeTemplate() {
   try {
     const taskRes = await request.post<ExecuteTaskResponse>(
       `/report/templates/${selectedCode.value}/execute`,
-      filters.value
+      filters.value,
+      { timeout: REPORT_EXECUTE_REQUEST_TIMEOUT }
     )
     const taskId = taskRes.data?.taskId
     if (!taskId) {
@@ -1930,7 +2088,6 @@ async function executeTemplate() {
     const cells = sheets.flatMap((sheet: ExecuteResponse['sheets'][number]) => sheet.cells || [])
     applyExecutionResult(cells)
     showExecutionResult.value = true
-    showSuccess('报表执行完成')
     return true
   } catch (error) {
     showOperationError('执行动态报表', error)
@@ -1942,8 +2099,11 @@ async function executeTemplate() {
 
 async function promptAndExecuteTemplate(forcePrompt = true) {
   if (!selectedCode.value) return false
+  if (forcePrompt && reportGeneratePromptVisible.value) return false
+  if (executing.value) return false
 
   if (forcePrompt) {
+    reportGeneratePromptVisible.value = true
     yearPeriodForm.value = {
       year: filters.value.year,
       period: filters.value.period,
@@ -2021,10 +2181,31 @@ async function promptAndExecuteTemplate(forcePrompt = true) {
       )
     } catch {
       return false
+    } finally {
+      reportGeneratePromptVisible.value = false
     }
   }
 
   return executeTemplate()
+}
+
+async function requestDirectReportExecution() {
+  const currentPath = route.fullPath
+  if (
+    !isDirectReportMode.value ||
+    !selectedCode.value ||
+    !templateData.value ||
+    templateData.value.definition.code !== selectedCode.value ||
+    hasTriggeredAutoRunForPath.value === currentPath ||
+    reportGeneratePromptVisible.value ||
+    executing.value
+  ) {
+    return
+  }
+
+  hasPromptedDirectExecution.value = true
+  hasTriggeredAutoRunForPath.value = currentPath
+  await promptAndExecuteTemplate(true)
 }
 
 async function insertRow() {
@@ -2243,32 +2424,247 @@ function triggerImport() {
   fileInputRef.value?.click()
 }
 
-function promptCreateReport() {
-  ElMessageBox.prompt('请输入报表编码（如 1 表示资产负债表）', '新增报表', {
-    confirmButtonText: '下一步',
-    cancelButtonText: '取消',
-    inputPattern: /^[a-zA-Z0-9]+$/,
-    inputErrorMessage: '编码只能包含字母和数字',
-  })
-    .then(({ value: code }) => {
-      ElMessageBox.prompt('请输入报表名称（如 资产负债表）', '新增报表', {
-        confirmButtonText: '选择 Excel 文件',
-        cancelButtonText: '取消',
-        inputValue: '',
-      })
-        .then(({ value: name }) => {
-          // Set the code and name, then trigger file picker
-          selectedCode.value = code
-          // Store the name temporarily
-          pendingReportName.value = name
-          triggerImport()
-        })
-        .catch(() => {})
+function suggestNextReportCode() {
+  let maxNum = 0
+  for (const item of templates.value) {
+    const parsed = Number.parseInt(item.code, 10)
+    if (Number.isFinite(parsed) && parsed > maxNum) {
+      maxNum = parsed
+    }
+  }
+  return String(maxNum + 1)
+}
+
+function fileNameToReportName(fileName: string) {
+  const base = fileName.replace(/\.[^.]+$/, '').trim()
+  return base || fileName.trim()
+}
+
+function resetCreateReportForm() {
+  createForm.value = { code: '', name: '' }
+  createFile.value = null
+  createFileList.value = []
+  createSubmitting.value = false
+}
+
+function openCreateReportDialog() {
+  createForm.value = {
+    code: suggestNextReportCode(),
+    name: '',
+  }
+  createFile.value = null
+  createFileList.value = []
+  createDialogVisible.value = true
+}
+
+function handleCreateFileChange(uploadFile: UploadFile) {
+  const file = uploadFile.raw
+  if (!file) return
+  createFile.value = file
+  createFileList.value = [uploadFile]
+  createForm.value.name = fileNameToReportName(file.name)
+}
+
+function handleCreateFileRemove() {
+  createFile.value = null
+  createFileList.value = []
+}
+
+function handleCreateFileExceed() {
+  ElMessage.warning('只能选择一个 Excel 文件')
+}
+
+async function submitCreateReport() {
+  const code = createForm.value.code.trim()
+  const name = createForm.value.name.trim()
+  if (!code) {
+    ElMessage.warning('请输入报表编码')
+    return
+  }
+  if (!/^[a-zA-Z0-9]+$/.test(code)) {
+    ElMessage.warning('编码只能包含字母和数字')
+    return
+  }
+  if (templates.value.some(item => item.code === code)) {
+    ElMessage.warning('报表编码已存在，请修改编码')
+    return
+  }
+  if (!name) {
+    ElMessage.warning('请输入报表名称')
+    return
+  }
+  if (!createFile.value) {
+    ElMessage.warning('请选择 Excel 模板文件')
+    return
+  }
+
+  createSubmitting.value = true
+  try {
+    const formData = new FormData()
+    formData.append('file', createFile.value)
+    formData.append('reportCode', code)
+    formData.append('reportName', name)
+    const res = await request.post<{ code: number }>('/report/templates/import', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: REPORT_LONG_REQUEST_TIMEOUT,
+    })
+    if (res.code === 0) {
+      showSuccess('新增报表成功')
+      createDialogVisible.value = false
+      selectedCode.value = code
+      await fetchTemplateList()
+      await router.replace({ name: 'DynamicReport', params: { code } })
+      await fetchTemplateDetail()
+      window.dispatchEvent(new Event('report-templates-changed'))
+    }
+  } catch (error) {
+    showOperationError('新增报表', error)
+  } finally {
+    createSubmitting.value = false
+  }
+}
+
+const createDialogVisible = ref(false)
+const createSubmitting = ref(false)
+const createForm = ref({ code: '', name: '' })
+const createFile = ref<File | null>(null)
+const createFileList = ref<UploadUserFile[]>([])
+
+const editMetaDialogVisible = ref(false)
+const editMetaSubmitting = ref(false)
+const editMetaForm = ref<{ code: string; name: string }>({ code: '', name: '' })
+
+const enabledSwitching = ref(false)
+const isEnabledModel = computed<boolean>({
+  get: () => {
+    const def = templateData.value?.definition
+    if (!def) return true
+    // 兼容后端可能返回 0/1 或 true/false
+    return def.is_enabled === false || (def.is_enabled as unknown) === 0 ? false : true
+  },
+  set: (value: boolean) => {
+    // 立即更新本地状态，让 UI 切换立即生效；@change 中调 API 失败时再回滚
+    if (templateData.value?.definition) {
+      templateData.value.definition.is_enabled = value
+    }
+  },
+})
+
+async function handleEnabledChange(value: boolean) {
+  if (!selectedCode.value || !templateData.value) return
+  const previous = !value // setter 已经把当前值改成了 value，所以旧值是 !value
+  enabledSwitching.value = true
+  try {
+    const { updateReportTemplateMeta } = await import('@/api/reportTemplate')
+    const { data } = await updateReportTemplateMeta(selectedCode.value, {
+      is_enabled: value,
+    })
+    templateData.value.definition.is_enabled = data.is_enabled
+    // 同步本地列表中的 is_enabled 字段
+    const item = templates.value.find(t => t.code === selectedCode.value)
+    if (item) item.is_enabled = data.is_enabled
+    showSuccess(data.is_enabled ? '已启用' : '已停用')
+    window.dispatchEvent(new Event('report-templates-changed'))
+  } catch (error) {
+    // 回滚
+    if (templateData.value?.definition) {
+      templateData.value.definition.is_enabled = previous
+    }
+    showOperationError('切换启用状态', error)
+  } finally {
+    enabledSwitching.value = false
+  }
+}
+
+function openEditMetaDialog() {
+  if (!selectedCode.value || !templateData.value) {
+    showError('请先选择一个报表模板')
+    return
+  }
+  editMetaForm.value = {
+    code: templateData.value.definition.code || selectedCode.value,
+    name: templateData.value.definition.name || '',
+  }
+  editMetaDialogVisible.value = true
+}
+
+async function submitEditMeta() {
+  if (!selectedCode.value) return
+  const nextCode = (editMetaForm.value.code || '').trim()
+  const nextName = (editMetaForm.value.name || '').trim()
+  if (!nextCode) {
+    showError('请输入报表编码')
+    return
+  }
+  if (!/^[a-zA-Z0-9_]+$/.test(nextCode)) {
+    showError('编码只能包含字母、数字、下划线')
+    return
+  }
+
+  editMetaSubmitting.value = true
+  try {
+    const { updateReportTemplateMeta } = await import('@/api/reportTemplate')
+    const { data, message } = await updateReportTemplateMeta(selectedCode.value, {
+      code: nextCode,
+      name: nextName,
+    })
+
+    if (data.swapped && data.swapWith) {
+      showSuccess(`编码已与「${data.swapWith.name}」(${data.swapWith.originalCode}) 互换`)
+    } else {
+      showSuccess(message || '更新成功')
+    }
+
+    editMetaDialogVisible.value = false
+
+    // 刷新模板列表 + 选中新 code + 同步路由
+    await fetchTemplateList()
+    selectedCode.value = data.code
+    if (!isDirectReportMode.value && route.params.code !== data.code) {
+      router.replace({ name: 'DynamicReport', params: { code: data.code } })
+    } else {
+      await fetchTemplateDetail()
+    }
+    // 通知 Layout 刷新导航栏
+    window.dispatchEvent(new Event('report-templates-changed'))
+  } catch (error) {
+    showOperationError('修改报表编码', error)
+  } finally {
+    editMetaSubmitting.value = false
+  }
+}
+
+function handleDeleteTemplate() {
+  const name = templateData.value?.definition.name || selectedCode.value
+  ElMessageBox.confirm(
+    `确定要删除报表模板「${name}」吗？删除后不可恢复。`,
+    '删除确认',
+    {
+      confirmButtonText: '确定删除',
+      cancelButtonText: '取消',
+      type: 'warning',
+    }
+  )
+    .then(async () => {
+      try {
+        await request.delete(`/report/templates/${selectedCode.value}`)
+        showSuccess('删除成功')
+        // 刷新列表，跳转到第一个模板或空页面
+        await fetchTemplateList()
+        if (templates.value.length > 0) {
+          selectedCode.value = templates.value[0].code
+          await fetchTemplateDetail()
+        } else {
+          templateData.value = null
+          router.replace({ name: 'DynamicReport' })
+        }
+        window.dispatchEvent(new Event('report-templates-changed'))
+      } catch (error) {
+        showOperationError('删除模板', error)
+      }
     })
     .catch(() => {})
 }
-
-const pendingReportName = ref('')
 
 async function handleFileImport(event: Event) {
   const target = event.target as HTMLInputElement
@@ -2286,17 +2682,16 @@ async function handleFileImport(event: Event) {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('reportCode', reportCode)
-    // Use pending name (from create flow) or current template name
-    const effectiveName = pendingReportName.value || templateData.value?.definition.name || ''
+    const effectiveName = templateData.value?.definition.name || ''
     if (effectiveName) {
       formData.append('reportName', effectiveName)
     }
     const res = await request.post<{ code: number }>('/report/templates/import', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: REPORT_LONG_REQUEST_TIMEOUT,
     })
     if (res.code === 0) {
       showSuccess('导入成功')
-      pendingReportName.value = ''
       await fetchTemplateList()
       await fetchTemplateDetail()
     }
@@ -2337,6 +2732,49 @@ async function deleteSheet(sheetId: string) {
   }
 }
 
+function handlePrint() {
+  try {
+    // 关掉可能遮挡的弹窗
+    document.querySelectorAll('.el-overlay').forEach(el => el.remove())
+    const card = document.querySelector('.el-card') as HTMLElement | null
+    const grid = document.querySelector('.sheet-grid') as HTMLElement | null
+    if (grid && card) {
+      const a4Width = 718 // A4 可用宽度 190mm ≈ 718px
+      const gridWidth = grid.scrollWidth
+      if (gridWidth > a4Width) {
+        const scale = a4Width / gridWidth
+        card.style.zoom = String(scale)
+      }
+    }
+    window.print()
+  } catch (_) { /* 打印出错不影响 */ }
+  // 恢复
+  const card = document.querySelector('.el-card') as HTMLElement | null
+  if (card) card.style.zoom = ''
+}
+
+async function handleExport() {
+  if (!selectedCode.value || !templateData.value) return
+  try {
+    const { downloadReportExport } = await import('@/api/reportTemplate')
+    const blob = await downloadReportExport(selectedCode.value, {
+      year: filters.value.year,
+      period: filters.value.period,
+    })
+    const defName = (templateData.value.definition.name || '报表').replace(/[\\/:*?"<>|]/g, '_')
+    const fileName = `${defName}_${filters.value.year}年${filters.value.period}月.xlsx`
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = fileName
+    link.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('已按原模板格式导出 Excel')
+  } catch (error) {
+    showOperationError('导出报表', error)
+  }
+}
+
 watch(
   () => route.fullPath,
   async () => {
@@ -2348,18 +2786,9 @@ watch(
       cancelInlineEdit()
       selectedCode.value = nextCode
       await fetchTemplateDetail()
-      return
     }
 
-    if (
-      isDirectReportMode.value &&
-      templateData.value?.definition.code === nextCode &&
-      hasTriggeredAutoRunForPath.value !== route.fullPath
-    ) {
-      hasPromptedDirectExecution.value = true
-      hasTriggeredAutoRunForPath.value = route.fullPath
-      await promptAndExecuteTemplate(true)
-    }
+    await requestDirectReportExecution()
   }
 )
 
@@ -2372,11 +2801,7 @@ watch(
       cancelInlineEdit()
       selectedCode.value = nextCode
       await fetchTemplateDetail()
-      if (isDirectReportMode.value && hasTriggeredAutoRunForPath.value !== route.fullPath) {
-        hasPromptedDirectExecution.value = true
-        hasTriggeredAutoRunForPath.value = route.fullPath
-        await promptAndExecuteTemplate(true)
-      }
+      await requestDirectReportExecution()
     }
   }
 )
@@ -2389,13 +2814,12 @@ watch(
       !isDirectReportMode.value ||
       hasPromptedDirectExecution.value ||
       code !== selectedCode.value ||
-      hasTriggeredAutoRunForPath.value === route.fullPath
+      hasTriggeredAutoRunForPath.value === route.fullPath ||
+      reportGeneratePromptVisible.value
     ) {
       return
     }
-    hasPromptedDirectExecution.value = true
-    hasTriggeredAutoRunForPath.value = route.fullPath
-    await promptAndExecuteTemplate(true)
+    await requestDirectReportExecution()
   }
 )
 
@@ -2415,9 +2839,7 @@ onMounted(async () => {
       selectedCode.value &&
       hasTriggeredAutoRunForPath.value !== route.fullPath
     ) {
-      hasPromptedDirectExecution.value = true
-      hasTriggeredAutoRunForPath.value = route.fullPath
-      await promptAndExecuteTemplate(true)
+      await requestDirectReportExecution()
     }
   } catch (error) {
     showOperationError('加载动态报表模板列表', error)
@@ -3048,6 +3470,61 @@ onMounted(async () => {
   border-right: 1px solid #ebeef5 !important;
 }
 
+@media print {
+  @page {
+    margin: 5mm;
+    size: A4 portrait;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+  :deep(.el-aside),
+  :deep(.el-header),
+  .page-header,
+  .el-card :deep(.el-card__header) {
+    display: none !important;
+  }
+  .page {
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  .el-card {
+    box-shadow: none !important;
+    border: none !important;
+    background: transparent !important;
+  }
+  :deep(.el-tabs__nav-wrap) {
+    display: none !important;
+  }
+  .row-index,
+  .column-header-cell,
+  .select-all-corner {
+    display: none !important;
+  }
+  :deep(.el-tabs__content) {
+    overflow: visible !important;
+  }
+  :deep(.sheet-grid-wrap) {
+    overflow: visible !important;
+  }
+  :deep(.sheet-grid) {
+    width: 100% !important;
+  }
+  :deep(.cell) {
+    font-size: 7.5pt !important;
+    line-height: 1.3 !important;
+    padding: 1px 2px !important;
+    border-color: #000 !important;
+  }
+  :deep(.cell-content) {
+    white-space: nowrap !important;
+  }
+  :deep(.el-tab-pane) {
+    page-break-after: auto;
+  }
+}
+
 .cell-border-outer {
   border: 1px solid #303030 !important;
 }
@@ -3055,5 +3532,21 @@ onMounted(async () => {
 .cell-border-header {
   border: none !important;
   border-bottom: 2px solid #303030 !important;
+}
+
+.create-report-form .form-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+}
+
+.create-report-upload {
+  width: 100%;
+}
+
+.create-report-upload :deep(.el-upload-dragger) {
+  width: 100%;
+  padding: 20px 12px;
 }
 </style>

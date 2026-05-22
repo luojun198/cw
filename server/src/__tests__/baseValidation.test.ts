@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildWhereClause, normalizeAccountCode } from '../services/baseValidation'
+import { buildWhereClause } from '../services/baseValidation.js'
 
 describe('baseValidation', () => {
   describe('buildWhereClause', () => {
@@ -21,28 +21,6 @@ describe('baseValidation', () => {
     it('should join conditions with AND', () => {
       const result = buildWhereClause(['a = ?', 'b = ?', 'c = ?'])
       expect(result).toBe(' WHERE a = ? AND b = ? AND c = ?')
-    })
-  })
-
-  describe('normalizeAccountCode', () => {
-    it('should normalize account code by removing spaces', () => {
-      const result = normalizeAccountCode('1001 01')
-      expect(result).toBe('100101')
-    })
-
-    it('should handle code without spaces', () => {
-      const result = normalizeAccountCode('1001')
-      expect(result).toBe('1001')
-    })
-
-    it('should handle empty string', () => {
-      const result = normalizeAccountCode('')
-      expect(result).toBe('')
-    })
-
-    it('should handle multiple spaces', () => {
-      const result = normalizeAccountCode('1001  01  02')
-      expect(result).toBe('10010102')
     })
   })
 })

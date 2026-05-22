@@ -1,13 +1,6 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/stores/user'
-
-const dynamicReportEntries = [
-  { code: '1', name: '资产负债表', path: '/report/run/1' },
-  { code: '2', name: '收入费用表', path: '/report/run/2' },
-  { code: '3', name: '净资产变动表', path: '/report/run/3' },
-  { code: '4', name: '现金流量表', path: '/report/run/4' },
-  { code: '7', name: '财政拨款收入支出表', path: '/report/run/7' },
-]
+import { useSystemParamsStore } from '@/stores/systemParams'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -79,6 +72,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '结转维护', icon: 'Connection', parent: '基础设置' },
       },
       {
+        path: 'report/cash-flow',
+        name: 'CashFlowReport',
+        component: () => import('@/views/report/CashFlow.vue'),
+        meta: { title: '现金流量表(估算)', icon: 'Money', parent: '账簿查询' },
+      },
+      {
         path: 'report/dynamic/:code?',
         name: 'DynamicReport',
         component: () => import('@/views/report/DynamicReport.vue'),
@@ -97,10 +96,28 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '期初余额', icon: 'Coin', parent: '基础设置' },
       },
       {
+        path: 'base/init-balance/aux',
+        name: 'InitBalanceAux',
+        component: () => import('@/views/base/InitBalanceAux.vue'),
+        meta: { title: '辅助期初录入', parent: '基础设置' },
+      },
+      {
         path: 'base/print-template',
         name: 'PrintTemplate',
         component: () => import('@/views/base/PrintTemplate.vue'),
         meta: { title: '打印模版', icon: 'Printer', parent: '基础设置' },
+      },
+      {
+        path: 'base/cash-flow-items',
+        name: 'CashFlowItems',
+        component: () => import('@/views/base/CashFlowItems.vue'),
+        meta: { title: '现金流量项目', icon: 'Money', parent: '基础设置', requiresCashFlow: true },
+      },
+      {
+        path: 'base/fund-source',
+        name: 'FundSource',
+        component: () => import('@/views/base/FundSource.vue'),
+        meta: { title: '资金来源', icon: 'Wallet', parent: '基础设置', requiresCashFlow: true },
       },
       // 凭证管理
       {
@@ -122,10 +139,22 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '凭证结转', icon: 'RefreshRight', parent: '凭证管理' },
       },
       {
+        path: 'voucher/period-close',
+        name: 'VoucherPeriodClose',
+        component: () => import('@/views/voucher/PeriodClose.vue'),
+        meta: { title: '期间结账', icon: 'Calendar', parent: '凭证管理' },
+      },
+      {
         path: 'voucher/query',
         name: 'VoucherQuery',
         component: () => import('@/views/voucher/Query.vue'),
         meta: { title: '凭证查询', icon: 'Search', parent: '凭证管理' },
+      },
+      {
+        path: 'voucher/template',
+        name: 'VoucherTemplate',
+        component: () => import('@/views/voucher/Template.vue'),
+        meta: { title: '凭证模版', icon: 'DocumentCopy', parent: '基础设置' },
       },
       // 账簿管理
       {
@@ -201,19 +230,6 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/_aux/FuncClass.vue'),
         meta: { title: '功能分类', icon: 'Collection', parent: '辅助核算' },
       },
-      // 报表管理
-      ...dynamicReportEntries.map(item => ({
-        path: `report/run/${item.code}`,
-        name: `DynamicReportRun${item.code}`,
-        component: () => import('@/views/report/DynamicReport.vue'),
-        meta: {
-          title: item.name,
-          icon: 'TrendCharts',
-          parent: '报表管理',
-          dynamicReportCode: item.code,
-          autoRun: true,
-        },
-      })),
       // 数据安全
       {
         path: 'security/backup',
@@ -235,7 +251,7 @@ const router = createRouter({
   routes,
 })
 
-router.beforeEach((to, from, next) => {
+router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
   // 带 targetAccountSetId 参数的登录请求，跳转前先清除 token
   if (to.path === '/login' && to.query.targetAccountSetId && userStore.token) {
@@ -257,6 +273,14 @@ router.beforeEach((to, from, next) => {
     next('/login')
   } else if (to.path === '/login' && userStore.token) {
     next('/dashboard')
+  } else if (to.meta.requiresCashFlow) {
+    const systemParamsStore = useSystemParamsStore()
+    await systemParamsStore.load()
+    if (!systemParamsStore.enableCashFlow) {
+      next('/system/param')
+    } else {
+      next()
+    }
   } else {
     next()
   }

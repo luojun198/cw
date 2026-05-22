@@ -1,6 +1,10 @@
 @echo off
 chcp 65001 >nul
+setlocal enabledelayedexpansion
 title CW Finance - Starting Services
+
+set "ROOT=%~dp0"
+if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 
 echo.
 echo ========================================
@@ -10,7 +14,7 @@ echo.
 
 echo [1/4] Releasing ports...
 for %%p in (3005 5173 5174 5175) do (
-    for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":%%p "') do (
+    for /f "tokens=5" %%a in ('netstat -ano 2^>nul ^| findstr ":%%p " ^| findstr "LISTENING"') do (
         taskkill /PID %%a /F >nul 2>&1
     )
 )
@@ -19,12 +23,12 @@ timeout /t 2 /nobreak >nul
 
 echo.
 echo [2/4] Starting backend...
-start "CW Backend" cmd /k "cd /d D:\kf\cw0423 && npm run dev:server"
+start "CW Backend" cmd /k "cd /d "%ROOT%" && npm run dev:server"
 timeout /t 4 /nobreak >nul
 
 echo.
 echo [3/4] Starting frontend...
-start "CW Frontend" cmd /k "cd /d D:\kf\cw0423 && npm run dev:client"
+start "CW Frontend" cmd /k "cd /d "%ROOT%" && npm run dev:client"
 timeout /t 5 /nobreak >nul
 
 echo.

@@ -35,6 +35,6 @@ describe('useVoucherAuditData', () => {
 
     expect(statusText.draft).toBe('草稿')
     expect(statusText.audited).toBe('已审核')
-    expect(statusText.posted).toBe('已过账')
+    expect(statusText.posted).toBe('已记账')
   })
 })

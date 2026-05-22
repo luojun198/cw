@@ -1,7 +1,7 @@
 import { Router } from 'express'
-import { authMiddleware, AuthRequest } from '../middleware/index.ts'
-import { getDb } from '../db/index.ts'
-import { getBalance, getPeriodSum } from '../services/reportBalance.ts'
+import { authMiddleware, AuthRequest } from '../middleware/index.js'
+import { getDb } from '../db/index.js'
+import { getBalance, getPeriodSum } from '../services/reportBalance.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -25,11 +25,11 @@ router.get('/equity-changes', (req: AuthRequest, res) => {
   ]
 
   const result = equityItems.map(item => {
-    const beginBal = getBalance(db, req.accountSetId, item.code, y, 0)
-    const currentBal = getBalance(db, req.accountSetId, item.code, y, p)
+    const beginBal = getBalance(db, req.accountSetId!, item.code, y, 0)
+    const currentBal = getBalance(db, req.accountSetId!, item.code, y, p)
     // 本期增加/减少通过发生额推算
-    const sum = getPeriodSum(db, req.accountSetId, item.code, y, p)
-    const dir = getBalance(db, req.accountSetId, item.code, y, 1) >= 0 ? 'credit' : 'debit'
+    const sum = getPeriodSum(db, req.accountSetId!, item.code, y, p)
+    const dir = getBalance(db, req.accountSetId!, item.code, y, 1) >= 0 ? 'credit' : 'debit'
     // 对于贷方余额科目：期末=期初+贷方-借方 => 本期增加=贷方发生, 本期减少=借方发生
     // 对于借方余额科目：期末=期初+借方-贷方 => 本期增加=借方发生, 本期减少=贷方发生
     let increase = 0
@@ -91,7 +91,7 @@ router.get('/fiscal-appropriation', (req: AuthRequest, res) => {
     for (const [name, codes] of Object.entries(fiscalRevenueCodes)) {
       let amt = 0
       for (const code of codes) {
-        const sum = getPeriodSum(db, req.accountSetId, code, y, p)
+        const sum = getPeriodSum(db, req.accountSetId!, code, y, p)
         // 贷方发生额即为实际拨入
         amt += sum.credit
       }
@@ -107,7 +107,7 @@ router.get('/fiscal-appropriation', (req: AuthRequest, res) => {
     for (const [name, codes] of Object.entries(fiscalQuotaCodes)) {
       let amt = 0
       for (const code of codes) {
-        amt += getBalance(db, req.accountSetId, code, y, p)
+        amt += getBalance(db, req.accountSetId!, code, y, p)
       }
       if (amt !== 0) quotas[name] = amt
       total += amt
@@ -128,7 +128,7 @@ router.get('/fiscal-appropriation', (req: AuthRequest, res) => {
   for (const [name, codes] of Object.entries(budgetExpenseCodes)) {
     let amt = 0
     for (const code of codes) {
-      const sum = getPeriodSum(db, req.accountSetId, code, y, p)
+      const sum = getPeriodSum(db, req.accountSetId!, code, y, p)
       amt += sum.debit
     }
     if (amt !== 0) expenses[name] = amt

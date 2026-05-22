@@ -42,15 +42,33 @@ CREATE TABLE IF NOT EXISTS users (
   UNIQUE(account_set_id, username)
 );
 
+CREATE TABLE IF NOT EXISTS user_login_sessions (
+  id TEXT PRIMARY KEY,
+  account_set_id TEXT NOT NULL REFERENCES account_sets(id) ON DELETE CASCADE,
+  user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  username TEXT NOT NULL,
+  login_ip TEXT,
+  user_agent TEXT,
+  login_at TEXT NOT NULL DEFAULT (datetime('now')),
+  last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+  status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'forced', 'logout', 'expired')),
+  forced_logout_at TEXT,
+  forced_by_ip TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_user_login_sessions_user_status ON user_login_sessions(user_id, account_set_id, status);
+CREATE INDEX IF NOT EXISTS idx_user_login_sessions_active_ip ON user_login_sessions(user_id, account_set_id, login_ip, status);
+
 -- 角色表
 CREATE TABLE IF NOT EXISTS roles (
   id TEXT PRIMARY KEY,
+  account_set_id TEXT REFERENCES account_sets(id),
   name TEXT NOT NULL,
-  code TEXT NOT NULL UNIQUE,
+  code TEXT NOT NULL,
   description TEXT,
   is_system INTEGER DEFAULT 0,
   permissions TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account_set_id, code)
 );
 
 -- 操作日志表
@@ -95,6 +113,9 @@ CREATE TABLE IF NOT EXISTS accounts (
   balance TEXT CHECK(balance IN ('initial', 'normal', 'temp')),
   is_cash INTEGER DEFAULT 0,
   is_bank INTEGER DEFAULT 0,
+  require_cash_flow INTEGER NOT NULL DEFAULT 0,
+  no_negative INTEGER DEFAULT 0,
+  ledger_format TEXT DEFAULT 'three_column' CHECK(ledger_format IN ('three_column', 'multi_column', 'quantity_amount')),
   is_enabled INTEGER DEFAULT 1,
   allow_delete INTEGER DEFAULT 1,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
@@ -108,7 +129,6 @@ CREATE TABLE IF NOT EXISTS voucher_types (
   account_set_id TEXT NOT NULL REFERENCES account_sets(id),
   name TEXT NOT NULL,
   code TEXT NOT NULL,
-  prefix TEXT,
   description TEXT,
   sort_order INTEGER DEFAULT 0,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -172,8 +192,14 @@ CREATE TABLE IF NOT EXISTS init_balances (
   init_balance REAL NOT NULL DEFAULT 0,
   init_debit REAL NOT NULL DEFAULT 0,
   init_credit REAL NOT NULL DEFAULT 0,
-  aux_item_id TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  aux_item_id TEXT NOT NULL DEFAULT '',
+  opening_debit REAL NOT NULL DEFAULT 0,
+  opening_credit REAL NOT NULL DEFAULT 0,
+  pre_book_debit REAL NOT NULL DEFAULT 0,
+  pre_book_credit REAL NOT NULL DEFAULT 0,
+  init_balance_cents INTEGER,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account_set_id, account_id, year, period, aux_item_id)
 );
 
 -- ===================== 凭证管理模块 =====================
@@ -214,6 +240,10 @@ CREATE TABLE IF NOT EXISTS voucher_entries (
   account_name TEXT NOT NULL,
   direction TEXT NOT NULL CHECK(direction IN ('debit', 'credit')),
   amount REAL NOT NULL,
+  amount_cents INTEGER,
+  quantity REAL DEFAULT 0,
+  unit_price REAL DEFAULT 0,
+  unit TEXT,
   summary TEXT,
   dept_id TEXT,
   dept_name TEXT,
@@ -225,9 +255,55 @@ CREATE TABLE IF NOT EXISTS voucher_entries (
   person_name TEXT,
   func_class_id TEXT,
   func_class_name TEXT,
+  cash_flow_code TEXT,
+  cash_flow_name TEXT,
   aux_data TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_voucher_entries_cash_flow ON voucher_entries(cash_flow_code);
+
+-- 现金流量项目
+CREATE TABLE IF NOT EXISTS cash_flow_items (
+  id TEXT PRIMARY KEY,
+  account_set_id TEXT NOT NULL REFERENCES account_sets(id),
+  code TEXT NOT NULL,
+  name TEXT NOT NULL,
+  direction TEXT NOT NULL CHECK(direction IN ('inflow', 'outflow', 'neutral')),
+  parent_code TEXT,
+  level INTEGER NOT NULL DEFAULT 1,
+  is_leaf INTEGER NOT NULL DEFAULT 1,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  is_active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account_set_id, code)
+);
+
+CREATE INDEX IF NOT EXISTS idx_cash_flow_items_account_set ON cash_flow_items(account_set_id);
+CREATE INDEX IF NOT EXISTS idx_cash_flow_items_code ON cash_flow_items(account_set_id, code);
+CREATE INDEX IF NOT EXISTS idx_cash_flow_items_parent ON cash_flow_items(account_set_id, parent_code);
+
+-- ===================== 快捷键配置 =====================
+CREATE TABLE IF NOT EXISTS keyboard_shortcuts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  module VARCHAR(50) NOT NULL,
+  action VARCHAR(50) NOT NULL,
+  key VARCHAR(20) NOT NULL,
+  ctrl BOOLEAN DEFAULT 0,
+  alt BOOLEAN DEFAULT 0,
+  shift BOOLEAN DEFAULT 0,
+  meta BOOLEAN DEFAULT 0,
+  description TEXT,
+  component_path VARCHAR(200),
+  is_enabled BOOLEAN DEFAULT 1,
+  is_custom BOOLEAN DEFAULT 0,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_keyboard_shortcuts_module ON keyboard_shortcuts(module);
+CREATE INDEX IF NOT EXISTS idx_keyboard_shortcuts_enabled ON keyboard_shortcuts(is_enabled);
 
 -- ===================== 账簿模块 =====================
 
@@ -246,6 +322,8 @@ CREATE TABLE IF NOT EXISTS account_balances (
   init_credit REAL DEFAULT 0,
   current_debit REAL DEFAULT 0,
   current_credit REAL DEFAULT 0,
+  current_debit_cents INTEGER,
+  current_credit_cents INTEGER,
   end_balance REAL DEFAULT 0,
   end_debit REAL DEFAULT 0,
   end_credit REAL DEFAULT 0,
@@ -323,6 +401,25 @@ CREATE TABLE IF NOT EXISTS backups (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 预算盈余与预算结余差异明细（ACD ysda.txt）
+CREATE TABLE IF NOT EXISTS budget_surplus_adjustments (
+  id TEXT PRIMARY KEY,
+  account_set_id TEXT NOT NULL REFERENCES account_sets(id) ON DELETE CASCADE,
+  source_seq INTEGER,
+  item_code TEXT NOT NULL,
+  item_name TEXT,
+  year INTEGER NOT NULL,
+  period INTEGER NOT NULL,
+  amount REAL NOT NULL DEFAULT 0,
+  account_code TEXT,
+  alt_amount REAL NOT NULL DEFAULT 0,
+  item_type TEXT,
+  balance_direction TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account_set_id, source_seq)
+);
+
 -- ===================== 索引 =====================
 
 CREATE INDEX IF NOT EXISTS idx_users_account_set ON users(account_set_id);
@@ -377,6 +474,8 @@ CREATE INDEX IF NOT EXISTS idx_aux_category_fields_category ON aux_category_fiel
 CREATE INDEX IF NOT EXISTS idx_init_balances ON init_balances(account_set_id, year, period);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_user ON operation_logs(account_set_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_time ON operation_logs(account_set_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_budget_surplus_adjustments_period
+  ON budget_surplus_adjustments(account_set_id, year, period, item_code);
 
 -- 凭证附件表
 CREATE TABLE IF NOT EXISTS voucher_attachments (
@@ -395,6 +494,46 @@ CREATE TABLE IF NOT EXISTS voucher_attachments (
 
 CREATE INDEX IF NOT EXISTS idx_voucher_attachments_voucher ON voucher_attachments(account_set_id, voucher_id);
 CREATE INDEX IF NOT EXISTS idx_voucher_attachments_created ON voucher_attachments(account_set_id, created_at);
+
+-- ===================== 凭证模板 =====================
+CREATE TABLE IF NOT EXISTS voucher_templates (
+  id TEXT PRIMARY KEY,
+  account_set_id TEXT NOT NULL REFERENCES account_sets(id),
+  template_no TEXT NOT NULL,
+  template_name TEXT NOT NULL,
+  voucher_type_id TEXT REFERENCES voucher_types(id),
+  total_amount REAL NOT NULL DEFAULT 0,
+  remark TEXT,
+  entries_data TEXT NOT NULL,
+  created_by TEXT REFERENCES users(id),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  UNIQUE(account_set_id, template_no)
+);
+
+CREATE INDEX IF NOT EXISTS idx_voucher_templates_account_set ON voucher_templates(account_set_id);
+CREATE INDEX IF NOT EXISTS idx_voucher_templates_type ON voucher_templates(voucher_type_id);
+
+-- ===================== 打印模板 =====================
+CREATE TABLE IF NOT EXISTS print_templates (
+  id TEXT PRIMARY KEY,
+  account_set_id TEXT NOT NULL REFERENCES account_sets(id),
+  name TEXT NOT NULL,
+  paper_size TEXT NOT NULL DEFAULT 'custom' CHECK(paper_size IN ('custom', 'A4', 'A5')),
+  paper_width REAL NOT NULL DEFAULT 220,
+  paper_height REAL NOT NULL DEFAULT 140,
+  margin_top REAL NOT NULL DEFAULT 15,
+  margin_bottom REAL NOT NULL DEFAULT 15,
+  margin_left REAL NOT NULL DEFAULT 10,
+  margin_right REAL NOT NULL DEFAULT 10,
+  elements TEXT NOT NULL DEFAULT '[]',
+  is_default INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_print_templates_account_set ON print_templates(account_set_id);
+CREATE INDEX IF NOT EXISTS idx_print_templates_default ON print_templates(account_set_id, is_default);
 
 -- ===================== 报表模板 =====================
 
@@ -449,6 +588,10 @@ CREATE TABLE IF NOT EXISTS report_sheets (
   sheet_key TEXT NOT NULL,
   sheet_name TEXT NOT NULL,
   sheet_index INTEGER NOT NULL DEFAULT 0,
+  default_col_width INTEGER DEFAULT 160,
+  default_row_height INTEGER DEFAULT 34,
+  col_widths TEXT,
+  row_heights TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(report_definition_id, sheet_key)
 );
@@ -478,6 +621,9 @@ CREATE TABLE IF NOT EXISTS report_cells (
   format_text TEXT,
   style_key TEXT,
   side TEXT CHECK(side IN ('left', 'right')),
+  col_width TEXT,
+  row_height TEXT,
+  merge_info TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE(report_sheet_id, row_index, col_index)

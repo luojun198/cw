@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
 import { v4 as uuidv4 } from 'uuid'
 import { fileURLToPath } from 'url'
 
@@ -293,7 +293,7 @@ async function main() {
 
   // 如果没有指定编码或名称，尝试自动检测
   if (!options.reportCode || !options.reportName) {
-    const detected = detectReportInfoFromExcel(excelPath)
+    const detected = await detectReportInfoFromExcel(excelPath)
     if (!options.reportCode) options.reportCode = detected.code
     if (!options.reportName) options.reportName = detected.name
   }

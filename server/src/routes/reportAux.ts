@@ -1,7 +1,7 @@
 import { Router } from 'express'
-import { authMiddleware, AuthRequest } from '../middleware/index.ts'
-import { getDb } from '../db/index.ts'
-import { buildAuxBalanceQuery, getAuxBalanceField } from '../services/reportQuery.ts'
+import { authMiddleware, AuthRequest } from '../middleware/index.js'
+import { getDb } from '../db/index.js'
+import { buildAuxBalanceQuery, getAuxBalanceField } from '../services/reportQuery.js'
 
 const router = Router()
 router.use(authMiddleware)

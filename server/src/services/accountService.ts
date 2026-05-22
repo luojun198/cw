@@ -1,6 +1,6 @@
 import Database from 'better-sqlite3'
 import { v4 as uuidv4 } from 'uuid'
-import { buildWhereClause, SqlParam } from './baseValidation.ts'
+import { buildWhereClause, SqlParam } from './baseValidation.js'
 
 /**
  * 会计科目 Service 层
@@ -69,6 +69,11 @@ export interface AccountUsage {
   years: number[]
 }
 
+interface AccountCodeConfig {
+  maxLevels: number
+  codeLengths: number[]
+}
+
 export class AccountService {
   constructor(private db: Database.Database) {}
 
@@ -77,35 +82,67 @@ export class AccountService {
    */
   private getSystemParam(accountSetId: string, paramKey: string): string | null {
     const result = this.db
-      .prepare('SELECT param_value FROM system_params WHERE account_set_id = ? AND param_key = ?')
-      .get(accountSetId, paramKey) as any
+      .prepare(`
+        SELECT param_value
+        FROM system_params
+        WHERE param_key = ?
+          AND (account_set_id = ? OR account_set_id IS NULL)
+        ORDER BY CASE WHEN account_set_id = ? THEN 0 ELSE 1 END
+        LIMIT 1
+      `)
+      .get(paramKey, accountSetId, accountSetId) as any
     return result?.param_value || null
+  }
+
+  private getAccountCodeConfig(accountSetId: string): AccountCodeConfig {
+    const accountLevelsStr = this.getSystemParam(accountSetId, 'account_levels')
+    const accountCodeLengthsStr = this.getSystemParam(accountSetId, 'account_code_lengths')
+
+    if (!accountCodeLengthsStr) {
+      return { maxLevels: 6, codeLengths: [4, 2, 2, 2, 2, 2] }
+    }
+
+    try {
+      const codeLengths = JSON.parse(accountCodeLengthsStr)
+      if (!Array.isArray(codeLengths) || codeLengths.length === 0) {
+        throw new Error('account_code_lengths invalid')
+      }
+      return {
+        maxLevels: accountLevelsStr ? (parseInt(accountLevelsStr) || codeLengths.length) : codeLengths.length,
+        codeLengths: codeLengths.map((len: any) => Number(len) || 0),
+      }
+    } catch {
+      throw new Error('系统参数配置错误')
+    }
+  }
+
+  private inferLevelByCodeLength(code: string, config: AccountCodeConfig): number | null {
+    let expectedLength = 0
+    for (let index = 0; index < config.maxLevels; index++) {
+      expectedLength += config.codeLengths[index] || 0
+      if (code.length === expectedLength) return index + 1
+    }
+    return null
+  }
+
+  private getParentAccount(parentId: string, accountSetId: string): Account | null {
+    return (
+      (this.db
+        .prepare('SELECT * FROM accounts WHERE id = ? AND account_set_id = ?')
+        .get(parentId, accountSetId) as Account | undefined) || null
+    )
   }
 
   /**
    * 验证科目编码格式
    */
   validateAccountCode(accountSetId: string, code: string, level: number): { valid: boolean; message?: string } {
-    // 获取科目级数和长度配置
-    const accountLevelsStr = this.getSystemParam(accountSetId, 'account_levels')
-    const accountCodeLengthsStr = this.getSystemParam(accountSetId, 'account_code_lengths')
-
-    if (!accountLevelsStr || !accountCodeLengthsStr) {
-      // 如果没有配置，使用默认值：6级，4-2-2-2-2-2
-      const maxLevels = 6
-      const codeLengths = [4, 2, 2, 2, 2, 2]
-      return this.validateCodeFormat(code, level, maxLevels, codeLengths)
-    }
-
-    const maxLevels = parseInt(accountLevelsStr)
-    let codeLengths: number[]
     try {
-      codeLengths = JSON.parse(accountCodeLengthsStr)
-    } catch {
-      return { valid: false, message: '系统参数配置错误' }
+      const config = this.getAccountCodeConfig(accountSetId)
+      return this.validateCodeFormat(code, level, config.maxLevels, config.codeLengths)
+    } catch (error: any) {
+      return { valid: false, message: error.message || '系统参数配置错误' }
     }
-
-    return this.validateCodeFormat(code, level, maxLevels, codeLengths)
   }
 
   /**
@@ -250,7 +287,24 @@ export class AccountService {
    * 创建会计科目
    */
   createAccount(params: CreateAccountParams): string {
-    const actualLevel = params.level || 1
+    const config = this.getAccountCodeConfig(params.account_set_id)
+    const parent = params.parent_id
+      ? this.getParentAccount(params.parent_id, params.account_set_id)
+      : null
+
+    if (params.parent_id && !parent) {
+      throw new Error('上级科目不存在')
+    }
+    if (parent && !params.code.startsWith(parent.code)) {
+      throw new Error('科目编码必须以上级科目编码开头')
+    }
+
+    const inferredLevel = parent ? Number(parent.level || 1) + 1 : this.inferLevelByCodeLength(params.code, config)
+    if (!inferredLevel) {
+      const lengthDesc = config.codeLengths.slice(0, config.maxLevels).join('-')
+      throw new Error(`科目编码长度不符合当前科目长度设置（${lengthDesc}）`)
+    }
+    const actualLevel = inferredLevel
 
     // 验证科目编码格式
     const validation = this.validateAccountCode(params.account_set_id, params.code, actualLevel)
@@ -266,36 +320,39 @@ export class AccountService {
         ? JSON.stringify(params.aux_types)
         : null
     const hasAux = auxTypesJson ? 1 : 0
-    const allowNegative = params.no_negative ? 0 : 1
+    const noNegative = params.no_negative ? 1 : 0
 
-    this.db
-      .prepare(
-        `INSERT INTO accounts (id, account_set_id, code, name, direction, level, parent_id, is_aux, aux_types, is_enabled, is_cash, is_bank)
+    const doCreate = this.db.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO accounts (id, account_set_id, code, name, direction, level, parent_id, is_aux, aux_types, is_enabled, is_cash, is_bank)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-      )
-      .run(
-        id,
-        params.account_set_id,
-        params.code,
-        params.name,
-        params.direction,
-        actualLevel,
-        params.parent_id || null,
-        hasAux,
-        auxTypesJson,
-        params.is_enabled !== false ? 1 : 0,
-        params.is_cash ? 1 : 0,
-        params.is_bank ? 1 : 0
-      )
+        )
+        .run(
+          id,
+          params.account_set_id,
+          params.code,
+          params.name,
+          params.direction,
+          actualLevel,
+          params.parent_id || null,
+          hasAux,
+          auxTypesJson,
+          params.is_enabled !== false ? 1 : 0,
+          params.is_cash ? 1 : 0,
+          params.is_bank ? 1 : 0
+        )
 
-    if (params.no_negative !== undefined) {
-      this.db.prepare('UPDATE accounts SET no_negative = ? WHERE id = ?').run(allowNegative, id)
-    }
+      if (params.no_negative !== undefined) {
+        this.db.prepare('UPDATE accounts SET no_negative = ? WHERE id = ?').run(noNegative, id)
+      }
 
-    // 从父科目迁移数据
-    if (params.parent_id && params.migrate_from_parent) {
-      this.migrateFromParent(id, params.parent_id, params.code, params.name)
-    }
+      // 从父科目迁移数据
+      if (params.parent_id && params.migrate_from_parent) {
+        this.migrateFromParent(id, params.parent_id, params.code, params.name)
+      }
+    })
+    doCreate()
 
     return id
   }
@@ -332,6 +389,7 @@ export class AccountService {
    * 更新会计科目
    * 如果科目被禁用，则递归禁用所有下级科目
    * 如果科目被启用，则递归启用所有下级科目
+   * 属性设置（is_cash/is_bank/no_negative）和辅助核算（is_aux/aux_types）"实际发生变化"时才同步到所有下级科目
    */
   updateAccount(id: string, params: UpdateAccountParams): void {
     // 获取修改前的状态，用于判断是否需要级联
@@ -348,9 +406,30 @@ export class AccountService {
 
     // 将 is_enabled 转换为数字 0 或 1
     const newEnabled = params.is_enabled ? 1 : 0
+    const newIsCash = params.is_cash ? 1 : 0
+    const newIsBank = params.is_bank ? 1 : 0
+    const newNoNegative = params.no_negative !== undefined ? (params.no_negative ? 1 : 0) : (oldAccount?.no_negative ?? 0)
 
-    if (params.no_negative !== undefined) {
-      const allowNegative = params.no_negative ? 1 : 0
+    // 计算哪些字段相对旧值实际发生了变化，只级联变化的字段
+    const changedProps: Partial<{
+      is_cash: number
+      is_bank: number
+      no_negative: number
+      is_aux: number
+      aux_types: string | null
+    }> = {}
+    if (oldAccount) {
+      if ((oldAccount.is_cash ?? 0) !== newIsCash) changedProps.is_cash = newIsCash
+      if ((oldAccount.is_bank ?? 0) !== newIsBank) changedProps.is_bank = newIsBank
+      if ((oldAccount.no_negative ?? 0) !== newNoNegative) changedProps.no_negative = newNoNegative
+      if ((oldAccount.is_aux ?? 0) !== hasAux) changedProps.is_aux = hasAux
+      if ((oldAccount.aux_types ?? null) !== auxTypesJson) {
+        changedProps.is_aux = hasAux
+        changedProps.aux_types = auxTypesJson
+      }
+    }
+
+    this.db.transaction(() => {
       this.db
         .prepare(
           `UPDATE accounts
@@ -363,39 +442,70 @@ export class AccountService {
           hasAux,
           auxTypesJson,
           newEnabled,
-          params.is_cash ? 1 : 0,
-          params.is_bank ? 1 : 0,
-          allowNegative,
+          newIsCash,
+          newIsBank,
+          newNoNegative,
           id
         )
-    } else {
-      this.db
-        .prepare(
-          `UPDATE accounts
-           SET name = ?, direction = ?, is_aux = ?, aux_types = ?, is_enabled = ?, is_cash = ?, is_bank = ?, updated_at = datetime('now')
-           WHERE id = ?`
-        )
-        .run(
-          params.name,
-          params.direction,
-          hasAux,
-          auxTypesJson,
-          newEnabled,
-          params.is_cash ? 1 : 0,
-          params.is_bank ? 1 : 0,
-          id
-        )
-    }
 
-    // 只有当状态发生变化时才级联处理子科目
-    if (oldEnabled !== newEnabled) {
-      if (newEnabled === 0) {
-        // 禁用时级联禁用所有下级科目
-        this.cascadeDisableChildren(id)
-      } else {
-        // 启用时级联启用所有下级科目
-        this.cascadeEnableChildren(id)
+      // 级联启用/禁用子科目
+      if (oldEnabled !== newEnabled) {
+        if (newEnabled === 0) {
+          this.cascadeDisableChildren(id)
+        } else {
+          this.cascadeEnableChildren(id)
+        }
       }
+
+      // 仅当属性设置/辅助核算实际发生变化时才级联到下级科目
+      if (Object.keys(changedProps).length > 0) {
+        this.cascadePropertyToChildren(id, changedProps)
+      }
+    })()
+  }
+
+  /**
+   * 递归同步属性设置和辅助核算到所有下级科目（仅同步传入的字段）
+   */
+  private cascadePropertyToChildren(
+    parentId: string,
+    props: Partial<{ is_cash: number; is_bank: number; no_negative: number; is_aux: number; aux_types: string | null }>
+  ): void {
+    const fields: string[] = []
+    const values: (number | string | null)[] = []
+    if (props.is_cash !== undefined) {
+      fields.push('is_cash = ?')
+      values.push(props.is_cash)
+    }
+    if (props.is_bank !== undefined) {
+      fields.push('is_bank = ?')
+      values.push(props.is_bank)
+    }
+    if (props.no_negative !== undefined) {
+      fields.push('no_negative = ?')
+      values.push(props.no_negative)
+    }
+    if (props.is_aux !== undefined) {
+      fields.push('is_aux = ?')
+      values.push(props.is_aux)
+    }
+    if (props.aux_types !== undefined) {
+      fields.push('aux_types = ?')
+      values.push(props.aux_types)
+    }
+    if (fields.length === 0) return
+
+    const setClause = fields.join(', ') + ", updated_at = datetime('now')"
+    const updateStmt = this.db.prepare(`UPDATE accounts SET ${setClause} WHERE id = ?`)
+
+    const children = this.db
+      .prepare('SELECT id FROM accounts WHERE parent_id = ?')
+      .all(parentId) as { id: string }[]
+
+    for (const child of children) {
+      updateStmt.run(...values, child.id)
+      // 递归处理更深层的子科目
+      this.cascadePropertyToChildren(child.id, props)
     }
   }
 
@@ -548,57 +658,59 @@ export class AccountService {
     })
 
     // 创建缺失的父科目
-    for (const item of toCreate) {
-      const parentId = this.findParentId(item.code, codeLengths, accountMap)
-      const id = uuidv4()
+    this.db.transaction(() => {
+      for (const item of toCreate) {
+        const parentId = this.findParentId(item.code, codeLengths, accountMap)
+        const id = uuidv4()
 
-      this.db
-        .prepare(
-          `INSERT INTO accounts (id, account_set_id, code, name, direction, level, parent_id, is_aux, aux_types, is_enabled, is_cash, is_bank, allow_delete)
+        this.db
+          .prepare(
+            `INSERT INTO accounts (id, account_set_id, code, name, direction, level, parent_id, is_aux, aux_types, is_enabled, is_cash, is_bank, allow_delete)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        )
-        .run(
+          )
+          .run(
+            id,
+            accountSetId,
+            item.code,
+            '-', // 名称用\"-\"占位
+            item.direction,
+            item.level,
+            parentId,
+            0, // is_aux
+            null, // aux_types
+            1, // is_enabled
+            0, // is_cash
+            0, // is_bank
+            1  // allow_delete
+          )
+
+        // 添加到 map 中，供后续科目查找父科目
+        accountMap.set(item.code, {
           id,
-          accountSetId,
-          item.code,
-          '-', // 名称用"-"占位
-          item.direction,
-          item.level,
-          parentId,
-          0, // is_aux
-          null, // aux_types
-          1, // is_enabled
-          0, // is_cash
-          0, // is_bank
-          1  // allow_delete
-        )
+          account_set_id: accountSetId,
+          code: item.code,
+          name: '-',
+          direction: item.direction,
+          level: item.level,
+          parent_id: parentId,
+          is_aux: 0,
+          aux_types: null,
+          is_enabled: 1,
+          is_cash: 0,
+          is_bank: 0,
+          no_negative: 0,
+          allow_delete: 1,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        })
 
-      // 添加到 map 中，供后续科目查找父科目
-      accountMap.set(item.code, {
-        id,
-        account_set_id: accountSetId,
-        code: item.code,
-        name: '-',
-        direction: item.direction,
-        level: item.level,
-        parent_id: parentId,
-        is_aux: 0,
-        aux_types: null,
-        is_enabled: 1,
-        is_cash: 0,
-        is_bank: 0,
-        no_negative: 0,
-        allow_delete: 1,
-        created_at: new Date().toISOString(),
-        updated_at: new Date().toISOString(),
-      })
-
-      created.push({
-        code: item.code,
-        name: '-',
-        level: item.level,
-      })
-    }
+        created.push({
+          code: item.code,
+          name: '-',
+          level: item.level,
+        })
+      }
+    })()
 
     return {
       checked: accounts.length,

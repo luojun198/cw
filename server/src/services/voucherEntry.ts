@@ -1,5 +1,17 @@
 import { v4 as uuidv4 } from 'uuid'
-import { buildBatchVoucherQuery } from './voucherQuery.ts'
+import type { Database } from 'better-sqlite3'
+import { buildBatchVoucherQuery } from './voucherQuery.js'
+import { yuanToCents } from '../utils/amountUtils.js'
+import {
+  accountHasAuxAccounting,
+  extractEntryAuxSelections,
+  parseAccountAuxCategoryIds,
+} from '../utils/auxItemId.js'
+import { AUX_LEGACY_COLUMNS } from '../utils/auxLedgerQuery.js'
+import {
+  getAccountRealtimeBalance,
+  getAccountRealtimeAuxBalance,
+} from './accountRealtimeBalance.js'
 
 export interface VoucherEntryInput {
   account_id: string
@@ -8,6 +20,8 @@ export interface VoucherEntryInput {
   direction: 'debit' | 'credit'
   amount: number
   summary?: string
+  cash_flow_code?: string | null
+  cash_flow_name?: string | null
   dept_id?: string | null
   dept_name?: string | null
   project_id?: string | null
@@ -20,6 +34,20 @@ export interface VoucherEntryInput {
   func_class_name?: string | null
   [key: string]: unknown
 }
+
+/** 分录 INSERT 列数（须与 buildVoucherEntryPayloads 返回值长度一致） */
+export const VOUCHER_ENTRY_INSERT_PARAM_COUNT = 24
+
+export const VOUCHER_ENTRY_INSERT_SQL = `
+  INSERT INTO voucher_entries (
+    id, account_set_id, voucher_id, seq, account_id, account_code, account_name,
+    direction, amount, amount_cents, summary,
+    dept_id, dept_name, project_id, project_name,
+    supplier_id, supplier_name, person_id, person_name,
+    func_class_id, func_class_name, aux_data,
+    cash_flow_code, cash_flow_name
+  ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`
 
 export interface AuxCategoryLike {
   id: string
@@ -70,7 +98,25 @@ export function isVoucherBalanced(entries: VoucherEntryInput[]) {
   return Math.abs(debitTotal - creditTotal) <= 0.001
 }
 
+function resolveCashFlowFields(
+  db: Database,
+  accountSetId: string,
+  entry: VoucherEntryInput
+): { code: string | null; name: string | null } {
+  const code = (entry.cash_flow_code || '').trim() || null
+  if (!code) return { code: null, name: null }
+  const nameFromClient = (entry.cash_flow_name || '').trim()
+  if (nameFromClient) return { code, name: nameFromClient }
+  const row = db
+    .prepare(
+      `SELECT name FROM cash_flow_items WHERE account_set_id = ? AND code = ? AND is_active = 1 LIMIT 1`
+    )
+    .get(accountSetId, code) as { name?: string } | undefined
+  return { code, name: row?.name || code }
+}
+
 export function buildVoucherEntryPayloads(params: {
+  db?: Database
   accountSetId: string
   voucherId: string
   entries: VoucherEntryInput[]
@@ -104,18 +150,29 @@ export function buildVoucherEntryPayloads(params: {
 
     const fixedFields: Record<string, string | null> = {}
     for (const category of params.categories) {
-      const dynamicFieldKey = `_${category.code}_id`  // 带下划线（前端发送的格式）
-      const fixedFieldKey = `${category.code}_id`      // 不带下划线（数据库列名）
-      const itemId = entry[dynamicFieldKey] || entry[fixedFieldKey]  // 优先检查动态字段
+      const dynamicFieldKey = `_${category.code}_id`
+      const fixedFieldKey = `${category.code}_id`
+      const itemId = entry[dynamicFieldKey] || entry[fixedFieldKey]
+      const legacy = AUX_LEGACY_COLUMNS[category.code]
+      const storageIdKey = legacy?.id ?? fixedFieldKey
+      const storageNameKey = legacy?.name ?? `${category.code}_name`
       if (typeof itemId === 'string' && itemId) {
         const item = params.itemMap[itemId]
-        fixedFields[fixedFieldKey] = itemId
-        fixedFields[`${category.code}_name`] = item?.name || ''
+        fixedFields[storageIdKey] = itemId
+        fixedFields[storageNameKey] = item?.name || ''
       } else {
-        fixedFields[fixedFieldKey] = null
-        fixedFields[`${category.code}_name`] = null
+        fixedFields[storageIdKey] = null
+        fixedFields[storageNameKey] = null
       }
     }
+
+    const cashFlow =
+      params.db != null
+        ? resolveCashFlowFields(params.db, params.accountSetId, entry)
+        : {
+            code: (entry.cash_flow_code || '').trim() || null,
+            name: (entry.cash_flow_name || '').trim() || null,
+          }
 
     return [
       uuidv4(),
@@ -127,6 +184,7 @@ export function buildVoucherEntryPayloads(params: {
       entry.account_name,
       entry.direction,
       entry.amount,
+      yuanToCents(entry.amount),
       entry.summary || null,
       fixedFields.dept_id || entry.dept_id || null,
       fixedFields.dept_name || entry.dept_name || null,
@@ -139,8 +197,64 @@ export function buildVoucherEntryPayloads(params: {
       fixedFields.func_class_id || entry.func_class_id || null,
       fixedFields.func_class_name || entry.func_class_name || null,
       Object.keys(auxData).length > 0 ? JSON.stringify(auxData) : null,
+      cashFlow.code,
+      cashFlow.name,
     ]
   })
+}
+
+export function isCashFlowEnabledForAccountSet(db: Database, accountSetId: string): boolean {
+  const row = db
+    .prepare(
+      `SELECT param_value FROM system_params WHERE account_set_id = ? AND param_key = 'enable_cash_flow' LIMIT 1`
+    )
+    .get(accountSetId) as { param_value?: string } | undefined
+  return row?.param_value === 'true'
+}
+
+export function accountRequiresCashFlowItem(account: {
+  require_cash_flow?: number | null
+  is_cash?: number | null
+  is_bank?: number | null
+} | null | undefined): boolean {
+  if (!account) return false
+  return Number(account.is_cash) === 1 || Number(account.is_bank) === 1
+}
+
+/** 启用现金流核算时，校验必填现金流量项目 */
+export function validateVoucherEntriesCashFlow(
+  db: Database,
+  accountSetId: string,
+  entries: VoucherEntryInput[]
+): string | null {
+  if (!isCashFlowEnabledForAccountSet(db, accountSetId)) return null
+
+  const accountStmt = db.prepare(
+    `SELECT name, require_cash_flow, is_cash, is_bank FROM accounts WHERE id = ? AND account_set_id = ?`
+  )
+  const cfStmt = db.prepare(
+    `SELECT code FROM cash_flow_items WHERE account_set_id = ? AND code = ? AND is_active = 1 LIMIT 1`
+  )
+
+  for (const entry of entries) {
+    if (!entry.account_id || !entry.amount) continue
+    const account = accountStmt.get(entry.account_id, accountSetId) as {
+      name: string
+      require_cash_flow: number
+      is_cash: number
+      is_bank: number
+    } | undefined
+    if (!account) continue
+
+    const code = (entry.cash_flow_code || '').trim()
+    if (accountRequiresCashFlowItem(account) && !code) {
+      return `科目【${account.name}】须指定现金流量项目`
+    }
+    if (code && !cfStmt.get(accountSetId, code)) {
+      return `现金流量项目编码「${code}」不存在或已停用`
+    }
+  }
+  return null
 }
 
 export interface AiConfigLike {
@@ -197,17 +311,41 @@ export function getEffectiveVoucherTypeId(params: {
     prepare: (sql: string) => { get: (...args: any[]) => any }
   }
   accountSetId: string
+  year: number
+  period: number
   voucherTypeId?: string | null
 }) {
   if (params.voucherTypeId) {
     return params.voucherTypeId
   }
 
+  const lastVoucher = params.db
+    .prepare(
+      `SELECT voucher_type_id
+       FROM vouchers
+       WHERE account_set_id=? AND year=? AND period=? AND voucher_type_id IS NOT NULL
+       ORDER BY datetime(created_at) DESC, datetime(updated_at) DESC, voucher_date DESC, voucher_no DESC
+       LIMIT 1`
+    )
+    .get(params.accountSetId, params.year, params.period) as any
+  if (lastVoucher?.voucher_type_id) {
+    return lastVoucher.voucher_type_id
+  }
+
   const firstType = params.db
     .prepare(
-      'SELECT id FROM voucher_types WHERE account_set_id=? OR account_set_id IS NULL ORDER BY account_set_id DESC LIMIT 1'
+      `SELECT id
+       FROM voucher_types
+       WHERE account_set_id=? OR account_set_id IS NULL
+       ORDER BY
+         CASE WHEN account_set_id=? THEN 0 ELSE 1 END,
+         CASE WHEN code IS NOT NULL AND code != '' AND code NOT GLOB '*[^0-9]*' THEN 0 ELSE 1 END,
+         CASE WHEN code IS NOT NULL AND code != '' AND code NOT GLOB '*[^0-9]*' THEN CAST(code AS INTEGER) END,
+         code COLLATE NOCASE ASC,
+         sort_order ASC
+       LIMIT 1`
     )
-    .get(params.accountSetId) as any
+    .get(params.accountSetId, params.accountSetId) as any
   return firstType?.id || null
 }
 
@@ -237,6 +375,8 @@ export function getNextVoucherNo(params: {
   const effectiveTypeId = getEffectiveVoucherTypeId({
     db: params.db,
     accountSetId: params.accountSetId,
+    year: params.year,
+    period: params.period,
     voucherTypeId: params.voucherTypeId,
   })
 
@@ -340,9 +480,7 @@ export function isPostedVoucher(voucher: { status?: string } | null | undefined)
 }
 
 export function replaceVoucherEntries(params: {
-  db: {
-    prepare: (sql: string) => { run: (...args: any[]) => void }
-  }
+  db: Database
   accountSetId: string
   voucherId: string
   entries: VoucherEntryInput[]
@@ -350,11 +488,9 @@ export function replaceVoucherEntries(params: {
   itemMap: Record<string, AuxItemLike>
 }) {
   params.db.prepare('DELETE FROM voucher_entries WHERE voucher_id=?').run(params.voucherId)
-  const insertEntry = params.db.prepare(`
-    INSERT INTO voucher_entries (id, account_set_id, voucher_id, seq, account_id, account_code, account_name, direction, amount, summary, dept_id, dept_name, project_id, project_name, supplier_id, supplier_name, person_id, person_name, func_class_id, func_class_name, aux_data)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `)
+  const insertEntry = params.db.prepare(VOUCHER_ENTRY_INSERT_SQL)
   const entryPayloads = buildVoucherEntryPayloads({
+    db: params.db,
     accountSetId: params.accountSetId,
     voucherId: params.voucherId,
     entries: params.entries,
@@ -386,34 +522,288 @@ export function attachVoucherEntries<T extends { id: string }>(vouchers: T[], en
 export function calculateNewBalance(params: {
   currentBalance: number
   amount: number
+  entryDirection: 'debit' | 'credit'
   accountDirection?: string | null
 }) {
-  return params.accountDirection === 'debit'
-    ? params.currentBalance - params.amount
-    : params.currentBalance + params.amount
+  const isSameDirection = params.accountDirection === params.entryDirection
+  return params.currentBalance + (isSameDirection ? params.amount : -params.amount)
+}
+
+export interface NoNegativeAccountLike {
+  id?: string
+  no_negative?: number
+  direction?: string | null
+  parent_id?: string | null
+  name?: string | null
+}
+
+export interface NoNegativeAuxCategoryLike {
+  id: string
+  code: string
+  name?: string
+}
+
+export interface NoNegativeBalanceViolation {
+  accountName: string
+  auxCategoryName?: string
+  auxItemName?: string
+  projectedBalance: number
+  /** 受上级科目约束时，上级科目名称 */
+  constraintAccountName?: string
+}
+
+export interface NoNegativeBalanceCheckResult {
+  message: string
+  violations: NoNegativeBalanceViolation[]
+}
+
+export function buildNoNegativeBalanceSummaryMessage(
+  violations: NoNegativeBalanceViolation[]
+): string {
+  if (violations.length === 0) return ''
+  if (violations.length === 1) {
+    const v = violations[0]
+    const auxPart =
+      v.auxCategoryName && v.auxItemName
+        ? `核算项目【${v.auxCategoryName}：${v.auxItemName}】`
+        : ''
+    const hint = v.constraintAccountName
+      ? `（受上级科目【${v.constraintAccountName}】约束）`
+      : ''
+    return `科目【${v.accountName}】${auxPart}${hint}余额不允许为负数，保存后余额将为 ${v.projectedBalance.toFixed(2)}`
+  }
+  return `共 ${violations.length} 项核算余额保存后将变为负数，无法保存凭证`
+}
+
+export function createRealtimeNoNegativeBalanceGetters(
+  db: Database,
+  params: {
+    accountSetId: string
+    year: number
+    period: number
+    categories: NoNegativeAuxCategoryLike[]
+    excludeVoucherId?: string
+  }
+) {
+  const categoryCodeById = new Map(params.categories.map(c => [c.id, c.code]))
+  const categoryNameByCode = new Map(
+    params.categories.map(c => [c.code, c.name?.trim() || c.code])
+  )
+  const itemNameStmt = db.prepare(
+    'SELECT name FROM aux_items WHERE id=? AND account_set_id=?'
+  )
+
+  return {
+    getBalanceByAccountId(accountId: string) {
+      const row = getAccountRealtimeBalance(db, {
+        accountId,
+        accountSetId: params.accountSetId,
+        year: params.year,
+        period: params.period,
+        excludeVoucherId: params.excludeVoucherId,
+      })
+      return row?.end_balance ?? 0
+    },
+    getAuxBalanceByCategory(accountId: string, categoryCode: string, itemId: string) {
+      const acc = db.prepare('SELECT direction FROM accounts WHERE id=?').get(accountId) as
+        | { direction: 'debit' | 'credit' }
+        | undefined
+      if (!acc) return 0
+      const row = getAccountRealtimeAuxBalance(db, {
+        accountId,
+        accountSetId: params.accountSetId,
+        year: params.year,
+        period: params.period,
+        categoryCode,
+        itemId,
+        accountDirection: acc.direction,
+        excludeVoucherId: params.excludeVoucherId,
+      })
+      return row.end_balance
+    },
+    getAuxCategoryName(categoryCode: string) {
+      return categoryNameByCode.get(categoryCode) || categoryCode
+    },
+    getAuxItemName(_categoryCode: string, itemId: string) {
+      const row = itemNameStmt.get(itemId, params.accountSetId) as { name: string } | undefined
+      return row?.name?.trim() || itemId
+    },
+    getEnabledCategoryCodesForAccount(account: { aux_types?: unknown }) {
+      const enabledIds = parseAccountAuxCategoryIds(account.aux_types)
+      return enabledIds
+        .map(id => categoryCodeById.get(id))
+        .filter((code): code is string => Boolean(code))
+    },
+  }
 }
 
 export function validateVoucherEntriesNoNegativeBalance(params: {
   entries: VoucherEntryInput[]
-  getAccountById: (accountId: string) => { no_negative?: number; direction?: string | null } | null | undefined
+  getAccountById: (accountId: string) => NoNegativeAccountLike | null | undefined
   getBalanceByAccountId: (accountId: string) => number
-}) {
-  for (const entry of params.entries) {
-    if (entry.direction !== 'credit') continue
-    const account = params.getAccountById(entry.account_id)
-    if (!account || account.no_negative !== 1) continue
+  /** 按辅助类目 + 项目取实时余额（期初 + 全部凭证，与录入页展示一致） */
+  getAuxBalanceByCategory?: (accountId: string, categoryCode: string, itemId: string) => number
+  getAuxCategoryName?: (categoryCode: string) => string
+  getAuxItemName?: (categoryCode: string, itemId: string) => string
+  getEnabledCategoryCodesForAccount?: (account: NoNegativeAccountLike & { aux_types?: unknown }) => string[]
+}): NoNegativeBalanceCheckResult | null {
+  // 缓存"约束源"：科目自身或最近的祖先中 no_negative=1 的科目；找不到返回 null
+  const constraintCache = new Map<string, NoNegativeAccountLike | null>()
+  function findConstraintSource(accountId: string): NoNegativeAccountLike | null {
+    if (constraintCache.has(accountId)) return constraintCache.get(accountId) || null
+    const visitedIds: string[] = []
+    let cur: NoNegativeAccountLike | null | undefined = params.getAccountById(accountId)
+    let found: NoNegativeAccountLike | null = null
+    const seen = new Set<string>()
+    while (cur) {
+      const cid = cur.id || ''
+      if (cid) {
+        if (seen.has(cid)) break // 防环
+        seen.add(cid)
+        visitedIds.push(cid)
+      }
+      if (cur.no_negative === 1) {
+        found = cur
+        break
+      }
+      if (!cur.parent_id) break
+      cur = params.getAccountById(cur.parent_id)
+    }
+    for (const vid of visitedIds) {
+      if (!constraintCache.has(vid)) constraintCache.set(vid, found)
+    }
+    return found
+  }
 
-    const newBalance = calculateNewBalance({
-      currentBalance: params.getBalanceByAccountId(entry.account_id),
+  type AccBucket = {
+    account: NoNegativeAccountLike
+    entryName: string
+    balance: number
+    constraint: NoNegativeAccountLike
+  }
+  type AuxBucket = AccBucket & { auxCategoryName: string; auxItemName: string }
+
+  const balanceByAccount = new Map<string, AccBucket>()
+  const balanceByAux = new Map<string, AuxBucket>()
+
+  for (const entry of params.entries) {
+    const account = params.getAccountById(entry.account_id)
+    if (!account) continue
+    const constraint = findConstraintSource(entry.account_id)
+    if (!constraint) continue
+
+    const useAuxDimension =
+      accountHasAuxAccounting(account as any) &&
+      params.getAuxBalanceByCategory &&
+      params.getEnabledCategoryCodesForAccount
+
+    if (useAuxDimension) {
+      const categoryCodes = params.getEnabledCategoryCodesForAccount!(account as any)
+      const selections = extractEntryAuxSelections(entry, categoryCodes)
+      for (const sel of selections) {
+        const auxKey = `${entry.account_id}|${sel.categoryCode}|${sel.itemId}`
+        const auxCategoryName =
+          params.getAuxCategoryName?.(sel.categoryCode) || sel.categoryCode
+        const auxItemName =
+          params.getAuxItemName?.(sel.categoryCode, sel.itemId) || sel.itemId
+        if (!balanceByAux.has(auxKey)) {
+          balanceByAux.set(auxKey, {
+            account,
+            entryName: entry.account_name,
+            auxCategoryName,
+            auxItemName,
+            constraint,
+            balance: params.getAuxBalanceByCategory!(
+              entry.account_id,
+              sel.categoryCode,
+              sel.itemId
+            ),
+          })
+        }
+        const auxBucket = balanceByAux.get(auxKey)!
+        auxBucket.balance = calculateNewBalance({
+          currentBalance: auxBucket.balance,
+          amount: entry.amount,
+          entryDirection: entry.direction,
+          accountDirection: account.direction,
+        })
+      }
+      continue
+    }
+
+    // 未启用辅助核算：按科目总余额校验
+    if (!balanceByAccount.has(entry.account_id)) {
+      balanceByAccount.set(entry.account_id, {
+        account,
+        entryName: entry.account_name,
+        constraint,
+        balance: params.getBalanceByAccountId(entry.account_id),
+      })
+    }
+    const acctBucket = balanceByAccount.get(entry.account_id)!
+    acctBucket.balance = calculateNewBalance({
+      currentBalance: acctBucket.balance,
       amount: entry.amount,
+      entryDirection: entry.direction,
       accountDirection: account.direction,
     })
-    if (newBalance < 0) {
-      return `科目【${entry.account_name}】余额不允许为负数`
+  }
+
+  function getConstraintAccountName(
+    constraint: NoNegativeAccountLike,
+    accountId?: string
+  ): string | undefined {
+    if (constraint?.id && accountId && constraint.id !== accountId) {
+      return constraint.name || undefined
+    }
+    return undefined
+  }
+
+  const violations: NoNegativeBalanceViolation[] = []
+
+  for (const { entryName, balance, constraint, account } of balanceByAccount.values()) {
+    if (balance < -0.005) {
+      violations.push({
+        accountName: entryName,
+        projectedBalance: balance,
+        constraintAccountName: getConstraintAccountName(constraint, account.id),
+      })
     }
   }
 
-  return null
+  for (const {
+    entryName,
+    auxCategoryName,
+    auxItemName,
+    balance,
+    constraint,
+    account,
+  } of balanceByAux.values()) {
+    if (balance < -0.005) {
+      violations.push({
+        accountName: entryName,
+        auxCategoryName,
+        auxItemName,
+        projectedBalance: balance,
+        constraintAccountName: getConstraintAccountName(constraint, account.id),
+      })
+    }
+  }
+
+  if (violations.length === 0) return null
+
+  violations.sort((a, b) => {
+    const accountCmp = a.accountName.localeCompare(b.accountName, 'zh-CN')
+    if (accountCmp !== 0) return accountCmp
+    const catCmp = (a.auxCategoryName || '').localeCompare(b.auxCategoryName || '', 'zh-CN')
+    if (catCmp !== 0) return catCmp
+    return (a.auxItemName || '').localeCompare(b.auxItemName || '', 'zh-CN')
+  })
+
+  return {
+    message: buildNoNegativeBalanceSummaryMessage(violations),
+    violations,
+  }
 }
 
 export function buildAuxItemMap(items: AuxItemLike[]) {
@@ -431,7 +821,7 @@ export function loadVoucherAuxiliaryData(params: {
   accountSetId: string
 }) {
   const categories = params.db
-    .prepare('SELECT id, code FROM aux_categories WHERE account_set_id=?')
+    .prepare('SELECT id, code, name FROM aux_categories WHERE account_set_id=?')
     .all(params.accountSetId) as AuxCategoryLike[]
   // 为每个类别加载字段配置
   const fieldsStmt = params.db.prepare('SELECT * FROM aux_category_fields WHERE category_id=? AND is_enabled=1 ORDER BY sort_order')
@@ -538,7 +928,7 @@ export function applyVoucherAudit(params: {
 
 export function validateVoucherForUnAudit(voucher: { status?: string } | null | undefined) {
   if (voucher?.status === 'posted') {
-    return '已过账凭证无法反审核'
+    return '已记账凭证无法反审核'
   }
   return null
 }
@@ -565,8 +955,8 @@ export function getBatchVoucherQuery(params: {
   return buildBatchVoucherQuery({
     voucherTypeIds: params.voucherTypeIds,
     accountSetId: params.accountSetId,
-    startDate: params.startDate,
-    endDate: params.endDate,
+    startDate: params.startDate || '',
+    endDate: params.endDate || '',
     startNo: params.startNo,
     endNo: params.endNo,
   })
@@ -697,10 +1087,7 @@ export function buildBatchAuditPreviewData(
 }
 
 export function auditBatchVouchers(params: {
-  db: {
-    transaction: <T extends (...args: any[]) => void>(fn: T) => (...args: Parameters<T>) => ReturnType<T>
-    prepare: (sql: string) => { run: (...args: any[]) => void }
-  }
+  db: Database
   vouchers: Array<{ id: string }>
   userId?: string | null
   userName?: string | null
@@ -731,10 +1118,7 @@ export function buildBatchDeletePreviewData(vouchers: Array<{ status?: string; v
 }
 
 export function deleteBatchVouchers(params: {
-  db: {
-    transaction: <T extends (...args: any[]) => void>(fn: T) => (...args: Parameters<T>) => ReturnType<T>
-    prepare: (sql: string) => { run: (...args: any[]) => void; get: (id: string) => any; all: (voucherId: string) => any[] }
-  }
+  db: Database
   vouchers: Array<{ id: string }>
 }) {
   const removeBatch = params.db.transaction(() => {
@@ -745,19 +1129,16 @@ export function deleteBatchVouchers(params: {
   removeBatch()
 }
 
-export function deleteVoucherRecords(db: {
-  prepare: (sql: string) => { run: (...args: any[]) => void; get: (id: string) => any; all: (voucherId: string) => any[] }
-  transaction: <T extends (...args: any[]) => any>(fn: T) => (...args: Parameters<T>) => ReturnType<T>
-}, voucherId: string) {
+export function deleteVoucherRecords(db: Database, voucherId: string) {
   // 获取凭证信息
   const voucher = db.prepare('SELECT * FROM vouchers WHERE id=?').get(voucherId) as any
   if (!voucher) {
     return // 凭证不存在，直接返回
   }
 
-  // 如果是已过账凭证，不允许直接删除
+  // 如果是已记账凭证，不允许直接删除
   if (voucher.status === 'posted') {
-    throw new Error('已过账凭证不能删除，请先反过账')
+    throw new Error('已记账凭证不能删除，请先反记账')
   }
 
   const transaction = db.transaction(() => {

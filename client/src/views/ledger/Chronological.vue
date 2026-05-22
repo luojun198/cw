@@ -1,12 +1,24 @@
 <template>
-  <div class="page">
+  <div class="page page-ledger">
     <div class="page-header">
       <h3>序时账</h3>
       <div class="filter-row">
-        <el-select v-model="filters.year" style="width: 100px">
+        <el-select
+          v-model="filters.year"
+          placeholder="年份"
+          clearable
+          style="width: 100px"
+          @change="onYearPeriodChange"
+        >
           <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
         </el-select>
-        <el-select v-model="filters.period" style="width: 100px">
+        <el-select
+          v-model="filters.period"
+          placeholder="月份"
+          clearable
+          style="width: 100px"
+          @change="onYearPeriodChange"
+        >
           <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
         </el-select>
         <el-date-picker
@@ -15,6 +27,8 @@
           value-format="YYYY-MM-DD"
           placeholder="开始日期"
           style="width: 140px"
+          clearable
+          @change="onDateRangeChange"
         />
         <el-date-picker
           v-model="filters.end_date"
@@ -22,34 +36,118 @@
           value-format="YYYY-MM-DD"
           placeholder="结束日期"
           style="width: 140px"
+          clearable
+          @change="onDateRangeChange"
         />
-        <el-checkbox v-model="filters.include_unposted" @change="fetchData" style="margin-left: 12px">
+        <el-checkbox
+          v-model="filters.include_unposted"
+          style="margin-left: 12px"
+          @change="fetchData"
+        >
           统计未记账凭证
         </el-checkbox>
-        <el-button type="primary" @click="fetchData">查询</el-button>
-        <el-button @click="exportData">导出Excel</el-button>
+        <el-button type="primary" @click="fetchData">
+          <el-icon><Search /></el-icon>
+          查询
+        </el-button>
+
+        <el-divider direction="vertical" />
+
+        <el-button plain @click="exportData">
+          <el-icon><Download /></el-icon>
+          导出 Excel
+        </el-button>
+        <el-button plain @click="printPage">
+          <el-icon><Printer /></el-icon>
+          打印
+        </el-button>
+      </div>
+      <div v-if="showAdvancedFilter" class="filter-row" style="margin-top: 8px">
+        <el-input
+          v-model="filters.summary_keyword"
+          placeholder="摘要关键词"
+          clearable
+          style="width: 160px"
+        />
+        <el-input
+          v-model="filters.min_amount"
+          placeholder="最小金额"
+          type="number"
+          clearable
+          style="width: 120px"
+        />
+        <el-input
+          v-model="filters.max_amount"
+          placeholder="最大金额"
+          type="number"
+          clearable
+          style="width: 120px"
+        />
+        <el-input
+          v-model="filters.maker_name"
+          placeholder="制单人"
+          clearable
+          style="width: 120px"
+        />
+        <el-input
+          v-model="filters.auditor_name"
+          placeholder="审核人"
+          clearable
+          style="width: 120px"
+        />
       </div>
     </div>
 
-    <el-table ref="tableRef" :data="list" stripe border height="calc(100vh - 200px)" @header-dragend="onDragEnd">
-      <el-table-column prop="voucher_date" label="日期" :width="widths['voucher_date'] || 100" />
-      <el-table-column prop="voucher_type_name" label="凭证类型" :width="widths['voucher_type_name'] || 100" />
-      <el-table-column prop="voucher_no" label="凭证号" :width="widths['voucher_no'] || 130" />
-      <el-table-column prop="account_code" label="科目编码" :width="widths['account_code'] || 100" />
-      <el-table-column prop="account_name" label="科目名称" :width="widths['account_name'] || 140" />
-      <el-table-column prop="summary" label="摘要" :width="widths['summary'] || 180" />
-      <el-table-column label="借方金额" :width="widths['借方金额'] || 140" align="right">
+    <div class="print-title-row">
+      <h2 class="print-title">序时账</h2>
+      <p class="print-date-range">{{ printDateLabel }}</p>
+    </div>
+
+    <div class="table-summary-scroll table-summary-scroll--wide">
+    <el-table
+      ref="tableRef"
+      :data="list"
+      :style="{ width: `${ledgerTableWidth}px` }"
+      :fit="false"
+      stripe
+      border
+      size="small"
+      class="compact-data-table"
+      highlight-current-row
+      @header-dragend="handleHeaderDragEnd"
+      @row-dblclick="handleLedgerRowDblClick"
+    >
+      <el-table-column prop="voucher_date" label="日期" :width="colWidth('voucher_date', 100)" />
+      <el-table-column
+        prop="voucher_type_name"
+        label="凭证类型"
+        :width="colWidth('voucher_type_name', 100)"
+      />
+      <el-table-column prop="voucher_no" label="凭证号" :width="colWidth('voucher_no', 130)" />
+      <el-table-column
+        prop="account_code"
+        label="科目编码"
+        :width="colWidth('account_code', 100)"
+      />
+      <el-table-column
+        prop="account_name"
+        label="科目名称"
+        :width="colWidth('account_name', 140)"
+      />
+      <el-table-column prop="summary" label="摘要" :width="colWidth('summary', 180)" />
+      <el-table-column column-key="借方金额" label="借方金额" :width="colWidth('借方金额', 140)" align="right">
         <template #default="{ row }">{{
           row.direction === 'debit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
-      <el-table-column label="贷方金额" :width="widths['贷方金额'] || 140" align="right">
+      <el-table-column column-key="贷方金额" label="贷方金额" :width="colWidth('贷方金额', 140)" align="right">
         <template #default="{ row }">{{
           row.direction === 'credit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
-      <el-table-column prop="maker_name" label="制单人" :width="widths['maker_name'] || 80" />
+      <el-table-column prop="maker_name" label="制单人" :width="colWidth('maker_name', 80)" />
     </el-table>
+    </div>
 
     <div class="pagination">
       <el-pagination
@@ -66,75 +164,188 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { Printer, Search, Download } from '@element-plus/icons-vue'
 import request from '@/api/request'
-import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
+import { useLedgerVoucherNavigate } from '@/composables/useLedgerVoucherNavigate'
 import { formatAmount } from '@/utils/format'
+import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
 
+const { handleLedgerRowDblClick } = useLedgerVoucherNavigate()
 const list = ref<any[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(100)
+const showAdvancedFilter = ref(false)
 const filters = ref<any>({
   year: new Date().getFullYear(),
   period: new Date().getMonth() + 1,
   start_date: '',
   end_date: '',
   include_unposted: true,
+  summary_keyword: '',
+  min_amount: '',
+  max_amount: '',
+  maker_name: '',
+  auditor_name: '',
 })
 const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
 
-const tableRef = ref()
-const { widths, onDragEnd } = useColumnWidthMemory('ledger_chronological')
+const printDateLabel = computed(() => {
+  if (filters.value.start_date || filters.value.end_date) {
+    const start = filters.value.start_date || '不限'
+    const end = filters.value.end_date || '不限'
+    return `日期：${start} 至 ${end}`
+  }
+  if (!filters.value.year && !filters.value.period) {
+    return '日期：当前期间'
+  }
+  return `日期：${filters.value.year}年 ${filters.value.period}月`
+})
 
-async function fetchData() {
+let printTimer: ReturnType<typeof setTimeout> | null = null
+
+onBeforeUnmount(() => {
+  if (printTimer) clearTimeout(printTimer)
+})
+
+function printPage() {
+  // 展开表格解除高度限制，确保打印全部内容
+  const tableWrapper = document.querySelector('.el-table__body-wrapper') as HTMLElement
+  const table = document.querySelector('.el-table') as HTMLElement
+  if (tableWrapper) {
+    tableWrapper.style.setProperty('height', 'auto', 'important')
+    tableWrapper.style.setProperty('overflow', 'visible', 'important')
+    tableWrapper.style.setProperty('max-height', 'none', 'important')
+  }
+  if (table) {
+    table.style.setProperty('height', 'auto', 'important')
+    table.style.setProperty('max-height', 'none', 'important')
+  }
+
+  // 强制重排后打印
+  void document.body.offsetHeight
+  window.print()
+
+  // 打印后恢复
+  const restore = () => {
+    if (tableWrapper) { tableWrapper.style.cssText = '' }
+    if (table) { table.style.cssText = '' }
+  }
+  if ('onafterprint' in window) {
+    window.addEventListener('afterprint', restore, { once: true })
+    printTimer = setTimeout(restore, 2000)
+  } else {
+    printTimer = setTimeout(restore, 2000)
+  }
+}
+
+const ledgerColumnDefs = computed(() => [
+  { key: 'voucher_date', fallback: 100 },
+  { key: 'voucher_type_name', fallback: 100 },
+  { key: 'voucher_no', fallback: 130 },
+  { key: 'account_code', fallback: 100 },
+  { key: 'account_name', fallback: 140 },
+  { key: 'summary', fallback: 180 },
+  { key: '借方金额', fallback: 140 },
+  { key: '贷方金额', fallback: 140 },
+  { key: 'maker_name', fallback: 80 },
+])
+
+const { tableRef, colWidth, ledgerTableWidth, handleHeaderDragEnd, afterTableLayout } =
+  useLedgerWideTable('ledger_chronological', ledgerColumnDefs)
+
+function isDateFilterActive() {
+  return Boolean(filters.value.start_date || filters.value.end_date)
+}
+
+function onYearPeriodChange() {
+  if (filters.value.year || filters.value.period) {
+    filters.value.start_date = ''
+    filters.value.end_date = ''
+  }
+}
+
+function onDateRangeChange() {
+  if (isDateFilterActive()) {
+    filters.value.year = null
+    filters.value.period = null
+  }
+}
+
+function buildQueryParams(page: number, size: number) {
   const params: any = {
-    year: filters.value.year,
-    period: filters.value.period,
-    page: currentPage.value,
-    pageSize: pageSize.value,
+    page,
+    pageSize: size,
+  }
+  if (!isDateFilterActive()) {
+    if (filters.value.year) params.year = filters.value.year
+    if (filters.value.period) params.period = filters.value.period
   }
   if (filters.value.start_date) params.start_date = filters.value.start_date
   if (filters.value.end_date) params.end_date = filters.value.end_date
   if (filters.value.include_unposted) params.include_unposted = 'true'
+  if (filters.value.summary_keyword) params.summary_keyword = filters.value.summary_keyword
+  if (filters.value.min_amount) params.min_amount = filters.value.min_amount
+  if (filters.value.max_amount) params.max_amount = filters.value.max_amount
+  if (filters.value.maker_name) params.maker_name = filters.value.maker_name
+  if (filters.value.auditor_name) params.auditor_name = filters.value.auditor_name
+  return params
+}
 
+async function fetchData() {
+  const params = buildQueryParams(currentPage.value, pageSize.value)
   const res = await request.get<any>('/ledger/chronological', { params })
   list.value = res.data || []
   total.value = res.total || 0
+  await afterTableLayout()
 }
 
 async function exportData() {
-  // 导出全部数据
-  const params: any = {
-    year: filters.value.year,
-    period: filters.value.period,
-    page: 1,
-    pageSize: 10000,
-  }
-  if (filters.value.start_date) params.start_date = filters.value.start_date
-  if (filters.value.end_date) params.end_date = filters.value.end_date
-  if (filters.value.include_unposted) params.include_unposted = 'true'
-
+  const params = buildQueryParams(1, 10000)
   const res = await request.get<any>('/ledger/chronological', { params })
   const allData = res.data || []
+  const dateRange = isDateFilterActive()
+    ? `${filters.value.start_date || '不限'}_${filters.value.end_date || '不限'}`
+    : `${filters.value.year || new Date().getFullYear()}_${filters.value.period || new Date().getMonth() + 1}`
 
-  const { utils, writeFile } = await import('xlsx')
-  const ws = utils.json_to_sheet(
-    allData.map((v: any) => ({
-      日期: v.voucher_date,
-      凭证类型: v.voucher_type_name || '',
-      凭证号: v.voucher_no,
-      科目编码: v.account_code,
-      科目名称: v.account_name,
-      摘要: v.summary,
-      借方金额: v.direction === 'debit' ? v.amount : '',
-      贷方金额: v.direction === 'credit' ? v.amount : '',
-      制单人: v.maker_name || '',
-    }))
-  )
-  const wb = utils.book_new()
-  utils.book_append_sheet(wb, ws, '序时账')
-  writeFile(wb, `序时账_${filters.value.year}_${filters.value.period}.xlsx`)
+  const columns: ExportColumnDef[] = [
+    { label: '日期', width: colWidth('voucher_date', 100), value: row => row.voucher_date },
+    {
+      label: '凭证类型',
+      width: colWidth('voucher_type_name', 100),
+      value: row => row.voucher_type_name || '',
+    },
+    { label: '凭证号', width: colWidth('voucher_no', 130), value: row => row.voucher_no },
+    { label: '科目编码', width: colWidth('account_code', 100), value: row => row.account_code },
+    { label: '科目名称', width: colWidth('account_name', 140), value: row => row.account_name },
+    { label: '摘要', width: colWidth('summary', 180), value: row => row.summary },
+    {
+      label: '借方金额',
+      width: colWidth('借方金额', 140),
+      align: 'right',
+      type: 'amount',
+      value: row => (row.direction === 'debit' ? row.amount : ''),
+    },
+    {
+      label: '贷方金额',
+      width: colWidth('贷方金额', 140),
+      align: 'right',
+      type: 'amount',
+      value: row => (row.direction === 'credit' ? row.amount : ''),
+    },
+    { label: '制单人', width: colWidth('maker_name', 80), value: row => row.maker_name || '' },
+  ]
+
+  await exportStyledTable({
+    fileName: `序时账_${dateRange}.xlsx`,
+    sheetName: '序时账',
+    title: '序时账',
+    subtitle: printDateLabel.value,
+    columns,
+    rows: allData,
+  })
 }
 
 onMounted(async () => {
@@ -164,5 +375,68 @@ onMounted(async () => {
   margin-top: 16px;
   display: flex;
   justify-content: flex-end;
+}
+
+.print-title-row {
+  display: none;
+}
+</style>
+<style>
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  body {
+    padding: 15mm 10mm !important;
+  }
+
+  /* 隐藏筛选栏、按钮、分页等非打印元素 */
+  .page-header,
+  .filter-row,
+  .pagination,
+  .el-button,
+  .el-divider,
+  .balance-tag {
+    display: none !important;
+  }
+
+  /* 显示打印标题 */
+  .print-title-row {
+    display: block !important;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .print-title {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 8px;
+  }
+  .print-date-range {
+    font-size: 11pt;
+    color: #333;
+    margin: 0 0 12px;
+  }
+
+  /* 表格占满页面 */
+  .el-table {
+    height: auto !important;
+    max-height: none !important;
+  }
+  .el-table__body-wrapper {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* 页面主体 */
+  .page {
+    padding: 0 !important;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
 </style>

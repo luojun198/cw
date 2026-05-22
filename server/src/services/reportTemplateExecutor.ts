@@ -1,11 +1,19 @@
-import { getBalance, getPeriodSum, getPeriodRangeSum, getPeriodRangeSumExcludeTransfer, type BalanceQueryDb } from './reportBalance.ts'
+import { getBalance, getPeriodSum, getPeriodRangeSum, getPeriodRangeSumExcludeTransfer, type BalanceQueryDb } from './reportBalance.js'
+import { getCashFlowAmount } from './cashFlowAmount.js'
+import type { Database } from 'better-sqlite3'
 
 type ExecuteContext = {
-  db: BalanceQueryDb
+  db: BalanceQueryDb | Database
   accountSetId: string
   year: number
   period: number
   unitName?: string
+}
+
+type ResolvedPeriodRange = {
+  year: number
+  fromPeriod: number
+  toPeriod: number
 }
 
 type TemplateCellInput = {
@@ -59,6 +67,9 @@ function isNumericValue(value: string) {
 
 function formatNumber(value: number, _formatText: string | null) {
   if (!Number.isFinite(value)) return ''
+  if (!_formatText) {
+    return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(6)))
+  }
   return new Intl.NumberFormat('zh-CN', {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
@@ -83,7 +94,77 @@ function splitArguments(value: string) {
   return result
 }
 
-function getAccountDirection(db: BalanceQueryDb, accountSetId: string, accountCode: string): 'debit' | 'credit' {
+function columnNameToIndex(value: string) {
+  let result = 0
+  for (const char of value.toUpperCase()) {
+    result = result * 26 + (char.charCodeAt(0) - 64)
+  }
+  return result - 1
+}
+
+function parseCellRef(value: string) {
+  const match = value.trim().match(/^\$?([A-Z]+)\$?(\d+)$/i)
+  if (!match) return null
+  return {
+    rowIndex: Number(match[2]) - 1,
+    colIndex: columnNameToIndex(match[1]),
+    address: `${match[1].toUpperCase()}${match[2]}`,
+  }
+}
+
+function expandCellRange(value: string) {
+  const match = value.trim().match(/^\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)$/i)
+  if (!match) return null
+
+  const start = parseCellRef(`${match[1]}${match[2]}`)
+  const end = parseCellRef(`${match[3]}${match[4]}`)
+  if (!start || !end) return null
+
+  const rowStart = Math.min(start.rowIndex, end.rowIndex)
+  const rowEnd = Math.max(start.rowIndex, end.rowIndex)
+  const colStart = Math.min(start.colIndex, end.colIndex)
+  const colEnd = Math.max(start.colIndex, end.colIndex)
+  const refs: string[] = []
+
+  for (let rowIndex = rowStart; rowIndex <= rowEnd; rowIndex += 1) {
+    for (let colIndex = colStart; colIndex <= colEnd; colIndex += 1) {
+      refs.push(getCellAddress(rowIndex, colIndex))
+    }
+  }
+
+  return refs
+}
+
+function getCellNumericValue(ref: string, cellValues: Map<string, number>) {
+  const parsed = parseCellRef(ref)
+  if (!parsed) return 0
+  return cellValues.get(parsed.address) || 0
+}
+
+function evaluateSumArgument(value: string, cellValues: Map<string, number>) {
+  const trimmed = value.trim()
+  if (!trimmed) return 0
+
+  const rangeRefs = expandCellRange(trimmed)
+  if (rangeRefs) {
+    return rangeRefs.reduce((sum, ref) => sum + (cellValues.get(ref) || 0), 0)
+  }
+
+  if (parseCellRef(trimmed)) {
+    return getCellNumericValue(trimmed, cellValues)
+  }
+
+  const numeric = Number(trimmed)
+  if (Number.isFinite(numeric)) return numeric
+
+  return safeEvaluateExpression(replaceCellReferences(trimmed, cellValues))
+}
+
+function getSumValue(rawArgs: string, cellValues: Map<string, number>) {
+  return splitArguments(rawArgs).reduce((sum, arg) => sum + evaluateSumArgument(arg, cellValues), 0)
+}
+
+function getAccountDirection(db: BalanceQueryDb | Database, accountSetId: string, accountCode: string): 'debit' | 'credit' {
   const exact = db
     .prepare(
       `
@@ -122,14 +203,15 @@ function getSideBalance(
   context: ExecuteContext,
   accountCode: string,
   period: number,
-  side: 'debit' | 'credit'
+  side: 'debit' | 'credit',
+  year = context.year
 ) {
   const direction = getAccountDirection(context.db, context.accountSetId, accountCode)
   const naturalBalance = getBalance(
     context.db,
     context.accountSetId,
     accountCode,
-    context.year,
+    year,
     Number(period)
   )
 
@@ -144,12 +226,117 @@ function getSideBalance(
     : Math.max(-naturalBalance, 0)
 }
 
-function applyFormulaFunctions(expression: string, context: ExecuteContext) {
+function resolveAcdSinglePeriod(context: ExecuteContext, periodRaw: string): { year: number; period: number } {
+  const normalized = String(periodRaw ?? '').trim()
+  if (!normalized || normalized === '99') {
+    return { year: context.year, period: context.period }
+  }
+
+  const parsed = Number(normalized)
+  if (!Number.isFinite(parsed)) {
+    return { year: context.year, period: context.period }
+  }
+
+  if (parsed >= 100) {
+    const periodValue = parsed - 100
+    const period =
+      periodValue === 99
+        ? context.period
+        : Math.min(12, Math.max(0, Math.trunc(periodValue)))
+    return { year: context.year - 1, period }
+  }
+
+  return { year: context.year, period: Math.min(12, Math.max(0, Math.trunc(parsed))) }
+}
+
+function resolveAcdPeriodRange(context: ExecuteContext, fromRaw: string, toRaw: string): ResolvedPeriodRange {
+  const normalize = (raw: string, fallback: number) => {
+    const value = String(raw || '').trim()
+    if (!value || value === '99') return fallback
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed)) return fallback
+    return parsed
+  }
+
+  const fromValue = normalize(fromRaw, context.period)
+  const toValue = normalize(toRaw, context.period)
+  const isPreviousYear = fromValue >= 100 || toValue >= 100
+  const convertPeriod = (value: number) => {
+    const period = isPreviousYear ? value - 100 : value
+    if (period === 99) return context.period
+    return Math.min(12, Math.max(1, Math.trunc(period)))
+  }
+  const fromPeriod = convertPeriod(fromValue)
+  const toPeriod = convertPeriod(toValue)
+
+  return {
+    year: isPreviousYear ? context.year - 1 : context.year,
+    fromPeriod: Math.min(fromPeriod, toPeriod),
+    toPeriod: Math.max(fromPeriod, toPeriod),
+  }
+}
+
+function hasTable(db: BalanceQueryDb | Database, tableName: string) {
+  try {
+    const row = db
+      .prepare(
+        `
+        SELECT name
+        FROM sqlite_master
+        WHERE type = 'table' AND name = ?
+        LIMIT 1
+        `
+      )
+      .get(tableName) as { name?: string } | undefined
+    return Boolean(row?.name)
+  } catch {
+    return false
+  }
+}
+
+function getBudgetSurplusAdjustmentAmount(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  itemCode: string,
+  year: number,
+  fromPeriod: number,
+  toPeriod: number
+) {
+  if (!hasTable(db, 'budget_surplus_adjustments')) {
+    return 0
+  }
+
+  const row = db
+    .prepare(
+      `
+      SELECT SUM(amount) as amount
+      FROM budget_surplus_adjustments
+      WHERE account_set_id = ?
+        AND year = ?
+        AND period >= ?
+        AND period <= ?
+        AND (item_code = ? OR item_code LIKE ?)
+      `
+    )
+    .get(accountSetId, year, fromPeriod, toPeriod, itemCode, `${itemCode}%`) as
+    | { amount: number | null }
+    | undefined
+
+  return Number(row?.amount || 0)
+}
+
+function applyFormulaFunctions(expression: string, context: ExecuteContext, cellValues: Map<string, number>) {
   return expression.replace(/(^|[^\w])@?([a-z_][\w]*)\(([^()]*)\)/gi, (match, prefix: string, rawName: string, rawArgs: string) => {
     const name = rawName.toLowerCase()
     const args = splitArguments(rawArgs)
     const accountCode = String(args[0] || '').trim()
-    const periodArg = args[1] === undefined || args[1] === '' ? context.period : Number(args[1])
+    // 99 表示当前期间（ACD 报表公式惯例），100+ 表示上年同期
+    const periodRaw = args[1] === undefined || args[1] === '' ? '99' : String(args[1]).trim()
+    const resolvedPeriod = resolveAcdSinglePeriod(context, periodRaw)
+
+    if (name === 'sum') {
+      return `${prefix}${getSumValue(rawArgs, cellValues)}`
+    }
 
     if (!accountCode) {
       throw new Error(`函数 @${name} 缺少科目编码参数`)
@@ -158,7 +345,13 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext) {
     let result: number
     switch (name) {
       case 'ye': {
-        result = getBalance(context.db, context.accountSetId, accountCode, context.year, Number(periodArg))
+        result = getBalance(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          resolvedPeriod.year,
+          resolvedPeriod.period
+        )
         break
       }
       case 'nc': {
@@ -166,44 +359,118 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext) {
         break
       }
       case 'df': {
-        const sum = getPeriodSum(context.db, context.accountSetId, accountCode, context.year, Number(periodArg))
-        result = sum.debit
-        break
-      }
-      case 'jf': {
-        const sum = getPeriodSum(context.db, context.accountSetId, accountCode, context.year, Number(periodArg))
+        const sum = getPeriodSum(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          resolvedPeriod.year,
+          resolvedPeriod.period
+        )
         result = sum.credit
         break
       }
+      case 'jf': {
+        const sum = getPeriodSum(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          resolvedPeriod.year,
+          resolvedPeriod.period
+        )
+        result = sum.debit
+        break
+      }
+      case 'jy':
       case 'mjy': {
-        result = getSideBalance(context, accountCode, Number(periodArg), 'debit')
+        result = getSideBalance(context, accountCode, resolvedPeriod.period, 'debit', resolvedPeriod.year)
         break
       }
+      case 'dy':
       case 'mdy': {
-        result = getSideBalance(context, accountCode, Number(periodArg), 'credit')
+        result = getSideBalance(context, accountCode, resolvedPeriod.period, 'credit', resolvedPeriod.year)
         break
       }
+      case 'nj':
       case 'mnj': {
-        result = getSideBalance(context, accountCode, 0, 'debit')
+        result = getSideBalance(context, accountCode, 0, 'debit', resolvedPeriod.year)
         break
       }
+      case 'nd':
       case 'mnd': {
-        result = getSideBalance(context, accountCode, 0, 'credit')
+        result = getSideBalance(context, accountCode, 0, 'credit', resolvedPeriod.year)
         break
       }
       case 'jqy': {
         // @jqy(科目编码, 起始期间, 截止期间)
         // 99 表示当前期（context.period），数字表示具体月份
         // 排除结转凭证，取结转前净发生额，按科目自然余额方向计算
-        const fromPeriodRaw = args[1] === undefined || args[1] === '' ? '99' : String(args[1]).trim()
-        const toPeriodRaw = args[2] === undefined || args[2] === '' ? '99' : String(args[2]).trim()
-        const fromPeriod = fromPeriodRaw === '99' ? context.period : Number(fromPeriodRaw)
-        const toPeriod = toPeriodRaw === '99' ? context.period : Number(toPeriodRaw)
-        const rangeSum = getPeriodRangeSumExcludeTransfer(context.db, context.accountSetId, accountCode, context.year, fromPeriod, toPeriod)
+        const range = resolveAcdPeriodRange(
+          context,
+          args[1] === undefined || args[1] === '' ? '99' : String(args[1]).trim(),
+          args[2] === undefined || args[2] === '' ? '99' : String(args[2]).trim()
+        )
+        const rangeSum = getPeriodRangeSumExcludeTransfer(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          range.year,
+          range.fromPeriod,
+          range.toPeriod
+        )
         const direction = getAccountDirection(context.db, context.accountSetId, accountCode)
         result = direction === 'debit'
           ? rangeSum.debit - rangeSum.credit
           : rangeSum.credit - rangeSum.debit
+        break
+      }
+      case 'jqj':
+      case 'jqd': {
+        const range = resolveAcdPeriodRange(
+          context,
+          args[1] === undefined || args[1] === '' ? '99' : String(args[1]).trim(),
+          args[2] === undefined || args[2] === '' ? '99' : String(args[2]).trim()
+        )
+        const rangeSum = getPeriodRangeSumExcludeTransfer(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          range.year,
+          range.fromPeriod,
+          range.toPeriod
+        )
+        result = name === 'jqj' ? rangeSum.debit : rangeSum.credit
+        break
+      }
+      case 'xj_je': {
+        const range = resolveAcdPeriodRange(
+          context,
+          args[1] === undefined || args[1] === '' ? '99' : String(args[1]).trim(),
+          args[2] === undefined || args[2] === '' ? '99' : String(args[2]).trim()
+        )
+        result = getCashFlowAmount(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          range.year,
+          range.fromPeriod,
+          range.toPeriod
+        )
+        break
+      }
+      case 'ys_cy': {
+        const range = resolveAcdPeriodRange(
+          context,
+          args[1] === undefined || args[1] === '' ? '99' : String(args[1]).trim(),
+          args[2] === undefined || args[2] === '' ? '99' : String(args[2]).trim()
+        )
+        result = getBudgetSurplusAdjustmentAmount(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          range.year,
+          range.fromPeriod,
+          range.toPeriod
+        )
         break
       }
       default:
@@ -299,7 +566,7 @@ function safeEvaluateExpression(expression: string) {
   if (index !== tokens.length) {
     throw new Error('公式存在多余内容')
   }
-  return result
+  return Object.is(result, -0) ? 0 : result
 }
 
 function isFormulaLike(value: string | null) {
@@ -315,19 +582,30 @@ function executeFormula(formulaText: string, context: ExecuteContext, cellValues
   if (expression.startsWith('=')) {
     expression = expression.slice(1)
   }
-  expression = applyFormulaFunctions(expression, context)
+  expression = expression.replace(/@([+-])\s*([a-z_][\w]*)\(/gi, '$1@$2(')
+  expression = applyFormulaFunctions(expression, context, cellValues)
   expression = replaceCellReferences(expression, cellValues)
   return safeEvaluateExpression(expression)
 }
 
 function extractCellRefs(expression: string): string[] {
-  const refs: string[] = []
+  const refs = new Set<string>()
+  const rangeRe = /\$?([A-Z]+)\$?(\d+):\$?([A-Z]+)\$?(\d+)/gi
+  let rangeMatch: RegExpExecArray | null
+  while ((rangeMatch = rangeRe.exec(expression)) !== null) {
+    const rangeRefs = expandCellRange(rangeMatch[0])
+    if (!rangeRefs) continue
+    for (const ref of rangeRefs) {
+      refs.add(ref)
+    }
+  }
+
   const re = /\$?([A-Z]+)\$?(\d+)/gi
   let m: RegExpExecArray | null
   while ((m = re.exec(expression)) !== null) {
-    refs.push(`${m[1].toUpperCase()}${m[2]}`)
+    refs.add(`${m[1].toUpperCase()}${m[2]}`)
   }
-  return refs
+  return Array.from(refs)
 }
 
 function topoSortCells(cells: TemplateCellInput[]): TemplateCellInput[] {

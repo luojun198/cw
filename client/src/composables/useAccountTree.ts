@@ -84,6 +84,15 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
     }
   }
 
+  // 处理用户手动展开/折叠行
+  function handleExpandChange(row: any, expanded: boolean) {
+    if (expanded) {
+      expandedSet.value.add(row.id)
+    } else {
+      expandedSet.value.delete(row.id)
+    }
+  }
+
   // 全部展开
   function expandAll() {
     const all = flattenRows(treeData.value)
@@ -95,21 +104,44 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
     expandedSet.value = new Set()
   }
 
-  // 上一级：折叠当前展开的节点
+  // 上一级：收起当前最深的一层
   function goUpLevel() {
-    collapseAll()
+    if (expandedSet.value.size === 0) return
+
+    const flat = flattenRows(treeData.value)
+    // 找到当前展开节点的最大深度
+    const expandedNodes = flat.filter(r => expandedSet.value.has(r.id))
+    if (expandedNodes.length === 0) return
+
+    const maxDepth = Math.max(...expandedNodes.map(r => r._depth || 1))
+    // 收起最深层级的节点
+    const toCollapse = expandedNodes.filter(r => (r._depth || 1) === maxDepth)
+    toCollapse.forEach(r => expandedSet.value.delete(r.id))
   }
 
-  // 下一级：展开所有当前可见的子节点（展开到下一级）
+  // 下一级：展开下一层
   function goDownLevel() {
     const flat = flattenRows(treeData.value)
-    const parentIds = expandedSet.value
-    const toExpand = flat.filter(
-      r => r.children?.length && parentIds.has(r.parent_id) && !expandedSet.value.has(r.id)
-    )
-    if (toExpand.length > 0) {
-      expandedSet.value = new Set([...expandedSet.value, ...toExpand.map(r => r.id)])
+
+    // 如果没有展开任何节点，展开第一层（顶层节点）
+    if (expandedSet.value.size === 0) {
+      const topLevel = treeData.value.filter(r => r.children?.length)
+      topLevel.forEach(r => expandedSet.value.add(r.id))
+      return
     }
+
+    // 找到当前展开节点的最大深度
+    const expandedNodes = flat.filter(r => expandedSet.value.has(r.id))
+    const maxDepth = Math.max(...expandedNodes.map(r => r._depth || 1))
+
+    // 展开下一层：找到深度为 maxDepth 的已展开节点的子节点
+    const toExpand = flat.filter(r => {
+      if (!r.children?.length) return false
+      if (expandedSet.value.has(r.id)) return false
+      return (r._depth || 1) === maxDepth + 1 && r.parent_id && expandedSet.value.has(r.parent_id)
+    })
+
+    toExpand.forEach(r => expandedSet.value.add(r.id))
   }
 
   // 键盘快捷键
@@ -158,5 +190,6 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
     restoreCurrentRow,
     flattenRows,
     getTreeSelectData,
+    handleExpandChange,
   }
 }

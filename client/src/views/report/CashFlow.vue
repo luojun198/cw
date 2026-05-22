@@ -1,13 +1,17 @@
 <template>
   <div class="page">
     <div class="page-header">
-      <h3>现金流量表</h3>
+      <h3>现金流量表（科目估算）</h3>
       <div class="filter-row">
         <el-select v-model="filters.year" style="width: 100px">
           <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
         </el-select>
         <el-select v-model="filters.period" style="width: 100px">
           <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
+        </el-select>
+        <el-select v-model="filters.scope" style="width: 120px">
+          <el-option label="本月" value="month" />
+          <el-option label="本年累计" value="ytd" />
         </el-select>
         <el-button type="primary" @click="fetchData">查询</el-button>
         <el-button @click="exportData">导出 Excel</el-button>
@@ -18,8 +22,178 @@
     <el-card v-if="reportData" class="report-card">
       <div class="report-title-area">
         <h2 class="report-title">现金流量表</h2>
-        <p class="report-subtitle">{{ reportData.reportDate }}</p>
+        <p class="report-subtitle">{{ reportData.reportDate }} · {{ reportData.accountingStandardName }}</p>
+        <p v-if="reportData.reportSourceNote" class="report-note">{{ reportData.reportSourceNote }}</p>
       </div>
+
+      <div v-if="validationWarnings.length" class="validation-block">
+        <el-alert
+          v-for="(w, idx) in validationWarnings"
+          :key="idx"
+          :title="w.message"
+          :type="alertType(w.severity)"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 8px"
+        />
+      </div>
+
+      <el-collapse v-if="reportData.indirectMethod" class="indirect-method-panel">
+        <el-collapse-item title="附注：间接法调节（净利润 → 经营活动现金流量）" name="indirect">
+          <p v-if="reportData.indirectMethod.scopeNote" class="compare-note">
+            {{ reportData.indirectMethod.scopeNote }}
+          </p>
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>调节项目</th>
+                <th>金额</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{{ reportData.indirectMethod.profitLabel }}</td>
+                <td class="amount">{{ fmt(reportData.indirectMethod.netProfit) }}</td>
+              </tr>
+              <tr v-for="(line, idx) in reportData.indirectMethod.adjustments" :key="idx">
+                <td style="padding-left: 16px">{{ line.label }}</td>
+                <td class="amount">{{ fmt(line.amount) }}</td>
+              </tr>
+              <tr class="subtotal-row">
+                <td><strong>经营活动产生的现金流量净额（间接法）</strong></td>
+                <td class="amount">
+                  <strong>{{ fmt(reportData.indirectMethod.operatingCashNet) }}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <table
+            v-if="reportData.indirectComparison"
+            class="compare-table"
+            style="margin-top: 12px"
+          >
+            <thead>
+              <tr>
+                <th>对比项</th>
+                <th>差异</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>与主表直接法（科目估算）经营净额</td>
+                <td class="amount">
+                  {{ fmtDiff(reportData.indirectComparison.staticOperatingDiff) }}
+                </td>
+              </tr>
+              <tr v-if="reportData.directMethod">
+                <td>与分录直接法（@xj_je）经营净额</td>
+                <td class="amount">
+                  {{ fmtDiff(reportData.indirectComparison.directOperatingDiff) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="reportData.indirectComparison?.note" class="compare-note">
+            {{ reportData.indirectComparison.note }}
+          </p>
+        </el-collapse-item>
+      </el-collapse>
+
+      <el-collapse v-if="reportData.dynamicMethod" class="dynamic-method-panel">
+        <el-collapse-item title="动态模板对比（正式现金流量表 @xj_je）" name="dynamic">
+          <p class="compare-meta">
+            模板：{{ reportData.dynamicMethod.templateName }} ·
+            {{ reportData.dynamicMethod.columnLabel }}
+          </p>
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>项目</th>
+                <th>本表（估算）</th>
+                <th>动态模板</th>
+                <th>差异</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>经营活动净额</td>
+                <td class="amount">{{ fmt(reportData.operatingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.operating) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.operatingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>投资活动净额</td>
+                <td class="amount">{{ fmt(reportData.investingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.investing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.investingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>筹资活动净额</td>
+                <td class="amount">{{ fmt(reportData.financingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.financing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.financingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>现金净增加额</td>
+                <td class="amount">{{ fmt(reportData.netCashChange) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.net) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.netDiff) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="reportData.dynamicComparison?.note" class="compare-note">
+            {{ reportData.dynamicComparison.note }}
+          </p>
+        </el-collapse-item>
+      </el-collapse>
+
+      <el-collapse v-if="reportData.directMethod" class="direct-method-panel">
+        <el-collapse-item title="直接法对比（分录现金流量项目 @xj_je）" name="direct">
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>项目</th>
+                <th>本表（估算）</th>
+                <th>直接法</th>
+                <th>差异</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>经营活动净额</td>
+                <td class="amount">{{ fmt(reportData.operatingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.operating) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.operatingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>投资活动净额</td>
+                <td class="amount">{{ fmt(reportData.investingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.investing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.investingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>筹资活动净额</td>
+                <td class="amount">{{ fmt(reportData.financingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.financing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.financingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>现金净增加额</td>
+                <td class="amount">{{ fmt(reportData.netCashChange) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.net) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.netDiff) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="reportData.comparison?.note" class="compare-note">{{ reportData.comparison.note }}</p>
+          <p class="compare-meta">
+            口径：{{ reportData.directMethod.scope === 'ytd' ? '本年累计' : '本月' }}
+            （{{ reportData.directMethod.fromPeriod }}–{{ reportData.directMethod.toPeriod }} 月）·
+            已有数据的分录项目：{{ reportData.directMethod.itemsWithData }} /
+            {{ reportData.directMethod.itemCount }}
+          </p>
+        </el-collapse-item>
+      </el-collapse>
 
       <table class="rpt-table">
         <thead>
@@ -30,7 +204,6 @@
           </tr>
         </thead>
         <tbody>
-          <!-- 经营活动 -->
           <tr class="section-header">
             <td colspan="3"><strong>一、经营活动产生的现金流量</strong></td>
           </tr>
@@ -43,16 +216,10 @@
             <td><strong>经营活动产生的现金流量净额</strong></td>
             <td class="center"></td>
             <td class="amount">
-              <strong
-                :style="{
-                  color: reportData.operatingActivities?.['净额'] >= 0 ? '#67c23a' : '#f56c6c',
-                }"
-                >{{ fmt(reportData.operatingActivities?.['净额']) }}</strong
-              >
+              <strong>{{ fmt(reportData.operatingActivities?.['净额']) }}</strong>
             </td>
           </tr>
 
-          <!-- 投资活动 -->
           <tr class="section-header">
             <td colspan="3"><strong>二、投资活动产生的现金流量</strong></td>
           </tr>
@@ -65,16 +232,10 @@
             <td><strong>投资活动产生的现金流量净额</strong></td>
             <td class="center"></td>
             <td class="amount">
-              <strong
-                :style="{
-                  color: reportData.investingActivities?.['净额'] >= 0 ? '#67c23a' : '#f56c6c',
-                }"
-                >{{ fmt(reportData.investingActivities?.['净额']) }}</strong
-              >
+              <strong>{{ fmt(reportData.investingActivities?.['净额']) }}</strong>
             </td>
           </tr>
 
-          <!-- 筹资活动 -->
           <tr class="section-header">
             <td colspan="3"><strong>三、筹资活动产生的现金流量</strong></td>
           </tr>
@@ -87,27 +248,15 @@
             <td><strong>筹资活动产生的现金流量净额</strong></td>
             <td class="center"></td>
             <td class="amount">
-              <strong
-                :style="{
-                  color: reportData.financingActivities?.['净额'] >= 0 ? '#67c23a' : '#f56c6c',
-                }"
-                >{{ fmt(reportData.financingActivities?.['净额']) }}</strong
-              >
+              <strong>{{ fmt(reportData.financingActivities?.['净额']) }}</strong>
             </td>
           </tr>
 
-          <!-- 汇总 -->
           <tr class="total-row">
             <td><strong>四、现金及现金等价物净增加额</strong></td>
             <td class="center"></td>
-            <td class="amount">
-              <strong :style="{ color: reportData.netCashChange >= 0 ? '#67c23a' : '#f56c6c' }">{{
-                fmt(reportData.netCashChange)
-              }}</strong>
-            </td>
+            <td class="amount"><strong>{{ fmt(reportData.netCashChange) }}</strong></td>
           </tr>
-
-          <!-- 期初/期末 -->
           <tr class="data-row">
             <td>加：期初现金余额</td>
             <td class="center"></td>
@@ -138,16 +287,31 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import request from '@/api/request'
 import printJS from 'print-js'
 import EmptyState from '@/components/EmptyState.vue'
 import { showOperationError } from '@/composables/useMessage'
 import { formatAmount } from '@/utils/format'
+import { exportStyledAoa } from '@/utils/exportStyledExcel'
 
+const route = useRoute()
 const reportData = ref<any>(null)
 const loading = ref(false)
-const filters = ref<any>({ year: new Date().getFullYear(), period: new Date().getMonth() + 1 })
+const filters = ref({
+  year: new Date().getFullYear(),
+  period: new Date().getMonth() + 1,
+  scope: 'month' as 'month' | 'ytd',
+})
 const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
+
+const validationWarnings = computed(() => reportData.value?.validation?.warnings || [])
+
+function alertType(severity: string) {
+  if (severity === 'error') return 'error'
+  if (severity === 'warning') return 'warning'
+  return 'info'
+}
 
 function fmt(val: number | null | undefined): string {
   if (val === null || val === undefined || val === 0) return '—'
@@ -155,16 +319,22 @@ function fmt(val: number | null | undefined): string {
   return prefix + formatAmount(Math.abs(val))
 }
 
-// Vue 3 v-for 对对象只迭代值，需要用数组
-const toFlowItems = (obj: Record<string, number>) => {
-  return Object.entries(obj || {})
+function fmtDiff(val: number | null | undefined): string {
+  if (val === null || val === undefined) return '—'
+  if (Math.abs(val) < 0.01) return '—'
+  const prefix = val > 0 ? '+' : ''
+  return prefix + formatAmount(val)
+}
+
+const toFlowItems = (obj: Record<string, number>) =>
+  Object.entries(obj || {})
     .filter(([k]) => !k.includes('净额'))
     .map(([k, v]) => ({
       key: k,
       label: k.replace('流入_', '  ').replace('流出_', '  '),
       formatted: fmt(v),
     }))
-}
+
 const opFlowItems = computed(() => toFlowItems(reportData.value?.operatingActivities || {}))
 const invFlowItems = computed(() => toFlowItems(reportData.value?.investingActivities || {}))
 const finFlowItems = computed(() => toFlowItems(reportData.value?.financingActivities || {}))
@@ -181,48 +351,140 @@ async function fetchData() {
   }
 }
 
+function activityRowsHtml(title: string, activities: Record<string, number> | undefined): string {
+  let rows = `<tr><td colspan="2" style="font-weight:bold;background:#f0f0f0">${title}</td></tr>`
+  for (const [key, val] of Object.entries(activities || {})) {
+    if (key.includes('净额')) continue
+    const label = key.replace(/^流入_/, '　').replace(/^流出_/, '　')
+    rows += `<tr><td style="padding-left:16px">${label}</td><td style="text-align:right">${fmt(val)}</td></tr>`
+  }
+  rows += `<tr><td><strong>净额</strong></td><td style="text-align:right"><strong>${fmt(activities?.['净额'])}</strong></td></tr>`
+  return rows
+}
+
 function printData() {
   if (!reportData.value) return
-  try {
-    const d = reportData.value
-    const html = `<h1 style="text-align:center">现金流量表</h1>
-    <p style="text-align:center">${d.reportDate}</p>
-    <p>现金净增加额: ${fmt(d.netCashChange)}</p>
-    <p>期初余额: ${fmt(d.beginCash)} | 期末余额: ${fmt(d.endCash)}</p>
-    <p>平衡: ${d.cashBalanceCheck ? '是' : '否'}</p>`
-    printJS({ printable: html, type: 'raw-html' })
-  } catch (error) {
-    showOperationError('打印', error)
+  const d = reportData.value
+  let extra = ''
+  if (d.indirectMethod) {
+    extra += `<h3>附注：间接法调节</h3><table border="1" cellpadding="4" style="width:100%;border-collapse:collapse;font-size:12px">`
+    extra += `<tr><td>${d.indirectMethod.profitLabel}</td><td style="text-align:right">${fmt(d.indirectMethod.netProfit)}</td></tr>`
+    for (const line of d.indirectMethod.adjustments || []) {
+      extra += `<tr><td>${line.label}</td><td style="text-align:right">${fmt(line.amount)}</td></tr>`
+    }
+    extra += `<tr><td><strong>经营活动净额（间接法）</strong></td><td style="text-align:right"><strong>${fmt(d.indirectMethod.operatingCashNet)}</strong></td></tr></table>`
   }
+  const html = `
+    <div style="font-family:SimSun,serif;padding:12px">
+      <h1 style="text-align:center;margin:0 0 8px">现金流量表（科目估算）</h1>
+      <p style="text-align:center;margin:0 0 12px">${d.reportDate} · ${d.accountingStandardName || ''}</p>
+      <table border="1" cellpadding="4" style="width:100%;border-collapse:collapse;font-size:12px">
+        ${activityRowsHtml('一、经营活动产生的现金流量', d.operatingActivities)}
+        ${activityRowsHtml('二、投资活动产生的现金流量', d.investingActivities)}
+        ${activityRowsHtml('三、筹资活动产生的现金流量', d.financingActivities)}
+        <tr><td><strong>四、现金及现金等价物净增加额</strong></td><td style="text-align:right"><strong>${fmt(d.netCashChange)}</strong></td></tr>
+        <tr><td>加：期初现金余额</td><td style="text-align:right">${fmt(d.beginCash)}</td></tr>
+        <tr><td>期末现金余额</td><td style="text-align:right">${fmt(d.endCash)}</td></tr>
+      </table>
+      ${extra}
+      <p style="font-size:11px;color:#666;margin-top:12px">${d.reportSourceNote || ''}</p>
+    </div>`
+  printJS({ printable: html, type: 'raw-html' })
+}
+
+function pushActivityRows(
+  rows: (string | number)[][],
+  title: string,
+  activities: Record<string, number> | undefined
+) {
+  rows.push([title])
+  for (const [key, val] of Object.entries(activities || {})) {
+    if (key.includes('净额')) continue
+    rows.push([key.replace(/^流入_/, '  流入：').replace(/^流出_/, '  流出：'), val])
+  }
+  rows.push(['净额', activities?.['净额'] || 0])
+  rows.push([])
 }
 
 async function exportData() {
   try {
-    const { utils, writeFile } = await import('xlsx')
     const d = reportData.value
-    const data: (string | number)[][] = [
-      ['现金流量表'],
-      [d.reportDate],
+    const rows: (string | number)[][] = [
+      ['现金流量表（科目估算）'],
+      [d.reportDate, d.accountingStandardName],
+      [d.reportSourceNote || ''],
       [],
-      ['项目', '行次', '金额'],
-      ['一、经营活动产生的现金流量净额', '', d.operatingActivities?.['净额'] || ''],
-      ['二、投资活动产生的现金流量净额', '', d.investingActivities?.['净额'] || ''],
-      ['三、筹资活动产生的现金流量净额', '', d.financingActivities?.['净额'] || ''],
-      ['四、现金净增加额', '', d.netCashChange || ''],
-      ['期初现金', '', d.beginCash || ''],
-      ['期末现金', '', d.endCash || ''],
-      [`平衡校验: ${d.cashBalanceCheck ? '是' : '否'}`],
     ]
-    const wb = utils.book_new()
-    const ws = utils.aoa_to_sheet(data)
-    utils.book_append_sheet(wb, ws, '现金流量表')
-    writeFile(wb, `现金流量表_${filters.value.year}_${filters.value.period}月.xlsx`)
+    pushActivityRows(rows, '一、经营活动', d.operatingActivities)
+    pushActivityRows(rows, '二、投资活动', d.investingActivities)
+    pushActivityRows(rows, '三、筹资活动', d.financingActivities)
+    rows.push(['四、现金净增加额', d.netCashChange || 0])
+    rows.push(['期初现金', d.beginCash || 0])
+    rows.push(['期末现金', d.endCash || 0])
+    rows.push([])
+
+    if (d.indirectMethod) {
+      rows.push(['附注：间接法调节'])
+      rows.push([d.indirectMethod.profitLabel, d.indirectMethod.netProfit])
+      for (const line of d.indirectMethod.adjustments || []) {
+        rows.push([line.label, line.amount])
+      }
+      rows.push(['经营活动净额（间接法）', d.indirectMethod.operatingCashNet])
+      rows.push([])
+    }
+
+    if (d.directMethod) {
+      rows.push(['分录直接法（@xj_je）'])
+      rows.push(['经营活动', d.directMethod.operating, d.comparison?.operatingDiff || 0])
+      rows.push(['投资活动', d.directMethod.investing, d.comparison?.investingDiff || 0])
+      rows.push(['筹资活动', d.directMethod.financing, d.comparison?.financingDiff || 0])
+      rows.push(['现金净增加额', d.directMethod.net, d.comparison?.netDiff || 0])
+      rows.push([])
+    }
+
+    if (d.dynamicMethod) {
+      rows.push(['动态模板对比', d.dynamicMethod.templateName, d.dynamicMethod.columnLabel])
+      rows.push(['经营活动', d.dynamicMethod.operating, d.dynamicComparison?.operatingDiff || 0])
+      rows.push(['投资活动', d.dynamicMethod.investing, d.dynamicComparison?.investingDiff || 0])
+      rows.push(['筹资活动', d.dynamicMethod.financing, d.dynamicComparison?.financingDiff || 0])
+      rows.push(['现金净增加额', d.dynamicMethod.net, d.dynamicComparison?.netDiff || 0])
+    }
+
+    const titleRowIndexes = [0]
+    const sectionRowIndexes: number[] = []
+    const emphasisRowIndexes: number[] = []
+    rows.forEach((row, index) => {
+      const label = String(row[0] || '')
+      if (/^[一二三四]、/.test(label) || label.startsWith('附注：') || label.startsWith('分录直接法') || label.startsWith('动态模板对比')) {
+        sectionRowIndexes.push(index)
+      }
+      if (label === '净额' || label.includes('净增加额') || label.includes('期末现金')) {
+        emphasisRowIndexes.push(index)
+      }
+    })
+
+    await exportStyledAoa({
+      fileName: `现金流量表_${filters.value.year}_${filters.value.period}月.xlsx`,
+      sheetName: '现金流量表',
+      rows,
+      columnWidths: [42, 18, 18],
+      titleRowIndexes,
+      sectionRowIndexes,
+      emphasisRowIndexes,
+      amountColumns: [2, 3],
+    })
   } catch (error) {
     showOperationError('导出', error)
   }
 }
 
-onMounted(fetchData)
+onMounted(() => {
+  const q = route.query
+  if (q.year) filters.value.year = Number(q.year)
+  if (q.period) filters.value.period = Number(q.period)
+  if (q.scope === 'ytd' || q.scope === 'month') filters.value.scope = q.scope
+  fetchData()
+})
 </script>
 
 <style scoped>
@@ -259,6 +521,35 @@ onMounted(fetchData)
   color: #666;
   margin: 0;
 }
+.report-note {
+  font-size: 12px;
+  color: #909399;
+  margin: 8px 0 0;
+}
+.validation-block {
+  margin-bottom: 12px;
+}
+.indirect-method-panel,
+.dynamic-method-panel,
+.direct-method-panel {
+  margin-bottom: 16px;
+}
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.compare-table th,
+.compare-table td {
+  border: 1px solid #ebeef5;
+  padding: 6px 10px;
+}
+.compare-note,
+.compare-meta {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 8px;
+}
 .rpt-table {
   width: 100%;
   border-collapse: collapse;
@@ -278,9 +569,6 @@ onMounted(fetchData)
   background: #f0f0f0;
   font-weight: bold;
 }
-.data-row td:first-child {
-  text-align: left;
-}
 .amount {
   text-align: right;
   font-family: 'Courier New', monospace;
@@ -291,11 +579,9 @@ onMounted(fetchData)
 .subtotal-row td {
   background: #fafafa;
   font-weight: bold;
-  border-top: 2px solid #dcdfe6;
 }
 .total-row td {
   background: #ecf5ff;
   font-weight: bold;
-  border-top: 2px solid #409eff;
 }
 </style>

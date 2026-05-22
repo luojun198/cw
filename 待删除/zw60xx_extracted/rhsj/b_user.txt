@@ -1,2 +1,0 @@
-000	MANAGER	系统管理		0	0	
-aaa	runsoft	runsoft	Q!W@E#	0		

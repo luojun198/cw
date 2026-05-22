@@ -1,5 +1,5 @@
 <template>
-  <el-tag :type="tagType" :size="size">{{ statusText }}</el-tag>
+  <span :class="['apple-status-tag', tagClass]">{{ statusText }}</span>
 </template>
 
 <script setup lang="ts">
@@ -14,19 +14,22 @@ const props = withDefaults(defineProps<Props>(), {
   size: 'default',
 })
 
-type TagType = 'success' | 'warning' | 'info' | 'danger' | 'primary'
-
-const statusMap: Record<string, { text: string; type: TagType }> = {
-  draft: { text: '草稿', type: 'info' },
-  audited: { text: '已审核', type: 'warning' },
-  posted: { text: '已记账', type: 'success' },
+const statusMap: Record<string, { text: string; type: string }> = {
+  draft: { text: '草稿', type: 'draft' },
+  audited: { text: '已审核', type: 'audited' },
+  posted: { text: '已记账', type: 'posted' },
 }
 
 const statusText = computed(() => {
   return statusMap[props.status]?.text || props.status
 })
 
-const tagType = computed<TagType>(() => {
-  return statusMap[props.status]?.type || 'info'
+const tagClass = computed(() => {
+  const type = statusMap[props.status]?.type || 'default'
+  return `apple-status-tag--${type}`
 })
 </script>
+
+<style scoped>
+@import './StatusTag.styles.css';
+</style>

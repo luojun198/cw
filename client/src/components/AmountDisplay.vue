@@ -1,5 +1,5 @@
 <template>
-  <span :class="['amount-display', colorClass]">{{ formattedAmount }}</span>
+  <span :class="['apple-amount', colorClass, sizeClass]">{{ formattedAmount }}</span>
 </template>
 
 <script setup lang="ts">
@@ -10,11 +10,13 @@ interface Props {
   value: number | string | null | undefined
   showColor?: boolean
   showSign?: boolean
+  size?: 'sm' | 'base' | 'lg'
 }
 
 const props = withDefaults(defineProps<Props>(), {
   showColor: true,
   showSign: false,
+  size: 'base',
 })
 
 const numValue = computed(() => {
@@ -32,26 +34,16 @@ const formattedAmount = computed(() => {
 
 const colorClass = computed(() => {
   if (!props.showColor) return ''
-  if (numValue.value < 0) return 'amount-negative'
-  if (numValue.value > 0) return 'amount-positive'
-  return 'amount-zero'
+  if (numValue.value < 0) return 'apple-amount--negative'
+  if (numValue.value > 0) return 'apple-amount--positive'
+  return 'apple-amount--zero'
+})
+
+const sizeClass = computed(() => {
+  return props.size !== 'base' ? `apple-amount--${props.size}` : ''
 })
 </script>
 
 <style scoped>
-.amount-display {
-  font-family: 'Courier New', monospace;
-}
-
-.amount-positive {
-  color: #67c23a;
-}
-
-.amount-negative {
-  color: #f56c6c;
-}
-
-.amount-zero {
-  color: #909399;
-}
+@import './AmountDisplay.styles.css';
 </style>

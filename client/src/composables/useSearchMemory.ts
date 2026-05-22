@@ -1,4 +1,5 @@
 import { ref, watch } from 'vue'
+import type { Ref } from 'vue'
 
 /**
  * 搜索条件记忆 composable
@@ -13,7 +14,7 @@ import { ref, watch } from 'vue'
 export function useSearchMemory<T extends Record<string, any>>(
   key: string,
   defaultFilters: T
-): T {
+): Ref<T> {
   const storageKey = `search_filters_${key}`
   const filters = ref<T>({ ...defaultFilters }) as any
 
@@ -44,22 +45,6 @@ export function useSearchMemory<T extends Record<string, any>>(
     }
   }
 
-  /**
-   * 重置搜索条件
-   */
-  function resetFilters() {
-    filters.value = { ...defaultFilters }
-    saveFilters()
-  }
-
-  /**
-   * 清除保存的搜索条件
-   */
-  function clearFilters() {
-    localStorage.removeItem(storageKey)
-    filters.value = { ...defaultFilters }
-  }
-
   // 初始化时加载
   loadFilters()
 
@@ -72,5 +57,5 @@ export function useSearchMemory<T extends Record<string, any>>(
     { deep: true }
   )
 
-  return filters.value
+  return filters
 }

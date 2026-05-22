@@ -1,54 +1,85 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h3>核算项目</h3>
-      <div>
-        <el-button type="primary" @click="openCatDialog('add')">新增类别</el-button>
-        <el-button type="primary" :disabled="!activeTab" @click="openItemDialog('add')"
-          >新增项目</el-button
-        >
+  <div class="page project-page">
+    <div class="page-header project-header">
+      <div class="project-title">
+        <h3>核算项目</h3>
+        <span v-if="activeTab" class="project-title-meta">
+          {{ activeCatName }} · 共 {{ projectStats.total }} 项（进行中 {{ projectStats.active }} /
+          已完结 {{ projectStats.closed }}）· 显示 {{ projectStats.displayed }}
+          <template v-if="searchFilterIds && searchFilterIds.length > 0">
+            · 已过滤 {{ searchFilterIds.length }}
+            <el-button type="primary" link size="small" @click="clearSearchFilter">清除</el-button>
+          </template>
+        </span>
+      </div>
+      <div class="project-toolbar">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索类目/项目/自定义..."
+          class="project-search"
+          size="small"
+          clearable
+          @keyup.enter="handleSearch"
+        />
+        <el-button type="info" size="small" @click="handleSearch">搜索</el-button>
+        <el-button type="primary" size="small" @click="openCatDialog('add')">新增类别</el-button>
+        <el-button type="primary" size="small" :disabled="!activeTab" @click="openItemDialog('add')">
+          新增项目
+        </el-button>
         <el-button
+          size="small"
           :disabled="!activeTab"
           @click="openCatDialog('edit', categories.find(c => c.id === activeTab))"
-          >字段配置</el-button
         >
-        <el-button :disabled="!activeTab || filteredList.length === 0" @click="exportData"
-          >导出</el-button
+          字段配置
+        </el-button>
+        <el-button
+          size="small"
+          :disabled="!activeTab || fullFilteredList.length === 0"
+          @click="exportData"
         >
-        <el-button type="success" :disabled="!activeTab" @click="openImportDialog"
-          >导入</el-button
-        >
+          导出
+        </el-button>
+        <el-button type="success" size="small" :disabled="!activeTab" @click="openImportDialog">
+          导入
+        </el-button>
         <el-button
           type="warning"
+          size="small"
           :disabled="selectedRows.length === 0"
           @click="batchStatusVisible = true"
-          >批量设置状态</el-button
         >
+          批量状态
+        </el-button>
         <el-button
           type="danger"
+          size="small"
           :disabled="selectedRows.length === 0"
           @click="openBatchDelete"
-          >批量删除</el-button
         >
+          批量删除
+        </el-button>
         <el-switch
           v-model="showClosed"
-          active-text="显示已完结"
+          size="small"
+          active-text="已完结"
           inactive-text=""
-          style="margin-left: 8px"
+          class="project-closed-switch"
         />
       </div>
     </div>
 
-    <el-tabs v-if="categories.length > 0" v-model="activeTab" @tab-change="onTabChange">
+    <el-tabs
+      v-if="categories.length > 0"
+      v-model="activeTab"
+      class="project-tabs"
+      @tab-change="onTabChange"
+    >
       <el-tab-pane v-for="cat in categories" :key="cat.id" :name="cat.id">
         <template #label>
           <span class="cat-tab-label">
             {{ cat.name }}
-            <el-icon
-              class="cat-tab-icon"
-              title="编辑类别"
-              @click.stop="openCatDialog('edit', cat)"
-            >
+            <el-icon class="cat-tab-icon" title="编辑类别" @click.stop="openCatDialog('edit', cat)">
               <Edit />
             </el-icon>
             <el-icon
@@ -62,31 +93,42 @@
         </template>
       </el-tab-pane>
     </el-tabs>
-    <div v-else style="padding: 20px; color: #909399; text-align: center">
-      暂无核算类别，请先添加核算类别
-    </div>
+    <div v-else class="project-empty">暂无核算类别，请先添加核算类别</div>
 
     <el-table
       ref="tableRef"
       :data="filteredList"
       stripe
       border
+      size="small"
+      class="project-table compact-data-table"
       height="100%"
-      style="margin-top: 8px"
+      @header-dragend="onDragEnd"
       @selection-change="handleSelectionChange"
     >
       <el-table-column type="selection" width="45" />
-      <el-table-column prop="code" label="编码" width="120" />
-      <el-table-column prop="name" label="名称" />
-      <el-table-column prop="status" label="状态" width="100">
+      <el-table-column column-key="code" prop="code" label="编码" :width="colWidth('code', 120)" />
+      <el-table-column column-key="name" prop="name" label="名称" :width="colWidth('name', 160)" />
+      <el-table-column column-key="status" prop="status" label="状态" :width="colWidth('status', 100)">
         <template #default="{ row }">
           <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{
             row.status === 'active' ? '进行中' : '已完结'
           }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="remark" label="备注" />
-      <el-table-column label="操作" width="160">
+      <el-table-column column-key="remark" prop="remark" label="备注" :width="colWidth('remark', 120)" />
+      <el-table-column
+        v-for="field in activeCategoryFields"
+        :key="field.field_key"
+        :column-key="field.field_key"
+        :label="field.field_name"
+        :width="colWidth(field.field_key, 100)"
+      >
+        <template #default="{ row }">
+          {{ formatItemFieldDisplay(field, row) }}
+        </template>
+      </el-table-column>
+      <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 160)">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openItemDialog('edit', row)"
             >编辑</el-button
@@ -95,6 +137,31 @@
         </template>
       </el-table-column>
     </el-table>
+
+    <div class="pagination-bar project-pagination">
+      <span class="pagination-text">共 {{ pagination.total }} 条</span>
+      <el-select
+        v-model="pagination.pageSize"
+        size="small"
+        class="pagination-size-select"
+        @change="onPageSizeChange"
+      >
+        <el-option label="10条" :value="10" />
+        <el-option label="20条" :value="20" />
+        <el-option label="50条" :value="50" />
+        <el-option label="100条" :value="100" />
+        <el-option label="全部" :value="-1" />
+      </el-select>
+      <el-pagination
+        v-model:current-page="pagination.page"
+        :total="pagination.total"
+        :page-size="pagination.pageSize === -1 ? pagination.total || 1 : pagination.pageSize"
+        size="small"
+        layout="prev, pager, next, jumper"
+        :pager-count="5"
+        @current-change="onPageChange"
+      />
+    </div>
 
     <!-- 核算类别对话框 -->
     <el-dialog v-model="catDialogVisible" :title="catDialogTitle" width="720px">
@@ -127,7 +194,12 @@
           </el-table-column>
           <el-table-column label="字段编码" width="120">
             <template #default="{ row }">
-              <el-input v-model="row.field_key" placeholder="自动生成" size="small" :disabled="!!row._persisted" />
+              <el-input
+                v-model="row.field_key"
+                placeholder="自动生成"
+                size="small"
+                :disabled="!!row._persisted"
+              />
             </template>
           </el-table-column>
           <el-table-column label="类型" width="110">
@@ -168,7 +240,9 @@
           </el-table-column>
           <el-table-column label="操作" width="60" align="center">
             <template #default="{ $index }">
-              <el-button link type="danger" size="small" @click="catForm.fields.splice($index, 1)">删除</el-button>
+              <el-button link type="danger" size="small" @click="catForm.fields.splice($index, 1)"
+                >删除</el-button
+              >
             </template>
           </el-table-column>
         </el-table>
@@ -181,7 +255,12 @@
     </el-dialog>
 
     <!-- 核算项目对话框 -->
-    <el-dialog v-model="itemDialogVisible" :title="itemDialogTitle" width="520px">
+    <el-dialog
+      v-model="itemDialogVisible"
+      :title="itemDialogTitle"
+      width="520px"
+      @keydown="onItemDialogKeydown"
+    >
       <el-form :model="itemForm" label-width="100px">
         <el-form-item label="所属类别" required>
           <el-select
@@ -216,38 +295,99 @@
             :required="!!field.required_in_archive"
           >
             <!-- 文本 -->
-            <el-input v-if="field.field_type === 'text'" v-model="itemForm.field_values[field.field_key]" />
+            <el-input
+              v-if="field.field_type === 'text'"
+              v-model="itemForm.field_values[field.field_key]"
+            />
             <!-- 数字 -->
-            <el-input-number v-else-if="field.field_type === 'number'" v-model="itemForm.field_values[field.field_key]" :controls="false" style="width: 100%" />
+            <el-input-number
+              v-else-if="field.field_type === 'number'"
+              v-model="itemForm.field_values[field.field_key]"
+              :controls="false"
+              style="width: 100%"
+            />
             <!-- 日期 -->
-            <el-date-picker v-else-if="field.field_type === 'date'" v-model="itemForm.field_values[field.field_key]" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+            <el-date-picker
+              v-else-if="field.field_type === 'date'"
+              v-model="itemForm.field_values[field.field_key]"
+              type="date"
+              value-format="YYYY-MM-DD"
+              style="width: 100%"
+            />
+            <!-- 现金流量流向（存英文枚举） -->
+            <el-select
+              v-else-if="field.field_type === 'select' && field.field_key === 'direction'"
+              v-model="itemForm.field_values[field.field_key]"
+              clearable
+              style="width: 100%"
+            >
+              <el-option label="流入" value="inflow" />
+              <el-option label="流出" value="outflow" />
+              <el-option label="中性" value="neutral" />
+            </el-select>
             <!-- 下拉 -->
-            <el-select v-else-if="field.field_type === 'select'" v-model="itemForm.field_values[field.field_key]" clearable style="width: 100%">
-              <el-option v-for="opt in parseFieldOptions(field.options_json)" :key="opt" :label="opt" :value="opt" />
+            <el-select
+              v-else-if="field.field_type === 'select'"
+              v-model="itemForm.field_values[field.field_key]"
+              clearable
+              style="width: 100%"
+            >
+              <el-option
+                v-for="opt in parseFieldOptions(field.options_json)"
+                :key="opt"
+                :label="opt"
+                :value="opt"
+              />
             </el-select>
           </el-form-item>
         </template>
       </el-form>
       <template #footer>
         <el-button @click="itemDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="itemSaving" @click="handleSaveItem">保存</el-button>
+        <el-button
+          v-if="itemDialogType === 'add'"
+          :loading="itemSaving"
+          @click="handleSaveItem(true)"
+        >
+          保存并新增 (Ctrl+Enter)
+        </el-button>
+        <el-button type="primary" :loading="itemSaving" @click="handleSaveItem(false)">
+          保存 (Enter)
+        </el-button>
       </template>
     </el-dialog>
 
     <!-- 批量导入对话框 -->
     <el-dialog v-model="importDialogVisible" title="批量导入核算项目" width="560px">
       <div class="import-tips">
-        <p>1. 请先 <el-link type="primary" @click="downloadTemplate">下载导入模板</el-link>，按模板格式填写数据</p>
+        <p>
+          1. 请先
+          <el-link type="primary" @click="downloadTemplate">下载导入模板</el-link
+          >，按模板格式填写数据
+        </p>
         <p>2. 导入将向当前选中的类别「{{ activeCatName }}」下批量新增项目</p>
         <p>3. 编码为空时将自动生成，名称为必填</p>
       </div>
+
+      <!-- 已上传文件显示 -->
+      <div v-if="uploadedFileName" class="uploaded-file-info">
+        <div class="file-name">
+          <el-icon><Document /></el-icon>
+          <span>{{ uploadedFileName }}</span>
+        </div>
+        <el-button type="danger" size="small" @click="clearUploadedFile"> 删除文件 </el-button>
+      </div>
+
+      <!-- 上传区域 -->
       <el-upload
+        v-show="!uploadedFileName"
         ref="importUploadRef"
         :auto-upload="false"
         :limit="1"
         accept=".xlsx,.xls"
         :on-change="onImportFileChange"
         :on-exceed="() => showError('只能上传一个文件')"
+        :show-file-list="false"
         drag
       >
         <el-icon class="el-icon--upload"><Upload /></el-icon>
@@ -257,6 +397,53 @@
         </template>
       </el-upload>
 
+      <!-- 重复项目警告 -->
+      <div v-if="importErrors.length > 0" class="import-errors">
+        <el-alert
+          :title="`发现 ${importErrors.length} 个重复项目，请修改后重新上传`"
+          type="error"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+        />
+        <el-table :data="importErrors.slice(0, 10)" stripe border size="small" max-height="240">
+          <el-table-column prop="row" label="Excel行号" width="100" />
+          <el-table-column prop="name" label="项目名称" />
+          <el-table-column prop="reason" label="重复原因" width="150" />
+        </el-table>
+        <div v-if="importErrors.length > 10" class="import-more-hint">
+          仅展示前 10 条，共 {{ importErrors.length }} 条
+        </div>
+      </div>
+
+      <!-- 编号断号警告 -->
+      <div v-if="importWarnings.length > 0" class="import-warnings">
+        <el-alert
+          :title="importWarnings[0].message"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 12px"
+        >
+          <template #default>
+            <div style="margin-top: 8px">
+              <div style="font-weight: bold; margin-bottom: 4px">断号位置：</div>
+              <div
+                v-for="(gap, index) in importWarnings[0].gaps"
+                :key="index"
+                style="margin-left: 12px; color: #e6a23c"
+              >
+                {{ gap }}
+              </div>
+              <div style="margin-top: 8px; color: #606266">
+                {{ importWarnings[0].suggestion }}
+              </div>
+            </div>
+          </template>
+        </el-alert>
+      </div>
+
+      <!-- 导入预览 -->
       <div v-if="importPreview.length > 0" class="import-preview">
         <el-alert
           :title="`解析成功：${importPreview.length} 条数据`"
@@ -284,7 +471,7 @@
         <el-button @click="closeImportDialog">取消</el-button>
         <el-button
           type="primary"
-          :disabled="importPreview.length === 0"
+          :disabled="importPreview.length === 0 || importErrors.length > 0"
           :loading="importing"
           @click="handleImport"
         >
@@ -303,10 +490,7 @@
       </p>
       <template #footer>
         <el-button @click="batchDeleteVisible = false">取消</el-button>
-        <el-button
-          type="danger"
-          :loading="batchDeleteSaving"
-          @click="handleBatchDelete"
+        <el-button type="danger" :loading="batchDeleteSaving" @click="handleBatchDelete"
           >确认删除</el-button
         >
       </template>
@@ -326,16 +510,84 @@
         >
       </template>
     </el-dialog>
+
+    <!-- 搜索结果弹窗 -->
+    <el-dialog v-model="searchDialogVisible" title="搜索结果" width="640px">
+      <div
+        v-if="
+          searchResults.categories.length === 0 &&
+          searchResults.items.length === 0 &&
+          searchResults.customFields.length === 0
+        "
+        style="text-align: center; color: #909399; padding: 40px 0"
+      >
+        未找到匹配「{{ searchKeyword }}」的结果
+      </div>
+      <div v-else>
+        <!-- 类目匹配 -->
+        <div v-if="searchResults.categories.length > 0" class="search-result-group">
+          <div class="search-result-title">类目匹配 ({{ searchResults.categories.length }})</div>
+          <div v-for="cat in searchResults.categories" :key="cat.id" class="search-result-item">
+            <el-tag size="small" type="info">类目</el-tag>
+            <span class="search-result-name">{{ cat.name }}</span>
+            <el-button type="primary" link size="small" @click="locateCategory(cat.id)"
+              >定位</el-button
+            >
+          </div>
+        </div>
+        <!-- 项目匹配 -->
+        <div v-if="searchResults.items.length > 0" class="search-result-group">
+          <div class="search-result-title">项目匹配 ({{ searchResults.items.length }})</div>
+          <div v-for="item in searchResults.items" :key="item.id" class="search-result-item">
+            <el-tag size="small" type="success">项目</el-tag>
+            <span class="search-result-cat">[{{ getCategoryName(item.type) }}]</span>
+            <span class="search-result-name">{{ item.code }} - {{ item.name }}</span>
+            <el-button type="primary" link size="small" @click="locateItem(item)">定位</el-button>
+          </div>
+        </div>
+        <!-- 自定义字段匹配 -->
+        <div v-if="searchResults.customFields.length > 0" class="search-result-group">
+          <div class="search-result-title">
+            自定义字段匹配 ({{ searchResults.customFields.length }})
+          </div>
+          <div
+            v-for="(result, index) in searchResults.customFields"
+            :key="index"
+            class="search-result-item"
+          >
+            <el-tag size="small" type="warning">字段</el-tag>
+            <span class="search-result-cat">[{{ getCategoryName(result.item.type) }}]</span>
+            <span class="search-result-name"
+              >{{ result.fieldName }}: {{ result.value }} ({{ result.item.name }})</span
+            >
+            <el-button type="primary" link size="small" @click="locateItem(result.item)"
+              >定位</el-button
+            >
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="searchDialogVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated, reactive, nextTick } from 'vue'
 import type { TabPaneName, UploadFile } from 'element-plus'
-import { Edit, Close, Upload } from '@element-plus/icons-vue'
+import { Edit, Close, Upload, Document } from '@element-plus/icons-vue'
+import { ElMessageBox, ElLoading } from 'element-plus'
 import request from '@/api/request'
 import { showSuccess, showError, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm, useConfirm } from '@/composables/useConfirm'
+import { useKeyboardShortcuts, commonShortcuts } from '@/composables/useKeyboardShortcuts'
+import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import {
+  filterAuxCategoriesForProjectList,
+  isAuxCategoryExcludedFromProjectList,
+} from '@/utils/accountCashFlow'
 
 const PUNCTUATION_MAP: Record<string, string> = {
   '\uff0c': ',',
@@ -389,9 +641,7 @@ const catSaving = ref(false)
 
 // 类别对话框中可选的项目（当前编辑类别的项目）
 const catFormItems = computed(() =>
-  catForm.value.id
-    ? allItems.value.filter(i => i.type === catForm.value.id)
-    : []
+  catForm.value.id ? allItems.value.filter(i => i.type === catForm.value.id) : []
 )
 
 const itemDialogVisible = ref(false)
@@ -409,14 +659,113 @@ const currentItemFields = computed(() => {
   return (cat?.fields || []).filter((f: any) => f.is_enabled !== 0)
 })
 
-const filteredList = computed(() =>
-  allItems.value.filter(i => i.type === activeTab.value && (showClosed.value ? true : i.status !== 'closed'))
+// 搜索过滤状态
+const searchFilterIds = ref<string[] | null>(null)
+
+// 分页
+const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
+
+// 不受分页限制的完整数据列表（用于导出、统计等）
+const fullFilteredList = computed(() => {
+  let items = allItems.value.filter(
+    i => i.type === activeTab.value && (showClosed.value ? true : i.status !== 'closed')
+  )
+  // 如果有搜索过滤，只显示匹配的项目
+  if (searchFilterIds.value && searchFilterIds.value.length > 0) {
+    items = items.filter(i => searchFilterIds.value!.includes(i.id))
+  }
+  return items
+})
+
+// 分页后的数据列表（用于表格显示）
+const filteredList = computed(() => {
+  const items = fullFilteredList.value
+
+  // 更新总数
+  pagination.total = items.length
+
+  // 分页处理
+  if (pagination.pageSize === -1) {
+    // 显示全部
+    return items
+  }
+  const start = (pagination.page - 1) * pagination.pageSize
+  const end = start + pagination.pageSize
+  return items.slice(start, end)
+})
+const activeCatName = computed(
+  () => categories.value.find(c => c.id === activeTab.value)?.name || ''
 )
-const activeCatName = computed(() => categories.value.find(c => c.id === activeTab.value)?.name || '')
+
+const activeCategoryFields = computed(() => {
+  const cat = categories.value.find(c => c.id === activeTab.value)
+  return (cat?.fields || []).filter((f: any) => f.is_enabled !== 0)
+})
+
+const CASH_FLOW_DIRECTION_LABELS: Record<string, string> = {
+  inflow: '流入',
+  outflow: '流出',
+  neutral: '中性',
+}
+
+const CASH_FLOW_DIRECTION_FROM_LABEL: Record<string, string> = {
+  流入: 'inflow',
+  流出: 'outflow',
+  中性: 'neutral',
+}
+
+function parseItemFieldValues(item: any): Record<string, string> {
+  if (!item?.field_values) return {}
+  try {
+    return typeof item.field_values === 'string'
+      ? JSON.parse(item.field_values)
+      : { ...item.field_values }
+  } catch {
+    return {}
+  }
+}
+
+function formatFieldDisplayValue(field: any, raw: string | undefined | null): string {
+  const val = raw == null ? '' : String(raw)
+  if (field.field_key === 'direction') {
+    return CASH_FLOW_DIRECTION_LABELS[val] || val
+  }
+  return val
+}
+
+function formatItemFieldDisplay(field: any, row: any): string {
+  const fv = parseItemFieldValues(row)
+  return formatFieldDisplayValue(field, fv[field.field_key])
+}
+
+function normalizeDirectionFieldValue(field: any, raw: string): string {
+  if (field.field_key !== 'direction') return raw
+  return CASH_FLOW_DIRECTION_FROM_LABEL[raw] || raw
+}
+
+// 项目统计信息
+const projectStats = computed(() => {
+  const categoryItems = allItems.value.filter(i => i.type === activeTab.value)
+  return {
+    total: categoryItems.length,
+    active: categoryItems.filter(i => i.status === 'active').length,
+    closed: categoryItems.filter(i => i.status === 'closed').length,
+    displayed: fullFilteredList.value.length,
+  }
+})
 
 // ========== 状态过滤 & 多选 ==========
 const showClosed = ref(false)
 const tableRef = ref<any>(null)
+const { onDragEnd, load, colWidth, bindTable } = useColumnWidthMemory('base_project')
+bindTable(tableRef)
+onActivated(() => load())
+
+async function relayoutTable() {
+  await nextTick()
+  tableRef.value?.doLayout?.()
+}
+
 const selectedRows = ref<any[]>([])
 const batchStatusVisible = ref(false)
 const batchStatusValue = ref<'active' | 'closed'>('closed')
@@ -425,6 +774,15 @@ const batchStatusSaving = ref(false)
 const batchDeleteVisible = ref(false)
 const batchDeleteSaving = ref(false)
 
+// ========== 搜索功能 ==========
+const searchKeyword = ref('')
+const searchDialogVisible = ref(false)
+const searchResults = ref<{ categories: any[]; items: any[]; customFields: any[] }>({
+  categories: [],
+  items: [],
+  customFields: [],
+})
+
 function handleSelectionChange(rows: any[]) {
   selectedRows.value = rows
 }
@@ -432,24 +790,48 @@ function handleSelectionChange(rows: any[]) {
 // ========== 导入相关 ==========
 const importDialogVisible = ref(false)
 const importPreview = ref<any[]>([])
+const importErrors = ref<any[]>([])
+const importWarnings = ref<any[]>([])
 const importUploadRef = ref<any>(null)
 const importing = ref(false)
+const uploadedFileName = ref('')
 
 async function fetchData() {
   const [catRes, itemRes] = await Promise.all([
     request.get<any[]>('/base/aux-categories'),
     request.get<any[]>('/base/aux-items'),
   ])
-  categories.value = catRes.data
-  allItems.value = itemRes.data
+  const allCats = catRes.data || []
+  categories.value = filterAuxCategoriesForProjectList(allCats)
+  const excludedIds = new Set(
+    allCats
+      .filter((c: any) => isAuxCategoryExcludedFromProjectList(c.code))
+      .map((c: any) => c.id)
+  )
+  allItems.value = (itemRes.data || []).filter((i: any) => !excludedIds.has(i.type))
   // 默认选中第一个类别
   if (!activeTab.value && categories.value.length > 0) {
     activeTab.value = categories.value[0].id
   }
+  await relayoutTable()
 }
 
 function onTabChange(tabId: TabPaneName) {
   activeTab.value = String(tabId)
+  // 切换类目时清除过滤
+  searchFilterIds.value = null
+  // 重置分页
+  pagination.page = 1
+  relayoutTable()
+}
+
+function onPageChange(page: number) {
+  pagination.page = page
+}
+
+function onPageSizeChange(size: number) {
+  pagination.pageSize = size
+  pagination.page = 1
 }
 
 function openCatDialog(t: string, row?: any) {
@@ -521,7 +903,12 @@ function buildFieldsForSave(fields: any[]): any[] {
   return (fields || []).map((f: any, i: number) => {
     let optionsJson = null
     if (f.field_type === 'select' && f.options_text) {
-      optionsJson = JSON.stringify(f.options_text.split(',').map((s: string) => s.trim()).filter(Boolean))
+      optionsJson = JSON.stringify(
+        f.options_text
+          .split(',')
+          .map((s: string) => s.trim())
+          .filter(Boolean)
+      )
     }
     return {
       field_key: f.field_key,
@@ -576,34 +963,74 @@ async function handleDeleteCat(row: any) {
   }
 }
 
+function nextItemCodeForCategory(categoryId: string) {
+  const currentCategoryItems = allItems.value.filter(item => item.type === categoryId)
+  const nextNum =
+    currentCategoryItems.reduce((max, item) => {
+      const codeNum = Number.parseInt(String(item.code || ''), 10)
+      return Number.isNaN(codeNum) ? max : Math.max(max, codeNum)
+    }, 0) + 1
+  return String(nextNum).padStart(6, '0')
+}
+
+function resetItemFormForAdd(categoryId?: string) {
+  const type = categoryId || itemForm.value.type || activeTab.value
+  itemForm.value = {
+    type,
+    code: nextItemCodeForCategory(type),
+    name: '',
+    remark: '',
+    status: 'active',
+    field_values: {},
+  }
+}
+
 function openItemDialog(t: string, row?: any) {
   itemDialogType.value = t
   if (t === 'add') {
-    const currentCategoryItems = allItems.value.filter(item => item.type === activeTab.value)
-    const nextCode =
-      currentCategoryItems.reduce((max, item) => {
-        const codeNum = Number.parseInt(String(item.code || ''), 10)
-        return Number.isNaN(codeNum) ? max : Math.max(max, codeNum)
-      }, 0) + 1
-
-    itemForm.value = {
-      type: activeTab.value,
-      code: String(nextCode).padStart(6, '0'),
-      status: 'active',
-      field_values: {},
-    }
+    resetItemFormForAdd(activeTab.value)
   } else {
     // 编辑时解析 field_values
     let fv = {}
     try {
-      fv = row.field_values ? (typeof row.field_values === 'string' ? JSON.parse(row.field_values) : row.field_values) : {}
-    } catch { /* ignore */ }
+      fv = row.field_values
+        ? typeof row.field_values === 'string'
+          ? JSON.parse(row.field_values)
+          : row.field_values
+        : {}
+    } catch {
+      /* ignore */
+    }
     itemForm.value = { ...row, field_values: { ...fv } }
   }
   itemDialogVisible.value = true
 }
 
-async function handleSaveItem() {
+function onItemDialogKeydown(e: KeyboardEvent) {
+  if (!itemDialogVisible.value || itemSaving.value) return
+  if (e.key !== 'Enter') return
+
+  const target = e.target as HTMLElement
+  const isTextarea = target.tagName === 'TEXTAREA'
+
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault()
+    if (itemDialogType.value === 'add') {
+      handleSaveItem(true)
+    } else {
+      handleSaveItem(false)
+    }
+    return
+  }
+
+  // 备注等多行框：Enter 换行，不触发保存
+  if (isTextarea || e.shiftKey || e.altKey) return
+
+  e.preventDefault()
+  handleSaveItem(false)
+}
+
+async function handleSaveItem(continueAdd = false) {
   itemSaving.value = true
   try {
     itemForm.value.name = normalizePunctuation(itemForm.value.name?.trim?.() || '')
@@ -648,15 +1075,26 @@ async function handleSaveItem() {
       if (!confirmed) return
     }
 
+    const savedCategoryId = itemForm.value.type
+
     if (itemDialogType.value === 'add') {
       await request.post('/base/aux-items', itemForm.value)
-      showSuccess('项目创建成功')
+      showSuccess(continueAdd ? '项目创建成功，可继续新增' : '项目创建成功')
     } else {
       await request.put(`/base/aux-items/${itemForm.value.id}`, itemForm.value)
       showSuccess('项目更新成功')
+      itemDialogVisible.value = false
+      await fetchData()
+      return
     }
-    itemDialogVisible.value = false
+
     await fetchData()
+
+    if (continueAdd) {
+      resetItemFormForAdd(savedCategoryId)
+    } else {
+      itemDialogVisible.value = false
+    }
   } catch (error) {
     showOperationError(itemDialogType.value === 'add' ? '创建项目' : '更新项目', error)
   } finally {
@@ -698,7 +1136,9 @@ async function handleBatchStatus() {
 
     if (successCount > 0) {
       const statusLabel = batchStatusValue.value === 'active' ? '进行中' : '已完结'
-      showSuccess(`已将 ${successCount} 个项目设为「${statusLabel}」${failCount > 0 ? `，${failCount} 个失败` : ''}`)
+      showSuccess(
+        `已将 ${successCount} 个项目设为「${statusLabel}」${failCount > 0 ? `，${failCount} 个失败` : ''}`
+      )
     }
 
     batchStatusVisible.value = false
@@ -734,7 +1174,9 @@ async function handleBatchDelete() {
     }
 
     if (successCount > 0) {
-      showSuccess(`已删除 ${successCount} 个项目${failCount > 0 ? `，${failCount} 个因已使用而跳过` : ''}`)
+      showSuccess(
+        `已删除 ${successCount} 个项目${failCount > 0 ? `，${failCount} 个因已使用而跳过` : ''}`
+      )
     } else if (failCount > 0) {
       showError('所选项目全部已被科目或凭证使用，无法删除')
     }
@@ -750,49 +1192,253 @@ async function handleBatchDelete() {
   }
 }
 
+// ========== 搜索功能 ==========
+function getCategoryName(typeId: string): string {
+  const cat = categories.value.find(c => c.id === typeId)
+  return cat?.name || ''
+}
+
+function handleSearch() {
+  const keyword = searchKeyword.value.trim().toLowerCase()
+  if (!keyword) {
+    showError('请输入搜索关键字')
+    return
+  }
+
+  const results: { categories: any[]; items: any[]; customFields: any[] } = {
+    categories: [],
+    items: [],
+    customFields: [],
+  }
+
+  // 搜索类目
+  for (const cat of categories.value) {
+    if (cat.name.toLowerCase().includes(keyword)) {
+      results.categories.push(cat)
+    }
+  }
+
+  // 搜索项目（编码、名称）
+  for (const item of allItems.value) {
+    if (item.code.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword)) {
+      results.items.push(item)
+    }
+  }
+
+  // 搜索自定义字段值
+  for (const item of allItems.value) {
+    const cat = categories.value.find(c => c.id === item.type)
+    const fields = cat?.fields || []
+    let fieldValues: Record<string, string> = {}
+    try {
+      fieldValues = item.field_values
+        ? typeof item.field_values === 'string'
+          ? JSON.parse(item.field_values)
+          : item.field_values
+        : {}
+    } catch {
+      /* ignore */
+    }
+
+    for (const field of fields) {
+      const value = fieldValues[field.field_key]
+      if (value && String(value).toLowerCase().includes(keyword)) {
+        // 避免重复添加同一项目
+        const alreadyAdded = results.customFields.some(
+          r => r.item.id === item.id && r.fieldName === field.field_name
+        )
+        if (!alreadyAdded) {
+          results.customFields.push({
+            item,
+            fieldName: field.field_name,
+            value: String(value),
+          })
+        }
+      }
+    }
+  }
+
+  searchResults.value = results
+  searchDialogVisible.value = true
+}
+
+function locateCategory(catId: string) {
+  // 清除过滤，切换到该类目
+  searchFilterIds.value = null
+  activeTab.value = catId
+  searchDialogVisible.value = false
+}
+
+function locateItem(item: any) {
+  // 如果项目是已完结状态，自动开启显示已完结
+  if (item.status === 'closed') {
+    showClosed.value = true
+  }
+
+  // 切换到对应类目并设置过滤
+  activeTab.value = item.type
+  searchFilterIds.value = [item.id]
+  searchDialogVisible.value = false
+}
+
+function clearSearchFilter() {
+  searchFilterIds.value = null
+}
+
 // ========== 导出功能 ==========
 async function exportData() {
-  const { utils, writeFile } = await import('xlsx')
+  const currentPageCount = filteredList.value.length
+  const totalCount = fullFilteredList.value.length
+
+  // 如果当前页数据等于总数据，直接导出，不显示对话框
+  if (currentPageCount === totalCount) {
+    await performExport(fullFilteredList.value)
+    return
+  }
+
+  // 显示选择对话框
+  try {
+    await ElMessageBox.confirm(
+      `当前页：${currentPageCount} 条\n全部数据：${totalCount} 条\n\n请选择导出范围：`,
+      '导出确认',
+      {
+        confirmButtonText: `导出全部（${totalCount}条）`,
+        cancelButtonText: `仅当前页（${currentPageCount}条）`,
+        distinguishCancelAndClose: true,
+        type: 'info',
+      }
+    )
+    // 用户选择"导出全部"
+    await performExport(fullFilteredList.value)
+  } catch (action) {
+    if (action === 'cancel') {
+      // 用户选择"仅当前页"
+      await performExport(filteredList.value)
+    }
+    // action === 'close' 时不做任何操作（用户关闭对话框）
+  }
+}
+
+async function performExport(dataList: any[]) {
   const catName = activeCatName.value
   const cat = categories.value.find(c => c.id === activeTab.value)
   const customFields = (cat?.fields || []).filter((f: any) => f.is_enabled !== 0)
 
-  const data = filteredList.value.map((item: any) => {
-    const row: Record<string, string> = {
-      编码: item.code,
-      名称: item.name,
-      状态: item.status === 'active' ? '进行中' : '已完结',
-      备注: item.remark || '',
+  // 数据量大时显示loading
+  let loadingInstance: any = null
+  if (dataList.length > 500) {
+    loadingInstance = ElLoading.service({
+      lock: true,
+      text: `正在导出 ${dataList.length} 条数据，请稍候...`,
+      background: 'rgba(0, 0, 0, 0.7)',
+    })
+  }
+
+  try {
+    // 使用 setTimeout 让 UI 有机会更新
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    const batchSize = 1000
+    const allRows: any[] = []
+
+    for (let i = 0; i < dataList.length; i += batchSize) {
+      const batch = dataList.slice(i, i + batchSize)
+      const batchRows = batch.map((item: any) => {
+        const row: Record<string, string> = {
+          编码: item.code,
+          名称: item.name,
+          状态: item.status === 'active' ? '进行中' : '已完结',
+          备注: item.remark || '',
+        }
+        let fv: Record<string, string> = {}
+        try {
+          fv = item.field_values
+            ? typeof item.field_values === 'string'
+              ? JSON.parse(item.field_values)
+              : item.field_values
+            : {}
+        } catch {
+          /* ignore */
+        }
+        for (const field of customFields) {
+          row[field.field_name] = formatFieldDisplayValue(field, fv[field.field_key])
+        }
+        return row
+      })
+      allRows.push(...batchRows)
+
+      if (loadingInstance && dataList.length > 500) {
+        const progress = Math.round(((i + batch.length) / dataList.length) * 100)
+        loadingInstance.setText(`正在导出 ${dataList.length} 条数据... ${progress}%`)
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 0))
     }
-    // 动态字段列
-    let fv: Record<string, string> = {}
-    try {
-      fv = item.field_values ? (typeof item.field_values === 'string' ? JSON.parse(item.field_values) : item.field_values) : {}
-    } catch { /* ignore */ }
+
+    const columns: ExportColumnDef[] = [
+      { label: '编码', width: 100, value: row => row.编码 },
+      { label: '名称', width: 180, value: row => row.名称 },
+      { label: '状态', width: 80, align: 'center', value: row => row.状态 },
+      { label: '备注', width: 200, value: row => row.备注 },
+    ]
     for (const field of customFields) {
-      row[field.field_name] = String(fv[field.field_key] ?? '')
+      columns.push({
+        label: field.field_name,
+        width: 120,
+        value: row => row[field.field_name] || '',
+      })
     }
-    return row
-  })
-  const ws = utils.json_to_sheet(data)
-  const wb = utils.book_new()
-  utils.book_append_sheet(wb, ws, catName || '核算项目')
-  writeFile(wb, `核算项目_${catName}.xlsx`)
+
+    await exportStyledTable({
+      fileName: `核算项目_${catName}_${dataList.length}条.xlsx`,
+      sheetName: catName || '核算项目',
+      title: `核算项目 · ${catName || ''}`,
+      subtitle: `共 ${dataList.length} 条`,
+      columns,
+      rows: allRows,
+    })
+
+    showSuccess(`成功导出 ${dataList.length} 条数据`)
+  } catch (error) {
+    showError('导出失败，请重试')
+    console.error('Export error:', error)
+  } finally {
+    if (loadingInstance) {
+      loadingInstance.close()
+    }
+  }
 }
 
 // ========== 导入功能 ==========
 function openImportDialog() {
   importPreview.value = []
+  importErrors.value = []
+  importWarnings.value = []
+  uploadedFileName.value = ''
   importDialogVisible.value = true
 }
 
 function closeImportDialog() {
   importPreview.value = []
+  importErrors.value = []
+  importWarnings.value = []
+  uploadedFileName.value = ''
   importDialogVisible.value = false
+}
+
+function clearUploadedFile() {
+  importPreview.value = []
+  importErrors.value = []
+  importWarnings.value = []
+  uploadedFileName.value = ''
+  if (importUploadRef.value) {
+    importUploadRef.value.clearFiles()
+  }
 }
 
 async function onImportFileChange(file: UploadFile) {
   if (!file.raw) return
+  uploadedFileName.value = file.name
   try {
     const { utils, read } = await import('xlsx')
     const arrayBuffer = await file.raw.arrayBuffer()
@@ -815,26 +1461,113 @@ async function onImportFileChange(file: UploadFile) {
     // 获取当前类别字段配置，建立 field_name → field_key 映射
     const cat = categories.value.find(c => c.id === activeTab.value)
     const customFields = (cat?.fields || []).filter((f: any) => f.is_enabled !== 0)
-    const fieldNameToKey = new Map(customFields.map((f: any) => [f.field_name, f.field_key]))
 
-    const parsed = rawData.map((row: any, index: number) => {
-      const name = normalizePunctuation(String(row['名称'] || '').trim())
-      const code = String(row['编码'] || '').trim() || String(maxCode + index + 1).padStart(6, '0')
-      const statusStr = String(row['状态'] || '').trim()
-      const status = statusStr === '已完结' || statusStr === 'closed' ? 'closed' : 'active'
-      const remark = String(row['备注'] || '').trim()
+    const parsed = rawData
+      .map((row: any, index: number) => {
+        const name = normalizePunctuation(String(row['名称'] || '').trim())
+        const code = String(row['编码'] || '').trim()
+        const statusStr = String(row['状态'] || '').trim()
+        const status = statusStr === '已完结' || statusStr === 'closed' ? 'closed' : 'active'
+        const remark = String(row['备注'] || '').trim()
 
-      // 解析动态字段值
-      const fieldValues: Record<string, string> = {}
-      for (const field of customFields) {
-        const val = String(row[field.field_name] ?? '').trim()
-        if (val) fieldValues[field.field_key] = val
+        // 解析动态字段值
+        const fieldValues: Record<string, string> = {}
+        for (const field of customFields) {
+          const val = String(row[field.field_name] ?? '').trim()
+          if (val) fieldValues[field.field_key] = normalizeDirectionFieldValue(field, val)
+        }
+
+        return { code, name, status, remark, field_values: fieldValues, _excelRow: index + 2 }
+      })
+      .filter(item => item.name) // 名称必填，跳过空行
+
+    // ========== 重复检测逻辑 ==========
+    // 1. 检测与现有数据重复
+    const existingNames = new Set(
+      currentCategoryItems.map(item => normalizeDuplicateKey(item.name))
+    )
+
+    // 2. 检测Excel内部重复和与现有数据重复
+    const duplicates: any[] = []
+    const seenNames = new Map<string, number>() // normalizedName -> first occurrence row
+
+    for (let i = 0; i < parsed.length; i++) {
+      const item = parsed[i]
+      const normalizedName = normalizeDuplicateKey(item.name)
+
+      // 与现有数据重复
+      if (existingNames.has(normalizedName)) {
+        duplicates.push({
+          row: item._excelRow,
+          name: item.name,
+          reason: '与现有项目重复',
+        })
+        continue
       }
 
-      return { code, name, status, remark, field_values: fieldValues }
-    }).filter(item => item.name) // 名称必填，跳过空行
+      // Excel内部重复
+      if (seenNames.has(normalizedName)) {
+        duplicates.push({
+          row: item._excelRow,
+          name: item.name,
+          reason: `与第 ${seenNames.get(normalizedName)} 行重复`,
+        })
+        continue
+      }
 
-    importPreview.value = parsed
+      seenNames.set(normalizedName, item._excelRow)
+    }
+
+    // 3. 如果有重复，设置错误状态
+    if (duplicates.length > 0) {
+      importErrors.value = duplicates
+      importPreview.value = [] // 清空预览
+      return
+    }
+
+    // 4. 无重复，检测编号断号
+    importErrors.value = []
+    importWarnings.value = []
+
+    // 检测用户提供的编号是否有断号
+    const userProvidedCodes = parsed
+      .filter(item => item.code) // 只检查用户提供的编号
+      .map(item => Number.parseInt(item.code, 10))
+      .filter(code => !Number.isNaN(code))
+      .sort((a, b) => a - b)
+
+    if (userProvidedCodes.length > 1) {
+      const gaps: string[] = []
+      for (let i = 1; i < userProvidedCodes.length; i++) {
+        const prev = userProvidedCodes[i - 1]
+        const curr = userProvidedCodes[i]
+        if (curr - prev > 1) {
+          gaps.push(`${prev} → ${curr}（缺少 ${curr - prev - 1} 个编号）`)
+        }
+      }
+
+      if (gaps.length > 0) {
+        importWarnings.value = [
+          {
+            type: 'gap',
+            message: '检测到编号不连续',
+            gaps: gaps,
+            suggestion:
+              '建议：1) 在Excel中补充缺失的编号行；2) 或删除"编码"列让系统自动生成连续编号',
+          },
+        ]
+      }
+    }
+
+    // 5. 生成连续编号并设置预览
+    let codeCounter = maxCode + 1
+    const finalParsed = parsed.map(item => {
+      const finalCode = item.code || String(codeCounter++).padStart(6, '0')
+      // 移除内部属性 _excelRow
+      const { _excelRow, ...cleanItem } = item
+      return { ...cleanItem, code: finalCode }
+    })
+    importPreview.value = finalParsed
   } catch (error) {
     showError('文件解析失败，请检查文件格式')
     console.error('Import parse error:', error)
@@ -857,7 +1590,10 @@ async function downloadTemplate() {
     baseRow[field.field_name] = ''
   }
 
-  const templateData = [baseRow, { ...baseRow, 编码: '000002', 名称: '示例项目2', 状态: '已完结', 备注: '备注信息' }]
+  const templateData = [
+    baseRow,
+    { ...baseRow, 编码: '000002', 名称: '示例项目2', 状态: '已完结', 备注: '备注信息' },
+  ]
   const ws = utils.json_to_sheet(templateData)
   const wb = utils.book_new()
   utils.book_append_sheet(wb, ws, '导入模板')
@@ -870,6 +1606,7 @@ async function handleImport() {
   let successCount = 0
   let failCount = 0
   const errors: string[] = []
+  const successItems: string[] = []
 
   try {
     for (const item of importPreview.value) {
@@ -883,20 +1620,45 @@ async function handleImport() {
           field_values: item.field_values || {},
         })
         successCount++
+        successItems.push(`${item.code} - ${item.name}`)
       } catch (error: any) {
         failCount++
         const msg = error.response?.data?.message || '未知错误'
-        errors.push(`编码${item.code} ${item.name}: ${msg}`)
+        errors.push(`${item.code} - ${item.name}: ${msg}`)
       }
     }
 
+    // 构建详细的导入结果反馈
+    let message = `✓ 导入完成\n\n`
+    message += `成功导入：${successCount} 条\n`
+    if (failCount > 0) {
+      message += `导入失败：${failCount} 条\n`
+    }
+
     if (successCount > 0) {
-      showSuccess(`导入完成：成功 ${successCount} 条${failCount > 0 ? `，失败 ${failCount} 条` : ''}`)
+      message += `\n【成功项目】\n`
+      message += successItems.slice(0, 5).join('\n')
+      if (successItems.length > 5) {
+        message += `\n...还有 ${successItems.length - 5} 条`
+      }
     }
 
     if (errors.length > 0) {
-      showError(`以下项目导入失败：\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n...共 ${errors.length} 条` : ''}`)
+      message += `\n\n【失败项目】\n`
+      message += errors.slice(0, 5).join('\n')
+      if (errors.length > 5) {
+        message += `\n...还有 ${errors.length - 5} 条`
+      }
     }
+
+    // 使用 MessageBox 显示详细结果
+    await useConfirm({
+      message: message,
+      title: '导入结果',
+      confirmButtonText: '确定',
+      showCancelButton: false,
+      type: successCount > 0 && failCount === 0 ? 'success' : failCount > 0 ? 'warning' : 'info',
+    })
 
     closeImportDialog()
     await fetchData()
@@ -907,22 +1669,129 @@ async function handleImport() {
   }
 }
 
+useKeyboardShortcuts([
+  commonShortcuts.save(() => {
+    if (itemDialogVisible.value && !itemSaving.value && !catDialogVisible.value && !importDialogVisible.value) {
+      handleSaveItem(false)
+    }
+  }),
+])
+
 onMounted(fetchData)
 </script>
 
 <style scoped>
-.page {
-  padding: 16px;
+.project-page {
+  height: calc(100vh - 60px);
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--el-fill-color-lighter);
+  box-sizing: border-box;
 }
-.page-header {
+
+.project-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 6px;
 }
-.page-header h3 {
+
+.project-title {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.project-title h3 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.25;
+  color: #303133;
+}
+
+.project-title-meta {
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--el-text-color-secondary);
+}
+
+.project-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.project-search {
+  width: 168px;
+}
+
+.project-closed-switch {
+  margin-left: 2px;
+  height: 24px;
+}
+
+.project-tabs {
+  flex-shrink: 0;
+  margin-bottom: 4px;
+}
+
+.project-tabs :deep(.el-tabs__header) {
   margin: 0;
 }
+
+.project-tabs :deep(.el-tabs__nav-wrap) {
+  padding: 0 2px;
+}
+
+.project-tabs :deep(.el-tabs__item) {
+  height: 32px;
+  line-height: 32px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+
+.project-empty {
+  padding: 12px;
+  color: #909399;
+  text-align: center;
+  font-size: 13px;
+}
+
+.project-table {
+  flex: 1;
+  min-height: 0;
+  border-radius: 6px;
+}
+
+.project-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+  flex-shrink: 0;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+
+.pagination-size-select {
+  width: 88px;
+}
+
 .cat-tab-label {
   display: inline-flex;
   align-items: center;
@@ -945,6 +1814,27 @@ onMounted(fetchData)
 .cat-tab-icon-danger:hover {
   color: #f56c6c;
 }
+.uploaded-file-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background-color: #f5f7fa;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  margin-bottom: 16px;
+}
+.uploaded-file-info .file-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  color: #606266;
+}
+.uploaded-file-info .file-name .el-icon {
+  font-size: 18px;
+  color: #409eff;
+}
 .import-tips {
   margin-bottom: 16px;
   font-size: 13px;
@@ -957,10 +1847,52 @@ onMounted(fetchData)
 .import-preview {
   margin-top: 16px;
 }
+.import-errors {
+  margin-top: 16px;
+}
+.import-warnings {
+  margin-top: 16px;
+}
 .import-more-hint {
   text-align: center;
   color: #909399;
   font-size: 12px;
   margin-top: 8px;
+}
+
+.search-result-group {
+  margin-bottom: 16px;
+}
+
+.search-result-title {
+  font-weight: bold;
+  color: #303133;
+  margin-bottom: 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #ebeef5;
+}
+
+.search-result-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: #f5f7fa;
+  border-radius: 4px;
+  margin-bottom: 4px;
+}
+
+.search-result-item:hover {
+  background-color: #ecf5ff;
+}
+
+.search-result-cat {
+  color: #909399;
+  font-size: 12px;
+}
+
+.search-result-name {
+  flex: 1;
+  color: #303133;
 }
 </style>

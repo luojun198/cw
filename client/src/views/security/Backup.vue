@@ -2,10 +2,27 @@
   <div class="page">
     <div class="page-header">
       <h3>备份恢复</h3>
-      <el-button type="primary" :loading="backingUp" @click="handleBackup">
-        <el-icon v-if="!backingUp"><Download /></el-icon>
-        立即备份
-      </el-button>
+      <div class="header-actions">
+        <el-button type="primary" :loading="backingUp" @click="handleBackup">
+          <el-icon v-if="!backingUp"><Download /></el-icon>
+          立即备份
+        </el-button>
+        <el-button type="success" @click="handleImportClick">
+          <el-icon><Upload /></el-icon>
+          导入备份
+        </el-button>
+        <el-button type="info" :loading="cleaning" @click="handleDatabaseCleanup">
+          <el-icon><Brush /></el-icon>
+          数据库瘦身
+        </el-button>
+        <input
+          ref="fileInputRef"
+          type="file"
+          accept=".db,.sqlite,.sqlite3"
+          style="display:none"
+          @change="handleFileSelected"
+        />
+      </div>
     </div>
 
     <!-- 统计卡片 -->
@@ -87,6 +104,7 @@
                 style="width: 100%"
                 @change="handleSaveSettings"
               >
+                <el-option label="永久保存" :value="0" />
                 <el-option label="7天" :value="7" />
                 <el-option label="15天" :value="15" />
                 <el-option label="30天" :value="30" />
@@ -130,56 +148,146 @@
       <template #header>
         <div class="card-header">
           <span>备份记录</span>
-          <el-button text type="primary" size="small" @click="fetchData">刷新</el-button>
+          <div style="display: flex; gap: 8px; align-items: center">
+            <el-date-picker
+              v-model="dateRange"
+              type="daterange"
+              range-separator="至"
+              start-placeholder="开始日期"
+              end-placeholder="结束日期"
+              value-format="YYYY-MM-DD"
+              style="width: 260px"
+              clearable
+              @change="onDateRangeChange"
+            />
+            <el-button text type="primary" size="small" @click="fetchData">刷新</el-button>
+          </div>
         </div>
       </template>
 
-      <el-table v-loading="loading" :data="list" stripe border>
-        <el-table-column prop="filename" label="文件名" min-width="260" show-overflow-tooltip />
-        <el-table-column label="大小" width="100">
+      <el-table
+        ref="tableRef"
+        v-loading="loading"
+        :data="list"
+        stripe
+        border
+        max-height="500"
+        @header-dragend="onDragEnd"
+      >
+        <el-table-column prop="filename" label="文件名" :width="colWidth('filename', 260)" show-overflow-tooltip />
+        <el-table-column column-key="大小" label="大小" :width="colWidth('大小', 100)">
           <template #default="{ row }">{{ formatSize(row.size) }}</template>
         </el-table-column>
-        <el-table-column label="类型" width="80">
+        <el-table-column column-key="类型" label="类型" :width="colWidth('类型', 80)">
           <template #default="{ row }">
             <el-tag :type="row.type === 'auto' ? 'success' : 'primary'" size="small">
               {{ row.type === 'auto' ? '自动' : '手动' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="状态" width="80">
+        <el-table-column column-key="状态" label="状态" :width="colWidth('状态', 80)">
           <template #default="{ row }">
             <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">
               {{ row.status === 'success' ? '成功' : '失败' }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作人" width="100">
+        <el-table-column column-key="操作人" label="操作人" :width="colWidth('操作人', 100)">
           <template #default="{ row }">
             {{ row.operator_name || row.operator_username || (row.type === 'auto' ? '系统' : '-') }}
           </template>
         </el-table-column>
-        <el-table-column prop="created_at" label="创建时间" width="170" />
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column prop="created_at" label="创建时间" :width="colWidth('created_at', 170)" />
+        <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 200)" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="handleRestore(row)">恢复</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
+
+      <!-- 分页 -->
+      <div class="pagination-bar">
+        <span class="pagination-text">共 {{ pagination.total }} 条</span>
+        <el-select v-model="pagination.pageSize" style="width: 95px" @change="onPageSizeChange">
+          <el-option label="10条" :value="10" />
+          <el-option label="20条" :value="20" />
+          <el-option label="50条" :value="50" />
+          <el-option label="100条" :value="100" />
+        </el-select>
+        <el-pagination
+          v-model:current-page="pagination.page"
+          :total="pagination.total"
+          :page-size="pagination.pageSize"
+          layout="prev, pager, next, jumper"
+          :pager-count="5"
+          @current-change="onPageChange"
+        />
+      </div>
     </el-card>
+
+    <!-- 备份路径选择对话框 -->
+    <el-dialog v-model="backupDialogVisible" title="选择备份方式" width="500px">
+      <el-form label-width="100px">
+        <el-form-item label="备份方式">
+          <el-radio-group v-model="backupMode">
+            <el-radio value="default">
+              备份到服务器
+              <span style="color: #909399; font-size: 12px; margin-left: 8px">
+                {{ settingsForm.backupPath || '(服务器默认路径)' }}
+              </span>
+            </el-radio>
+            <el-radio value="download">备份并下载到本地</el-radio>
+          </el-radio-group>
+        </el-form-item>
+
+        <el-alert
+          v-if="backupMode === 'download'"
+          title="备份文件将下载到您的浏览器下载目录"
+          type="info"
+          :closable="false"
+          style="margin-top: 12px"
+        />
+      </el-form>
+
+      <template #footer>
+        <el-button @click="backupDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="backingUp" @click="confirmBackup">
+          {{ backupMode === 'download' ? '备份并下载' : '确认备份' }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
-import { Download, Folder, Clock } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Download, Folder, Clock, Upload, Brush } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import axios from 'axios'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm, useConfirm } from '@/composables/useConfirm'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
+const { tableRef, onDragEnd, colWidth } = useListColumnWidth('security_backup')
 const loading = ref(false)
 const backingUp = ref(false)
+const cleaning = ref(false)
 const list = ref<any[]>([])
+const fileInputRef = ref<HTMLInputElement>()
+const dateRange = ref<string[]>([])
+
+// 分页状态
+const pagination = reactive({
+  page: 1,
+  pageSize: 20,
+  total: 0,
+})
+
+// 备份路径选择对话框状态
+const backupDialogVisible = ref(false)
+const backupMode = ref<'default' | 'download'>('default')
 
 const stats = reactive({
   total: 0,
@@ -245,8 +353,11 @@ async function handleSaveSettings() {
       retention: settingsForm.retention,
     })
     showSuccess('备份设置已保存')
-  } catch (error) {
-    showOperationError('保存备份设置', error)
+    await fetchSettings()
+  } catch (error: any) {
+    // 显示详细的错误信息（如路径验证失败）
+    const errorMsg = error?.response?.data?.message || error?.message || '保存失败'
+    ElMessage.error(errorMsg)
   }
 }
 
@@ -261,8 +372,16 @@ async function fetchData() {
     await Promise.all([
       fetchSettings(),
       fetchStats(),
-      request.get('/security/backups').then((res: any) => {
+      request.get('/security/backups', {
+        params: {
+          page: pagination.page,
+          pageSize: pagination.pageSize,
+          start_date: dateRange.value?.[0] || undefined,
+          end_date: dateRange.value?.[1] || undefined,
+        },
+      }).then((res: any) => {
         list.value = res.data
+        pagination.total = res.total || 0
       }),
     ])
   } catch (error) {
@@ -272,14 +391,126 @@ async function fetchData() {
   }
 }
 
+function onDateRangeChange() {
+  pagination.page = 1
+  fetchData()
+}
+
+function onPageChange(page: number) {
+  pagination.page = page
+  fetchData()
+}
+
+function onPageSizeChange(size: number) {
+  pagination.pageSize = size
+  pagination.page = 1
+  fetchData()
+}
+
 async function handleBackup() {
+  // 打开备份方式选择对话框
+  backupMode.value = 'default'
+  backupDialogVisible.value = true
+}
+
+async function handleDatabaseCleanup() {
+  try {
+    cleaning.value = true
+    const res = await request.post('/security/database/cleanup')
+    if (res.code === 0) {
+      const d = res.data
+      const saved = d.savedBytes >= 1073741824
+        ? (d.savedBytes / 1073741824).toFixed(1) + ' GB'
+        : d.savedBytes >= 1048576
+          ? (d.savedBytes / 1048576).toFixed(1) + ' MB'
+          : (d.savedBytes / 1024).toFixed(0) + ' KB'
+      showSuccess(`数据库清理完成！释放 ${saved}（${d.freedPages} 页）`)
+      if (d.deletedLogs > 0) {
+        ElMessage.info(`已清理 ${d.deletedLogs} 条过期操作日志`)
+      }
+      await fetchData()
+    }
+  } catch (error) {
+    showOperationError('数据库瘦身', error)
+  } finally {
+    cleaning.value = false
+  }
+}
+
+async function confirmBackup() {
   backingUp.value = true
   try {
-    await request.post('/security/backups')
-    showSuccess('备份成功')
-    await fetchData()
-  } catch (error) {
-    showOperationError('备份', error)
+    if (backupMode.value === 'download') {
+      // 备份并下载到本地 - 直接使用 axios 实例
+      const token = localStorage.getItem('token')
+      const accountSetId = localStorage.getItem('accountSetId')
+
+      const res = await axios.post('/api/security/backups',
+        { download: true },
+        {
+          responseType: 'blob',
+          headers: {
+            'Authorization': `Bearer ${token}`,
+            'X-AccountSet-Id': accountSetId || '',
+            'Accept': 'application/octet-stream'
+          }
+        }
+      )
+
+      // 检查响应是否为错误（JSON）
+      const contentType = String(res.headers['content-type'] || '')
+      if (contentType.includes('application/json')) {
+        // 响应是 JSON 错误
+        const text = await res.data.text()
+        const error = JSON.parse(text)
+        throw new Error(error.message || '备份失败')
+      }
+
+      // 从响应头获取文件名
+      const contentDisposition = res.headers['content-disposition']
+      let filename = `备份文件_${new Date().getTime()}.db`
+      if (contentDisposition) {
+        const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(contentDisposition)
+        if (matches && matches[1]) {
+          filename = decodeURIComponent(matches[1].replace(/['"]/g, ''))
+        }
+      }
+
+      // 创建下载链接
+      const url = window.URL.createObjectURL(res.data)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = filename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      window.URL.revokeObjectURL(url)
+
+      ElMessage.success('备份文件已开始下载')
+      backupDialogVisible.value = false
+      await fetchData()
+    } else {
+      // 备份到服务器
+      const res = await request.post('/security/backups')
+      const successMsg = res.message || '备份成功'
+      ElMessage.success(successMsg)
+      backupDialogVisible.value = false
+      await fetchData()
+    }
+  } catch (error: any) {
+    // 处理 blob 响应中的错误
+    if (error?.response?.data instanceof Blob) {
+      try {
+        const text = await error.response.data.text()
+        const errorData = JSON.parse(text)
+        ElMessage.error(errorData.message || '备份失败')
+      } catch {
+        ElMessage.error('备份失败')
+      }
+    } else {
+      const errorMsg = error?.response?.data?.message || error?.message || '备份失败'
+      ElMessage.error(errorMsg)
+    }
   } finally {
     backingUp.value = false
   }
@@ -316,6 +547,41 @@ async function handleDelete(row: any) {
   }
 }
 
+function handleImportClick() {
+  fileInputRef.value?.click()
+}
+
+async function handleFileSelected(event: Event) {
+  const target = event.target as HTMLInputElement
+  const file = target.files?.[0]
+  if (!file) return
+
+  const confirmed = await useConfirm({
+    message: `即将用「${file.name}」覆盖当前所有数据，是否继续？`,
+    title: '警告',
+    type: 'warning',
+    confirmButtonText: '确认恢复',
+    cancelButtonText: '取消',
+  })
+  if (!confirmed) {
+    target.value = ''
+    return
+  }
+
+  const formData = new FormData()
+  formData.append('file', file)
+
+  try {
+    await request.post('/security/backups/restore-upload', formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+    })
+    showSuccess('恢复成功，请刷新页面')
+  } catch (error) {
+    showOperationError('导入备份恢复', error)
+  }
+  target.value = ''
+}
+
 onMounted(fetchData)
 </script>
 
@@ -331,6 +597,10 @@ onMounted(fetchData)
 }
 .page-header h3 {
   margin: 0;
+}
+.header-actions {
+  display: flex;
+  gap: 8px;
 }
 
 .stat-card {

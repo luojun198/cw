@@ -22,6 +22,7 @@ export interface KeyboardShortcut {
 export function useKeyboardShortcuts(shortcuts: KeyboardShortcut[]) {
   const handleKeyDown = (event: KeyboardEvent) => {
     for (const shortcut of shortcuts) {
+      if (!event.key || !shortcut.key) continue
       const ctrlMatch = shortcut.ctrl === undefined || shortcut.ctrl === (event.ctrlKey || event.metaKey)
       const altMatch = shortcut.alt === undefined || shortcut.alt === event.altKey
       const shiftMatch = shortcut.shift === undefined || shortcut.shift === event.shiftKey
@@ -41,9 +42,31 @@ export function useKeyboardShortcuts(shortcuts: KeyboardShortcut[]) {
           return
         }
 
-        // 如果在输入框中且不是特殊快捷键（如 Ctrl+S），则跳过
+        // 在输入框中：避免与普通输入冲突
         if (isInput || isContentEditable) {
-          if (!shortcut.ctrl && !shortcut.alt && !shortcut.meta) {
+          const el = target as HTMLInputElement
+          const inputType =
+            target.tagName === 'INPUT' ? String(el.type || 'text').toLowerCase() : ''
+          const isTextLike =
+            isContentEditable ||
+            target.tagName === 'TEXTAREA' ||
+            target.tagName === 'SELECT' ||
+            (target.tagName === 'INPUT' &&
+              ['text', 'search', 'password', 'url', 'email', 'tel'].includes(inputType))
+
+          // 无任何修饰键：不在输入框内触发
+          if (!shortcut.ctrl && !shortcut.alt && !shortcut.meta && !shortcut.shift) {
+            continue
+          }
+
+          // 仅 Shift+按键：在文本类控件中不触发（例如摘要里需要输入大写 S）
+          if (
+            isTextLike &&
+            shortcut.shift &&
+            !shortcut.ctrl &&
+            !shortcut.alt &&
+            !shortcut.meta
+          ) {
             continue
           }
         }
@@ -95,11 +118,12 @@ export const commonShortcuts = {
     handler,
     description: 'Ctrl+R 刷新',
   }),
+  /** 新增 / 保存并新增（Shift+S；与 Ctrl+S 保存区分；文本框内不触发以免挡住大写 S） */
   add: (handler: () => void) => ({
-    key: 'n',
-    ctrl: true,
+    key: 's',
+    shift: true,
     handler,
-    description: 'Ctrl+N 新增',
+    description: 'Shift+S 新增/保存并新增',
   }),
   delete: (handler: () => void) => ({
     key: 'Delete',

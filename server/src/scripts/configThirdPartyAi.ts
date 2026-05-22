@@ -4,7 +4,7 @@
  * 使用方法: npm run config:ai
  */
 
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
 import { v4 as uuidv4 } from 'uuid'
 
 const config = {

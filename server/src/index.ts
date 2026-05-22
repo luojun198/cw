@@ -11,49 +11,69 @@ const envPath = existsSync(join(__dirname, '.env'))
   : join(__dirname, '..', '.env')
 dotenv.config({ path: envPath })
 
+// JWT_SECRET 弱值告警（仅提示，不阻断）：若仍是 .env.example 中的占位值，提示运维替换
+const DEFAULT_JWT_SECRETS = new Set([
+  'your-secret-key-change-this-in-production',
+  'change-me',
+  'changeme',
+  'secret',
+  '',
+])
+const _jwtSecretCheck = (process.env.JWT_SECRET || '').trim()
+if (!_jwtSecretCheck || DEFAULT_JWT_SECRETS.has(_jwtSecretCheck)) {
+  console.warn(
+    '[SECURITY WARN] JWT_SECRET 当前为默认/弱值。生产环境请在 server/.env 中设置为足够长的随机字符串，' +
+      '否则任何知晓默认值的人都能伪造登录 token。'
+  )
+}
+
 import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
 import { basename, resolve } from 'path'
-import { initDatabase } from './db/index.ts'
-import { runMigrations } from './db/migrations.ts'
-import { migrations } from './db/migrationList.ts'
-import { initDefaultAccountSet } from './scripts/seedAccounts.ts'
-import { initDefaultPrintTemplate } from './scripts/initPrintTemplate.ts'
-import { log } from './utils/logger.ts'
+import { initDatabase } from './db/index.js'
+import { runMigrations } from './db/migrations.js'
+import { migrations } from './db/migrationList.js'
+import { initDefaultAccountSet } from './scripts/seedAccounts.js'
+import { initDefaultPrintTemplate } from './scripts/initPrintTemplate.js'
+import { log } from './utils/logger.js'
 
 // 路由
-import authRoutes from './routes/auth.ts'
-import systemRoutes from './routes/system.ts'
-import baseRoutes from './routes/base.ts'
-import baseAccountRoutes from './routes/baseAccount.ts'
-import baseVoucherTypeRoutes from './routes/baseVoucherType.ts'
-import baseProjectRoutes from './routes/baseProject.ts'
-import baseInitBalanceRoutes from './routes/baseInitBalance.ts'
-import basePrintTemplateRoutes from './routes/basePrintTemplate.ts'
-import voucherRoutes from './routes/voucher.ts'
-import voucherAuditRoutes from './routes/voucherAudit.ts'
-import voucherPostingRoutes from './routes/voucherPosting.ts'
-import voucherBatchRoutes from './routes/voucherBatch.ts'
-import voucherPeriodRoutes from './routes/voucherPeriod.ts'
-import voucherAiRoutes from './routes/voucherAi.ts'
-import voucherAutoTransferRoutes from './routes/voucherAutoTransfer.ts'
-import ledgerRoutes from './routes/ledger.ts'
-import reportRoutes from './routes/report.ts'
-import reportBalanceSheetRoutes from './routes/reportBalanceSheet.ts'
-import reportIncomeStatementRoutes from './routes/reportIncomeStatement.ts'
-import reportEquityRoutes from './routes/reportEquity.ts'
-import reportAuxRoutes from './routes/reportAux.ts'
-import reportAiRoutes from './routes/reportAi.ts'
-import reportTemplateRoutes from './routes/reportTemplate.ts'
-import dashboardRoutes from './routes/dashboard.ts'
-import backupRoutes from './routes/backup.ts'
+import authRoutes from './routes/auth.js'
+import systemRoutes from './routes/system.js'
+import baseRoutes from './routes/base.js'
+import baseAccountRoutes from './routes/baseAccount.js'
+import baseVoucherTypeRoutes from './routes/baseVoucherType.js'
+import baseProjectRoutes from './routes/baseProject.js'
+import baseInitBalanceRoutes from './routes/baseInitBalance.js'
+import basePrintTemplateRoutes from './routes/basePrintTemplate.js'
+import baseKeyboardShortcutsRoutes from './routes/baseKeyboardShortcuts.js'
+import baseCashFlowRoutes from './routes/baseCashFlow.js'
+import voucherRoutes from './routes/voucher.js'
+import voucherAuditRoutes from './routes/voucherAudit.js'
+import voucherPostingRoutes from './routes/voucherPosting.js'
+import voucherBatchRoutes from './routes/voucherBatch.js'
+import voucherPeriodRoutes from './routes/voucherPeriod.js'
+import voucherAiRoutes from './routes/voucherAi.js'
+import voucherAutoTransferRoutes from './routes/voucherAutoTransfer.js'
+import voucherTemplateRoutes from './routes/voucherTemplate.js'
+import taskRoutes from './routes/task.js'
+import ledgerRoutes from './routes/ledger.js'
+import reportRoutes from './routes/report.js'
+import reportBalanceSheetRoutes from './routes/reportBalanceSheet.js'
+import reportIncomeStatementRoutes from './routes/reportIncomeStatement.js'
+import reportEquityRoutes from './routes/reportEquity.js'
+import reportAuxRoutes from './routes/reportAux.js'
+import reportAiRoutes from './routes/reportAi.js'
+import reportTemplateRoutes from './routes/reportTemplate.js'
+import dashboardRoutes from './routes/dashboard.js'
+import backupRoutes from './routes/backup.js'
 
 // 便携部署：process.execPath = deploy/node/node.exe，client/dist 在 deploy/client/dist/
 // pkg 部署：process.pkg 标识，client/dist 在 exe 同目录/client/dist/
 // 开发环境：client/dist 在项目根目录 client/dist/
 function getExeDir(): string {
-  if (process.pkg) {
+  if ((process as any).pkg) {
     // pkg exe: deploy/cw-finance.exe → deploy/
     return dirname(process.execPath)
   }
@@ -113,6 +133,8 @@ app.use((req, res, next) => {
 app.use('/api/auth', authRoutes)
 app.use('/api/system', systemRoutes)
 app.use('/api/base', baseRoutes)
+app.use('/api/base/keyboard-shortcuts', baseKeyboardShortcutsRoutes)
+app.use('/api/base/cash-flow-items', baseCashFlowRoutes)
 app.use('/api/base', baseAccountRoutes)
 app.use('/api/base', baseVoucherTypeRoutes)
 app.use('/api/base', baseProjectRoutes)
@@ -125,6 +147,8 @@ app.use('/api/voucher', voucherBatchRoutes)
 app.use('/api/voucher', voucherPeriodRoutes)
 app.use('/api/voucher', voucherAiRoutes)
 app.use('/api/voucher', voucherAutoTransferRoutes)
+app.use('/api/voucher', taskRoutes)
+app.use('/api/voucher-templates', voucherTemplateRoutes)
 app.use('/api/ledger', ledgerRoutes)
 app.use('/api/report', reportRoutes)
 app.use('/api/report', reportBalanceSheetRoutes)
@@ -165,8 +189,12 @@ app.get('*', (req, res, next) => {
 })
 
 // 初始化默认数据
-initDefaultAccountSet('行政事业单位财务账套')
-log.info('默认账套初始化完成')
+if (process.env.SEED_DEFAULT_ACCOUNT_SET !== 'false') {
+  initDefaultAccountSet('行政事业单位财务账套')
+  log.info('默认账套初始化完成')
+} else {
+  log.info('已跳过默认账套初始化')
+}
 
 // 初始化默认打印模版
 try {
@@ -177,13 +205,21 @@ try {
 }
 
 // 404 处理（必须在所有路由之后）
-import { notFoundHandler, errorHandler } from './middleware/errorHandler.ts'
+import { notFoundHandler, errorHandler } from './middleware/errorHandler.js'
 app.use(notFoundHandler)
 
 // 全局错误处理中间件（必须在最后）
 app.use(errorHandler)
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   log.info(`财务记账系统服务已启动: http://localhost:${PORT}`)
   log.info(`API地址: http://localhost:${PORT}/api`)
+})
+
+server.on('error', (error: NodeJS.ErrnoException) => {
+  if (error.code === 'EADDRINUSE') {
+    log.error(`端口 ${PORT} 已被占用，后端服务可能已经在运行。请关闭重复启动的服务后再重试。`)
+    process.exit(0)
+  }
+  throw error
 })

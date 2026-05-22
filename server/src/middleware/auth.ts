@@ -1,6 +1,7 @@
 import { Request, Response, NextFunction } from 'express'
 import jwt from 'jsonwebtoken'
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
+import { getRequestIp } from '../utils/requestIp.js'
 
 // Lazy-load JWT_SECRET to avoid ESM import hoisting issues:
 // In ESM, all static imports are resolved before any code runs,
@@ -25,6 +26,7 @@ export interface AuthRequest extends Request {
   userName?: string
   accountSetId?: string
   roleId?: string
+  sessionId?: string
   permissions?: string[]
 }
 
@@ -39,7 +41,35 @@ export function authMiddleware(req: AuthRequest, res: Response, next: NextFuncti
     req.userName = payload.userName
     req.accountSetId = payload.accountSetId
     req.roleId = payload.roleId
+    req.sessionId = payload.sessionId
     req.permissions = payload.permissions || []
+
+    if (!payload.sessionId) {
+      return res.status(401).json({ code: 40101, message: '登录已失效，请重新登录' })
+    }
+
+    const db = getDb()
+    const session = db
+      .prepare(
+        `SELECT id, status
+         FROM user_login_sessions
+         WHERE id = ? AND user_id = ? AND account_set_id = ?
+         LIMIT 1`
+      )
+      .get(payload.sessionId, payload.userId, payload.accountSetId) as
+      | { id: string; status: string }
+      | undefined
+
+    if (!session || session.status !== 'active') {
+      return res.status(401).json({ code: 40101, message: '账号已在其他地方登录，请重新登录' })
+    }
+
+    db.prepare(
+      `UPDATE user_login_sessions
+       SET last_seen_at = datetime('now'), login_ip = COALESCE(NULLIF(login_ip, ''), ?)
+       WHERE id = ?`
+    ).run(getRequestIp(req), payload.sessionId)
+
     next()
   } catch {
     return res.status(401).json({ code: 401, message: '登录已过期' })
@@ -55,11 +85,34 @@ export function requirePermission(permission: string) {
   }
 }
 
+export function requireAnyPermission(...permissions: string[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (req.permissions?.includes('*')) return next()
+    const hasAny = permissions.some(p => req.permissions?.includes(p))
+    if (!hasAny) {
+      return res.status(403).json({ code: 403, message: '无此操作权限' })
+    }
+    next()
+  }
+}
+
+export function requireAllPermissions(...permissions: string[]) {
+  return (req: AuthRequest, res: Response, next: NextFunction) => {
+    if (req.permissions?.includes('*')) return next()
+    const hasAll = permissions.every(p => req.permissions?.includes(p))
+    if (!hasAll) {
+      return res.status(403).json({ code: 403, message: '无此操作权限' })
+    }
+    next()
+  }
+}
+
 export function generateToken(payload: {
   userId: string
   userName: string
   accountSetId: string
   roleId: string
+  sessionId?: string
   permissions: string[]
 }) {
   return jwt.sign(payload, getJwtSecret(), { expiresIn: '8h' })

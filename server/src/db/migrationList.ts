@@ -1,4 +1,28 @@
-import { Migration } from './migrations.ts'
+import { Migration } from './migrations.js'
+import {
+  up as scopeRolesByAccountSetUp,
+  down as scopeRolesByAccountSetDown,
+} from './migrations/20260515_scope_roles_by_account_set.js'
+import {
+  up as addAccountSetImportSourceUp,
+  down as addAccountSetImportSourceDown,
+} from './migrations/20260515_add_account_set_import_source.js'
+import {
+  up as addCashFlowUp,
+  down as addCashFlowDown,
+} from './migrations/20260514_add_cash_flow.js'
+import {
+  up as addBudgetSurplusAdjustmentsUp,
+  down as addBudgetSurplusAdjustmentsDown,
+} from './migrations/20260518_add_budget_surplus_adjustments.js'
+import {
+  up as removeVoucherTypePrefixUp,
+  down as removeVoucherTypePrefixDown,
+} from './migrations/20260518_remove_voucher_type_prefix.js'
+import {
+  up as initBalancesAuxUniqueUp,
+  down as initBalancesAuxUniqueDown,
+} from './migrations/20260518_init_balances_aux_unique.js'
 
 /**
  * 迁移示例：添加新字段
@@ -13,7 +37,7 @@ export const migrations: Migration[] = [
   {
     version: 3,
     name: 'update_voucher_unique_constraint_add_period_and_type',
-    up: (db) => {
+    up: db => {
       // 修改凭证表的唯一约束，从 (account_set_id, year, voucher_no) 改为 (account_set_id, year, period, voucher_type_id, voucher_no)
       // 确保同年同月同类型不能有相同编号
       db.exec(`
@@ -62,7 +86,7 @@ export const migrations: Migration[] = [
         PRAGMA foreign_keys = ON;
       `)
     },
-    down: (db) => {
+    down: db => {
       // 回滚：恢复原来的唯一约束
       db.exec(`
         CREATE TABLE vouchers_old (
@@ -98,12 +122,12 @@ export const migrations: Migration[] = [
         CREATE INDEX IF NOT EXISTS idx_vouchers_year_period ON vouchers(year, period);
         CREATE INDEX IF NOT EXISTS idx_vouchers_status ON vouchers(status);
       `)
-    }
+    },
   },
   {
     version: 4,
     name: 'update_auto_transfer_runs_add_transfer_type_code',
-    up: (db) => {
+    up: db => {
       // 更新 auto_transfer_runs 表，添加 transfer_type_code 字段并修改唯一约束
       db.exec(`
         PRAGMA foreign_keys = OFF;
@@ -136,7 +160,7 @@ export const migrations: Migration[] = [
         PRAGMA foreign_keys = ON;
       `)
     },
-    down: (db) => {
+    down: db => {
       // 回滚：恢复原来的表结构
       db.exec(`
         CREATE TABLE auto_transfer_runs_old (
@@ -158,12 +182,12 @@ export const migrations: Migration[] = [
         DROP TABLE auto_transfer_runs;
         ALTER TABLE auto_transfer_runs_old RENAME TO auto_transfer_runs;
       `)
-    }
+    },
   },
   {
     version: 5,
     name: 'add_ledger_enhancement_fields',
-    up: (db) => {
+    up: db => {
       // 为账簿管理功能增强添加新字段
       db.exec(`
         -- 1. 为 voucher_entries 表添加数量金额式账簿所需字段
@@ -188,7 +212,7 @@ export const migrations: Migration[] = [
           ON voucher_entries(voucher_id, seq);
       `)
     },
-    down: (db) => {
+    down: db => {
       // 回滚：删除新增的字段和索引
       // 注意：SQLite 不支持 DROP COLUMN，需要重建表
       db.exec(`
@@ -267,12 +291,12 @@ export const migrations: Migration[] = [
 
         PRAGMA foreign_keys = ON;
       `)
-    }
+    },
   },
   {
     version: 6,
     name: 'add_print_templates_table',
-    up: (db) => {
+    up: db => {
       // 添加打印模版表
       db.exec(`
         -- 创建打印模版表
@@ -300,30 +324,783 @@ export const migrations: Migration[] = [
           ON print_templates(account_set_id, is_default);
       `)
     },
-    down: (db) => {
+    down: db => {
       // 回滚：删除打印模版表
       db.exec(`
         DROP INDEX IF EXISTS idx_print_templates_account_set;
         DROP INDEX IF EXISTS idx_print_templates_default;
         DROP TABLE IF EXISTS print_templates;
       `)
-    }
+    },
   },
   {
     version: 7,
     name: 'add_init_balance_detail_fields',
-    up: (db) => {
+    up: db => {
       // 期初余额表新增年初借贷方、账前借贷方字段
       db.prepare('ALTER TABLE init_balances ADD COLUMN opening_debit REAL NOT NULL DEFAULT 0').run()
-      db.prepare('ALTER TABLE init_balances ADD COLUMN opening_credit REAL NOT NULL DEFAULT 0').run()
-      db.prepare('ALTER TABLE init_balances ADD COLUMN pre_book_debit REAL NOT NULL DEFAULT 0').run()
-      db.prepare('ALTER TABLE init_balances ADD COLUMN pre_book_credit REAL NOT NULL DEFAULT 0').run()
+      db.prepare(
+        'ALTER TABLE init_balances ADD COLUMN opening_credit REAL NOT NULL DEFAULT 0'
+      ).run()
+      db.prepare(
+        'ALTER TABLE init_balances ADD COLUMN pre_book_debit REAL NOT NULL DEFAULT 0'
+      ).run()
+      db.prepare(
+        'ALTER TABLE init_balances ADD COLUMN pre_book_credit REAL NOT NULL DEFAULT 0'
+      ).run()
     },
-    down: (db) => {
+    down: db => {
       db.prepare('ALTER TABLE init_balances DROP COLUMN opening_debit').run()
       db.prepare('ALTER TABLE init_balances DROP COLUMN opening_credit').run()
       db.prepare('ALTER TABLE init_balances DROP COLUMN pre_book_debit').run()
       db.prepare('ALTER TABLE init_balances DROP COLUMN pre_book_credit').run()
-    }
+    },
+  },
+  {
+    version: 8,
+    name: 'create_keyboard_shortcuts',
+    up: db => {
+      // 创建快捷键配置表
+      db.exec(`
+        CREATE TABLE keyboard_shortcuts (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          module VARCHAR(50) NOT NULL,
+          action VARCHAR(50) NOT NULL,
+          key VARCHAR(20) NOT NULL,
+          ctrl BOOLEAN DEFAULT 0,
+          alt BOOLEAN DEFAULT 0,
+          shift BOOLEAN DEFAULT 0,
+          meta BOOLEAN DEFAULT 0,
+          description TEXT,
+          component_path VARCHAR(200),
+          is_enabled BOOLEAN DEFAULT 1,
+          is_custom BOOLEAN DEFAULT 0,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE INDEX idx_keyboard_shortcuts_module ON keyboard_shortcuts(module);
+        CREATE INDEX idx_keyboard_shortcuts_enabled ON keyboard_shortcuts(is_enabled);
+      `)
+
+      // 插入默认快捷键数据
+      const insert = db.prepare(`
+        INSERT INTO keyboard_shortcuts
+        (module, action, key, ctrl, alt, shift, meta, description, component_path, is_enabled)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `)
+
+      const defaultShortcuts = [
+        [
+          '凭证录入表单',
+          '保存',
+          's',
+          1,
+          0,
+          0,
+          0,
+          '保存当前凭证',
+          'client/src/components/voucher/VoucherEntryForm.vue',
+          1,
+        ],
+        [
+          '凭证录入表单',
+          '保存并新增',
+          'n',
+          1,
+          0,
+          0,
+          0,
+          '保存当前凭证并新增下一张',
+          'client/src/components/voucher/VoucherEntryForm.vue',
+          1,
+        ],
+        [
+          '凭证录入表单',
+          '上传附件',
+          'f',
+          1,
+          0,
+          0,
+          0,
+          '打开文件选择对话框',
+          'client/src/components/voucher/VoucherEntryForm.vue',
+          1,
+        ],
+        [
+          '凭证录入表单',
+          '关闭',
+          'Escape',
+          0,
+          0,
+          0,
+          0,
+          '关闭凭证表单',
+          'client/src/components/voucher/VoucherEntryForm.vue',
+          1,
+        ],
+        [
+          '凭证录入页面',
+          '新增凭证',
+          'n',
+          1,
+          0,
+          0,
+          0,
+          '打开新增凭证对话框',
+          'client/src/views/voucher/Entry.vue',
+          1,
+        ],
+        [
+          '凭证录入页面',
+          '刷新列表',
+          'r',
+          1,
+          0,
+          0,
+          0,
+          '刷新草稿凭证列表',
+          'client/src/views/voucher/Entry.vue',
+          1,
+        ],
+        [
+          '凭证审核页面',
+          '批量操作',
+          'e',
+          1,
+          0,
+          0,
+          0,
+          '打开批量操作对话框',
+          'client/src/views/voucher/Audit.vue',
+          1,
+        ],
+        [
+          '凭证审核页面',
+          '批量反记账',
+          'd',
+          1,
+          0,
+          0,
+          0,
+          '批量反记账操作',
+          'client/src/views/voucher/Audit.vue',
+          1,
+        ],
+      ]
+
+      for (const shortcut of defaultShortcuts) {
+        insert.run(...shortcut)
+      }
+    },
+    down: db => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_keyboard_shortcuts_module;
+        DROP INDEX IF EXISTS idx_keyboard_shortcuts_enabled;
+        DROP TABLE IF EXISTS keyboard_shortcuts;
+      `)
+    },
+  },
+  {
+    version: 9,
+    name: 'create_voucher_templates',
+    up: db => {
+      // 创建凭证模版表
+      db.exec(`
+        CREATE TABLE voucher_templates (
+          id TEXT PRIMARY KEY,
+          account_set_id TEXT NOT NULL REFERENCES account_sets(id),
+          template_no TEXT NOT NULL,
+          template_name TEXT NOT NULL,
+          voucher_type_id TEXT REFERENCES voucher_types(id),
+          total_amount REAL NOT NULL DEFAULT 0,
+          remark TEXT,
+          entries_data TEXT NOT NULL,
+          created_by TEXT REFERENCES users(id),
+          created_at TEXT NOT NULL DEFAULT (datetime('now')),
+          updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+          UNIQUE(account_set_id, template_no)
+        );
+
+        CREATE INDEX idx_voucher_templates_account_set ON voucher_templates(account_set_id);
+        CREATE INDEX idx_voucher_templates_type ON voucher_templates(voucher_type_id);
+      `)
+    },
+    down: db => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_voucher_templates_account_set;
+        DROP INDEX IF EXISTS idx_voucher_templates_type;
+        DROP TABLE IF EXISTS voucher_templates;
+      `)
+    },
+  },
+  {
+    version: 10,
+    name: 'add_voucher_query_performance_indexes',
+    up: db => {
+      // 添加凭证查询性能优化索引
+      db.exec(`
+        -- 凭证查询复合索引（最常用的查询条件组合）
+        CREATE INDEX IF NOT EXISTS idx_vouchers_query_main
+          ON vouchers(account_set_id, status, voucher_date DESC);
+
+        -- 凭证号查询索引
+        CREATE INDEX IF NOT EXISTS idx_vouchers_no_lookup
+          ON vouchers(account_set_id, voucher_no);
+
+        -- 年月期间查询索引（已存在但确保创建）
+        CREATE INDEX IF NOT EXISTS idx_vouchers_period_status
+          ON vouchers(account_set_id, year, period, status);
+
+        -- 分录查询优化索引（使用 seq 而不是 entry_order）
+        CREATE INDEX IF NOT EXISTS idx_entries_voucher_seq
+          ON voucher_entries(voucher_id, seq);
+
+        -- 分录科目查询索引
+        CREATE INDEX IF NOT EXISTS idx_entries_account_lookup
+          ON voucher_entries(account_id);
+
+        -- 凭证类型关联查询索引
+        CREATE INDEX IF NOT EXISTS idx_vouchers_type_date
+          ON vouchers(voucher_type_id, voucher_date DESC);
+
+        -- 制单人、审核人、记账人查询索引
+        CREATE INDEX IF NOT EXISTS idx_vouchers_maker
+          ON vouchers(maker_id, voucher_date DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_vouchers_auditor
+          ON vouchers(auditor_id, voucher_date DESC);
+
+        CREATE INDEX IF NOT EXISTS idx_vouchers_poster
+          ON vouchers(poster_id, voucher_date DESC);
+      `)
+    },
+    down: db => {
+      // 回滚：删除性能优化索引
+      db.exec(`
+        DROP INDEX IF EXISTS idx_vouchers_query_main;
+        DROP INDEX IF EXISTS idx_vouchers_no_lookup;
+        DROP INDEX IF EXISTS idx_vouchers_period_status;
+        DROP INDEX IF EXISTS idx_entries_voucher_seq;
+        DROP INDEX IF EXISTS idx_entries_account_lookup;
+        DROP INDEX IF EXISTS idx_vouchers_type_date;
+        DROP INDEX IF EXISTS idx_vouchers_maker;
+        DROP INDEX IF EXISTS idx_vouchers_auditor;
+        DROP INDEX IF EXISTS idx_vouchers_poster;
+      `)
+    },
+  },
+  {
+    version: 11,
+    name: 'add_fts5_fulltext_search',
+    up: db => {
+      // 创建 FTS5 全文索引表（不启用 content= 模式，由触发器手动同步）
+      db.exec(`
+        -- 凭证全文索引表
+        CREATE VIRTUAL TABLE IF NOT EXISTS vouchers_fts USING fts5(
+          voucher_id UNINDEXED,
+          voucher_no,
+          remark,
+          maker_name,
+          auditor_name,
+          poster_name,
+          tokenize='unicode61'
+        );
+
+        -- 分录全文索引表
+        CREATE VIRTUAL TABLE IF NOT EXISTS voucher_entries_fts USING fts5(
+          entry_id UNINDEXED,
+          voucher_id UNINDEXED,
+          summary,
+          account_code,
+          account_name,
+          tokenize='unicode61'
+        );
+      `)
+
+      // 初始化现有数据到 FTS5 表
+      db.exec(`
+        INSERT INTO vouchers_fts(voucher_id, voucher_no, remark, maker_name, auditor_name, poster_name)
+        SELECT rowid, voucher_no, COALESCE(remark, ''), COALESCE(maker_name, ''),
+               COALESCE(auditor_name, ''), COALESCE(poster_name, '')
+        FROM vouchers;
+
+        INSERT INTO voucher_entries_fts(entry_id, voucher_id, summary, account_code, account_name)
+        SELECT rowid, voucher_id, COALESCE(summary, ''), account_code, account_name
+        FROM voucher_entries;
+      `)
+
+      // 创建触发器保持同步 - 凭证表
+      db.exec(`
+        -- 凭证插入触发器
+        CREATE TRIGGER IF NOT EXISTS vouchers_fts_insert AFTER INSERT ON vouchers BEGIN
+          INSERT INTO vouchers_fts(voucher_id, voucher_no, remark, maker_name, auditor_name, poster_name)
+          VALUES (new.rowid, new.voucher_no, COALESCE(new.remark, ''),
+                  COALESCE(new.maker_name, ''), COALESCE(new.auditor_name, ''),
+                  COALESCE(new.poster_name, ''));
+        END;
+
+        -- 凭证更新触发器
+        CREATE TRIGGER IF NOT EXISTS vouchers_fts_update AFTER UPDATE ON vouchers BEGIN
+          UPDATE vouchers_fts
+          SET voucher_no = new.voucher_no,
+              remark = COALESCE(new.remark, ''),
+              maker_name = COALESCE(new.maker_name, ''),
+              auditor_name = COALESCE(new.auditor_name, ''),
+              poster_name = COALESCE(new.poster_name, '')
+          WHERE voucher_id = old.rowid;
+        END;
+
+        -- 凭证删除触发器
+        CREATE TRIGGER IF NOT EXISTS vouchers_fts_delete AFTER DELETE ON vouchers BEGIN
+          DELETE FROM vouchers_fts WHERE voucher_id = old.rowid;
+        END;
+      `)
+
+      // 创建触发器保持同步 - 分录表
+      db.exec(`
+        -- 分录插入触发器
+        CREATE TRIGGER IF NOT EXISTS voucher_entries_fts_insert AFTER INSERT ON voucher_entries BEGIN
+          INSERT INTO voucher_entries_fts(entry_id, voucher_id, summary, account_code, account_name)
+          VALUES (new.rowid, new.voucher_id, COALESCE(new.summary, ''),
+                  new.account_code, new.account_name);
+        END;
+
+        -- 分录更新触发器
+        CREATE TRIGGER IF NOT EXISTS voucher_entries_fts_update AFTER UPDATE ON voucher_entries BEGIN
+          UPDATE voucher_entries_fts
+          SET voucher_id = new.voucher_id,
+              summary = COALESCE(new.summary, ''),
+              account_code = new.account_code,
+              account_name = new.account_name
+          WHERE entry_id = old.rowid;
+        END;
+
+        -- 分录删除触发器
+        CREATE TRIGGER IF NOT EXISTS voucher_entries_fts_delete AFTER DELETE ON voucher_entries BEGIN
+          DELETE FROM voucher_entries_fts WHERE entry_id = old.rowid;
+        END;
+      `)
+    },
+    down: db => {
+      // 回滚：删除触发器和 FTS5 表
+      db.exec(`
+        -- 删除凭证触发器
+        DROP TRIGGER IF EXISTS vouchers_fts_insert;
+        DROP TRIGGER IF EXISTS vouchers_fts_update;
+        DROP TRIGGER IF EXISTS vouchers_fts_delete;
+
+        -- 删除分录触发器
+        DROP TRIGGER IF EXISTS voucher_entries_fts_insert;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_update;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_delete;
+
+        -- 删除 FTS5 表
+        DROP TABLE IF EXISTS vouchers_fts;
+        DROP TABLE IF EXISTS voucher_entries_fts;
+      `)
+    },
+  },
+  {
+    version: 12,
+    name: 'fix_fts5_content_mode',
+    up: db => {
+      // 修复 FTS5 表定义：移除 content= 模式
+      // 原定义用了 content='vouchers'，但列名不匹配（voucher_id vs id）
+      // 导致 FTS5 生成内部查询 SELECT ... T.voucher_id FROM vouchers AS T 时报错
+      db.exec(`
+        -- 1. 删除旧触发器（必须先删，因为依赖 FTS 表）
+        DROP TRIGGER IF EXISTS vouchers_fts_insert;
+        DROP TRIGGER IF EXISTS vouchers_fts_update;
+        DROP TRIGGER IF EXISTS vouchers_fts_delete;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_insert;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_update;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_delete;
+
+        -- 2. 删除旧 FTS5 表
+        DROP TABLE IF EXISTS vouchers_fts;
+        DROP TABLE IF EXISTS voucher_entries_fts;
+
+        -- 3. 重建 FTS5 表（standalone 模式，由触发器手动同步）
+        CREATE VIRTUAL TABLE IF NOT EXISTS vouchers_fts USING fts5(
+          voucher_id UNINDEXED,
+          voucher_no,
+          remark,
+          maker_name,
+          auditor_name,
+          poster_name,
+          tokenize='unicode61'
+        );
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS voucher_entries_fts USING fts5(
+          entry_id UNINDEXED,
+          voucher_id UNINDEXED,
+          summary,
+          account_code,
+          account_name,
+          tokenize='unicode61'
+        );
+
+        -- 4. 初始化现有数据到 FTS5 表
+        INSERT INTO vouchers_fts(voucher_id, voucher_no, remark, maker_name, auditor_name, poster_name)
+        SELECT rowid, voucher_no, COALESCE(remark, ''), COALESCE(maker_name, ''),
+               COALESCE(auditor_name, ''), COALESCE(poster_name, '')
+        FROM vouchers;
+
+        INSERT INTO voucher_entries_fts(entry_id, voucher_id, summary, account_code, account_name)
+        SELECT rowid, voucher_id, COALESCE(summary, ''), account_code, account_name
+        FROM voucher_entries;
+
+        -- 5. 重建触发器
+        CREATE TRIGGER IF NOT EXISTS vouchers_fts_insert AFTER INSERT ON vouchers BEGIN
+          INSERT INTO vouchers_fts(voucher_id, voucher_no, remark, maker_name, auditor_name, poster_name)
+          VALUES (new.rowid, new.voucher_no, COALESCE(new.remark, ''),
+                  COALESCE(new.maker_name, ''), COALESCE(new.auditor_name, ''),
+                  COALESCE(new.poster_name, ''));
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS vouchers_fts_update AFTER UPDATE ON vouchers BEGIN
+          UPDATE vouchers_fts
+          SET voucher_no = new.voucher_no,
+              remark = COALESCE(new.remark, ''),
+              maker_name = COALESCE(new.maker_name, ''),
+              auditor_name = COALESCE(new.auditor_name, ''),
+              poster_name = COALESCE(new.poster_name, '')
+          WHERE voucher_id = old.rowid;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS vouchers_fts_delete AFTER DELETE ON vouchers BEGIN
+          DELETE FROM vouchers_fts WHERE voucher_id = old.rowid;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS voucher_entries_fts_insert AFTER INSERT ON voucher_entries BEGIN
+          INSERT INTO voucher_entries_fts(entry_id, voucher_id, summary, account_code, account_name)
+          VALUES (new.rowid, new.voucher_id, COALESCE(new.summary, ''),
+                  new.account_code, new.account_name);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS voucher_entries_fts_update AFTER UPDATE ON voucher_entries BEGIN
+          UPDATE voucher_entries_fts
+          SET summary = COALESCE(new.summary, ''),
+              account_code = new.account_code,
+              account_name = new.account_name
+          WHERE entry_id = old.rowid;
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS voucher_entries_fts_delete AFTER DELETE ON voucher_entries BEGIN
+          DELETE FROM voucher_entries_fts WHERE entry_id = old.rowid;
+        END;
+      `)
+    },
+    down: db => {
+      db.exec(`
+        DROP TRIGGER IF EXISTS vouchers_fts_insert;
+        DROP TRIGGER IF EXISTS vouchers_fts_update;
+        DROP TRIGGER IF EXISTS vouchers_fts_delete;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_insert;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_update;
+        DROP TRIGGER IF EXISTS voucher_entries_fts_delete;
+        DROP TABLE IF EXISTS vouchers_fts;
+        DROP TABLE IF EXISTS voucher_entries_fts;
+      `)
+    },
+  },
+  {
+    version: 13,
+    name: 'add_performance_indexes',
+    up: db => {
+      // 添加关键索引以优化查询性能
+      db.exec(`
+        -- voucher_entries 表索引：优化账簿查询
+        -- 用于总账、明细账、余额表等查询
+        CREATE INDEX IF NOT EXISTS idx_voucher_entries_balance
+          ON voucher_entries(account_set_id, account_id, direction);
+
+        -- init_balances 表索引：优化期初余额查询
+        CREATE INDEX IF NOT EXISTS idx_init_balances_lookup
+          ON init_balances(account_set_id, account_id, year);
+
+        -- operation_logs 表索引：优化日志查询
+        CREATE INDEX IF NOT EXISTS idx_operation_logs_query
+          ON operation_logs(account_set_id, created_at);
+
+        -- vouchers 表索引：优化凭证查询（如果不存在）
+        CREATE INDEX IF NOT EXISTS idx_vouchers_date
+          ON vouchers(account_set_id, voucher_date);
+
+        CREATE INDEX IF NOT EXISTS idx_vouchers_status
+          ON vouchers(account_set_id, status);
+      `)
+    },
+    down: db => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_voucher_entries_balance;
+        DROP INDEX IF EXISTS idx_init_balances_lookup;
+        DROP INDEX IF EXISTS idx_operation_logs_query;
+        DROP INDEX IF EXISTS idx_vouchers_date;
+        DROP INDEX IF EXISTS idx_vouchers_status;
+      `)
+    },
+  },
+  {
+    version: 14,
+    name: 'convert_amount_to_integer_cents',
+    up: db => {
+      console.log('开始浮点精度改造：将金额从 REAL 转换为 INTEGER（分）...')
+
+      // 检查字段是否已存在
+      const checkColumn = (table: string, column: string): boolean => {
+        const result = db.prepare(`PRAGMA table_info(${table})`).all() as any[]
+        return result.some((col: any) => col.name === column)
+      }
+
+      // 第一步：为所有金额字段添加新的整数字段（单位：分）
+      if (!checkColumn('voucher_entries', 'amount_cents')) {
+        db.exec(`ALTER TABLE voucher_entries ADD COLUMN amount_cents INTEGER;`)
+        console.log('✓ voucher_entries.amount_cents 字段添加完成')
+      } else {
+        console.log('⊙ voucher_entries.amount_cents 字段已存在，跳过')
+      }
+
+      if (!checkColumn('init_balances', 'init_balance_cents')) {
+        db.exec(`ALTER TABLE init_balances ADD COLUMN init_balance_cents INTEGER;`)
+        console.log('✓ init_balances.init_balance_cents 字段添加完成')
+      } else {
+        console.log('⊙ init_balances.init_balance_cents 字段已存在，跳过')
+      }
+
+      if (!checkColumn('account_balances', 'current_debit_cents')) {
+        db.exec(`
+          ALTER TABLE account_balances ADD COLUMN current_debit_cents INTEGER;
+          ALTER TABLE account_balances ADD COLUMN current_credit_cents INTEGER;
+        `)
+        console.log('✓ account_balances 的分字段添加完成')
+      } else {
+        console.log('⊙ account_balances 的分字段已存在，跳过')
+      }
+
+      // 第二步：数据迁移 - 将浮点数转换为整数（分）
+      db.exec(`
+        -- 迁移 voucher_entries 的金额数据
+        UPDATE voucher_entries
+        SET amount_cents = CAST(ROUND(amount * 100) AS INTEGER)
+        WHERE amount_cents IS NULL;
+
+        -- 迁移 init_balances 的期初余额数据
+        UPDATE init_balances
+        SET init_balance_cents = CAST(ROUND(init_balance * 100) AS INTEGER)
+        WHERE init_balance_cents IS NULL;
+
+        -- 迁移 account_balances 的发生额数据
+        UPDATE account_balances
+        SET current_debit_cents = CAST(ROUND(current_debit * 100) AS INTEGER),
+            current_credit_cents = CAST(ROUND(current_credit * 100) AS INTEGER)
+        WHERE current_debit_cents IS NULL OR current_credit_cents IS NULL;
+      `)
+
+      console.log('✓ 数据迁移完成')
+
+      // 第三步：验证数据一致性
+      const validation = db
+        .prepare(
+          `
+        SELECT
+          COUNT(*) as total,
+          SUM(CASE WHEN ABS(amount - amount_cents / 100.0) > 0.01 THEN 1 ELSE 0 END) as inconsistent
+        FROM voucher_entries
+        WHERE amount_cents IS NOT NULL
+      `
+        )
+        .get() as any
+
+      if (validation.inconsistent > 0) {
+        throw new Error(`数据验证失败：发现 ${validation.inconsistent} 条不一致的记录`)
+      }
+
+      console.log(`✓ 数据验证通过：${validation.total} 条记录`)
+      console.log('✓ 浮点精度改造完成')
+      console.log('⚠️  注意：旧的 REAL 字段已保留，应用层需要同时更新两个字段')
+      console.log('⚠️  后续版本将删除旧字段，完全切换到整数字段')
+    },
+    down: db => {
+      // 回滚：删除新添加的整数字段
+      console.log('回滚浮点精度改造...')
+
+      db.exec(`
+        -- 删除 voucher_entries 的 amount_cents 字段
+        -- 注意：SQLite 不支持 DROP COLUMN，需要重建表
+        PRAGMA foreign_keys = OFF;
+
+        CREATE TABLE voucher_entries_backup AS SELECT * FROM voucher_entries;
+
+        DROP TABLE voucher_entries;
+
+        CREATE TABLE voucher_entries (
+          id TEXT PRIMARY KEY,
+          account_set_id TEXT NOT NULL,
+          voucher_id TEXT NOT NULL,
+          seq INTEGER NOT NULL,
+          account_id INTEGER NOT NULL,
+          account_code TEXT NOT NULL,
+          account_name TEXT NOT NULL,
+          direction TEXT NOT NULL CHECK(direction IN ('debit', 'credit')),
+          amount REAL NOT NULL DEFAULT 0,
+          summary TEXT,
+          dept_id INTEGER,
+          project_id INTEGER,
+          supplier_id INTEGER,
+          person_id INTEGER,
+          func_class_id INTEGER,
+          aux_data TEXT,
+          created_at TEXT DEFAULT (datetime('now', 'localtime')),
+          FOREIGN KEY (voucher_id) REFERENCES vouchers(id) ON DELETE CASCADE
+        );
+
+        INSERT INTO voucher_entries
+        SELECT id, account_set_id, voucher_id, seq, account_id, account_code, account_name,
+               direction, amount, summary, dept_id, project_id, supplier_id, person_id,
+               func_class_id, aux_data, created_at
+        FROM voucher_entries_backup;
+
+        DROP TABLE voucher_entries_backup;
+
+        PRAGMA foreign_keys = ON;
+      `)
+
+      // 类似地处理其他表...
+      console.log('✓ 回滚完成')
+    },
+  },
+  {
+    version: 17,
+    name: 'scope_roles_by_account_set',
+    up: scopeRolesByAccountSetUp,
+    down: scopeRolesByAccountSetDown,
+  },
+  {
+    version: 18,
+    name: 'add_account_set_import_source',
+    up: addAccountSetImportSourceUp,
+    down: addAccountSetImportSourceDown,
+  },
+  {
+    version: 19,
+    name: 'add_cash_flow',
+    up: addCashFlowUp,
+    down: addCashFlowDown,
+  },
+  {
+    version: 20,
+    name: 'keyboard_shortcuts_use_ctrl_alt_n',
+    up: db => {
+      // 浏览器占用 Ctrl+N（新窗口），页面无法可靠拦截；默认改为 Ctrl+Alt+N
+      db.prepare(
+        `
+        UPDATE keyboard_shortcuts
+        SET alt = 1, updated_at = CURRENT_TIMESTAMP
+        WHERE IFNULL(is_custom, 0) = 0
+          AND key = 'n' AND ctrl = 1 AND IFNULL(alt, 0) = 0
+          AND IFNULL(shift, 0) = 0 AND IFNULL(meta, 0) = 0
+          AND (
+            (module = '凭证录入表单' AND action = '保存并新增')
+            OR (module = '凭证录入页面' AND action = '新增凭证')
+          );
+      `
+      ).run()
+    },
+    down: db => {
+      db.prepare(
+        `
+        UPDATE keyboard_shortcuts
+        SET alt = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE IFNULL(is_custom, 0) = 0
+          AND key = 'n' AND ctrl = 1 AND IFNULL(alt, 0) = 1
+          AND IFNULL(shift, 0) = 0 AND IFNULL(meta, 0) = 0
+          AND (
+            (module = '凭证录入表单' AND action = '保存并新增')
+            OR (module = '凭证录入页面' AND action = '新增凭证')
+          );
+      `
+      ).run()
+    },
+  },
+  {
+    version: 21,
+    name: 'keyboard_shortcuts_save_and_add_shift_s',
+    up: db => {
+      db.prepare(
+        `
+        UPDATE keyboard_shortcuts
+        SET key = 's', ctrl = 0, alt = 0, shift = 1, meta = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE IFNULL(is_custom, 0) = 0
+          AND (
+            (module = '凭证录入表单' AND action = '保存并新增')
+            OR (module = '凭证录入页面' AND action = '新增凭证')
+          );
+      `
+      ).run()
+    },
+    down: db => {
+      db.prepare(
+        `
+        UPDATE keyboard_shortcuts
+        SET key = 'n', ctrl = 1, alt = 1, shift = 0, meta = 0, updated_at = CURRENT_TIMESTAMP
+        WHERE IFNULL(is_custom, 0) = 0
+          AND key = 's' AND IFNULL(ctrl, 0) = 0 AND IFNULL(alt, 0) = 0 AND shift = 1
+          AND (
+            (module = '凭证录入表单' AND action = '保存并新增')
+            OR (module = '凭证录入页面' AND action = '新增凭证')
+          );
+      `
+      ).run()
+    },
+  },
+  {
+    version: 22,
+    name: 'add_user_login_sessions',
+    up: db => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS user_login_sessions (
+          id TEXT PRIMARY KEY,
+          account_set_id TEXT NOT NULL REFERENCES account_sets(id) ON DELETE CASCADE,
+          user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+          username TEXT NOT NULL,
+          login_ip TEXT,
+          user_agent TEXT,
+          login_at TEXT NOT NULL DEFAULT (datetime('now')),
+          last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+          status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'forced', 'logout', 'expired')),
+          forced_logout_at TEXT,
+          forced_by_ip TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_user_login_sessions_user_status ON user_login_sessions(user_id, account_set_id, status);
+        CREATE INDEX IF NOT EXISTS idx_user_login_sessions_active_ip ON user_login_sessions(user_id, account_set_id, login_ip, status);
+      `)
+    },
+    down: db => {
+      db.exec(`
+        DROP INDEX IF EXISTS idx_user_login_sessions_active_ip;
+        DROP INDEX IF EXISTS idx_user_login_sessions_user_status;
+        DROP TABLE IF EXISTS user_login_sessions;
+      `)
+    },
+  },
+  {
+    version: 23,
+    name: 'add_budget_surplus_adjustments',
+    up: addBudgetSurplusAdjustmentsUp,
+    down: addBudgetSurplusAdjustmentsDown,
+  },
+  {
+    version: 24,
+    name: 'remove_voucher_type_prefix',
+    up: removeVoucherTypePrefixUp,
+    down: removeVoucherTypePrefixDown,
+  },
+  {
+    version: 25,
+    name: 'init_balances_aux_unique',
+    up: initBalancesAuxUniqueUp,
+    down: initBalancesAuxUniqueDown,
   },
 ]

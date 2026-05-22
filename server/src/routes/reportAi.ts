@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
-import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.ts'
-import { getDb } from '../db/index.ts'
+import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
+import { getDb } from '../db/index.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -57,7 +57,7 @@ router.post('/ai/anomaly-check', async (req: AuthRequest, res) => {
     const data = await response.json()
     let result = { anomaly: false, level: 'low', issues: [] }
     try {
-      result = JSON.parse(data.choices?.[0]?.message?.content || '{}')
+      result = JSON.parse((data as any).choices?.[0]?.message?.content || '{}')
     } catch {
       /* ignore */
     }

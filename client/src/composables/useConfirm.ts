@@ -9,8 +9,18 @@ interface ConfirmOptions {
   type?: 'warning' | 'info' | 'success' | 'error'
   confirmButtonText?: string
   cancelButtonText?: string
+  showCancelButton?: boolean
   showDetails?: boolean
   details?: string[]
+}
+
+function escapeHtml(raw: string): string {
+  return String(raw)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 /**
@@ -23,6 +33,7 @@ export async function useConfirm(options: ConfirmOptions): Promise<boolean> {
     type = 'warning',
     confirmButtonText = '确定',
     cancelButtonText = '取消',
+    showCancelButton = true,
     showDetails = false,
     details = [],
   } = options
@@ -30,11 +41,13 @@ export async function useConfirm(options: ConfirmOptions): Promise<boolean> {
   try {
     let content = message
     if (showDetails && details.length > 0) {
+      const safeMessage = escapeHtml(message)
+      const safeDetails = details.map(item => `<div style="margin: 4px 0;">• ${escapeHtml(item)}</div>`).join('')
       content = `
         <div>
-          <p style="margin-bottom: 12px;">${message}</p>
+          <p style="margin-bottom: 12px;">${safeMessage}</p>
           <div style="background: #f5f7fa; padding: 12px; border-radius: 4px; max-height: 200px; overflow-y: auto;">
-            ${details.map(item => `<div style="margin: 4px 0;">• ${item}</div>`).join('')}
+            ${safeDetails}
           </div>
         </div>
       `
@@ -44,6 +57,7 @@ export async function useConfirm(options: ConfirmOptions): Promise<boolean> {
       type,
       confirmButtonText,
       cancelButtonText,
+      showCancelButton,
       dangerouslyUseHTMLString: showDetails && details.length > 0,
       distinguishCancelAndClose: true,
     })

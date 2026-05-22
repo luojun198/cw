@@ -1,613 +1,449 @@
 <template>
-  <div class="dashboard">
-    <!-- 顶部欢迎横幅 -->
-    <div class="welcome-banner">
-      <div class="welcome-left">
-        <h1 class="welcome-title">工作台</h1>
-        <p class="welcome-sub">{{ greeting }}<template v-if="userName">，{{ userName }}</template><template v-if="accountSetName"> · {{ accountSetName }}</template></p>
-      </div>
-      <div class="welcome-right">
-        <div class="period-badge">
-          <span class="period-badge-year">{{ currentYear }}</span>
-          <span class="period-badge-sep">年</span>
-          <span class="period-badge-month">{{ currentPeriod }}</span>
-          <span class="period-badge-sep">期</span>
+  <div class="dashboard apple-dashboard">
+    <!-- 登录安全提示卡片 -->
+    <transition name="security-notice">
+      <div v-if="loginSecurityNotice.visible" class="security-notice">
+        <div class="security-notice__icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <path d="M9 12l2 2 4-4"/>
+          </svg>
         </div>
-      </div>
-    </div>
-
-    <!-- 核心指标卡片 -->
-    <div class="stat-row">
-      <div class="stat-card" v-for="card in statCards" :key="card.label">
-        <div class="stat-card-inner">
-          <div class="apple-icon" :style="{ background: card.gradient }">
-            <el-icon size="24"><component :is="card.icon" /></el-icon>
-          </div>
-          <div class="stat-info">
-            <div class="stat-value">{{ card.value }}</div>
-            <div class="stat-label">{{ card.label }}</div>
+        <div class="security-notice__content">
+          <div class="security-notice__title">欢迎回来，请确认上次登录信息</div>
+          <div class="security-notice__info">
+            <span>上次登录：{{ loginSecurityNotice.time }}</span>
+            <span>IP：{{ loginSecurityNotice.ip }}</span>
           </div>
         </div>
-        <div class="stat-bar" :style="{ background: card.color }"></div>
+        <button class="security-notice__close" @click="hideLastLoginNotice">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M18 6L6 18M6 6l12 12"/>
+          </svg>
+        </button>
       </div>
-    </div>
+    </transition>
 
-    <!-- 快捷操作 + 趋势图 -->
-    <div class="main-row">
-      <!-- 快捷操作 -->
-      <div class="quick-section">
-        <div class="section-title">常用功能</div>
-        <div class="quick-grid">
-          <div class="quick-entry" v-for="q in quickLinks" :key="q.label" @click="handleQuickLink(q)">
-            <div class="apple-icon-lg" :style="{ background: q.gradient }">
-              <el-icon size="26"><component :is="q.icon" /></el-icon>
+    <!-- Hero 区域 - 苹果风格毛玻璃效果 -->
+    <section class="hero-section">
+      <div class="hero-bg">
+        <div class="hero-gradient"></div>
+        <div class="hero-pattern"></div>
+      </div>
+      <div class="hero-content">
+        <div class="hero-header">
+          <div class="hero-eyebrow">
+            <span class="eyebrow-icon">
+              <svg viewBox="0 0 24 24" fill="currentColor">
+                <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.77-1.58C7.53 15.9 9.68 15 12 15s4.47.9 6.23 2.19c.49.38.77.96.77 1.58V19z"/>
+              </svg>
+            </span>
+            财务驾驶舱 · 行政事业专版
+          </div>
+          <h1 class="hero-title">{{ greeting }}</h1>
+          <p class="hero-subtitle">{{ currentDateTimeText }}</p>
+          <div class="hero-context">
+            <div class="context-item">
+              <span class="context-label">当前账套</span>
+              <span class="context-value">{{ accountSetName }}</span>
             </div>
-            <span class="quick-label">{{ q.label }}</span>
-          </div>
-        </div>
-      </div>
-
-      <!-- 趋势图 -->
-      <div class="trend-section">
-        <div class="section-title">近6个月收支趋势</div>
-        <div class="trend-chart">
-          <div class="trend-legend">
-            <span class="legend-dot" style="background:#1a4b8c"></span>借方
-            <span class="legend-dot" style="background:#2e7d32;margin-left:16px"></span>贷方
-          </div>
-          <div class="bar-group-wrap">
-            <div class="bar-group" v-for="item in trend" :key="item.month">
-              <div class="bars">
-                <div class="bar debit" :style="{ height: barHeight(item.debit) + 'px' }" :title="formatMoney(item.debit)"></div>
-                <div class="bar credit" :style="{ height: barHeight(item.credit) + 'px' }" :title="formatMoney(item.credit)"></div>
-              </div>
-              <div class="bar-label">{{ item.month.slice(5) }}月</div>
+            <div class="context-item">
+              <span class="context-label">当前用户</span>
+              <span class="context-value">{{ userName || '未识别' }}</span>
+            </div>
+            <div class="context-item">
+              <span class="context-label">会计区间</span>
+              <span class="context-value">{{ currentYear }} 年第 {{ currentPeriod }} 期</span>
             </div>
           </div>
         </div>
+        <div class="hero-shortcuts">
+          <button v-for="item in heroShortcuts" :key="item.label" class="shortcut-card" @click="router.push(item.path)">
+            <div class="shortcut-icon" :style="{ background: item.bg }">
+              <el-icon><component :is="item.icon" /></el-icon>
+            </div>
+            <div class="shortcut-content">
+              <span class="shortcut-label">{{ item.label }}</span>
+              <span class="shortcut-desc">{{ item.desc }}</span>
+            </div>
+            <svg class="shortcut-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M9 18l6-6-6-6"/>
+            </svg>
+          </button>
+        </div>
       </div>
-    </div>
+    </section>
 
-    <!-- 近期凭证 + 期间进度/科目余额 -->
-    <div class="bottom-row">
+    <!-- 统计指标卡片 - 苹果风格 -->
+    <section class="metrics-section">
+      <div class="metrics-grid">
+        <button v-for="card in statCards" :key="card.label" class="metric-card" @click="goMetric(card.path)">
+          <div class="metric-icon" :style="{ background: card.bg, color: card.color }">
+            <el-icon><component :is="card.icon" /></el-icon>
+          </div>
+          <div class="metric-content">
+            <span class="metric-label">{{ card.label }}</span>
+            <span class="metric-value">{{ card.value }}</span>
+            <span class="metric-hint">{{ card.hint }}</span>
+          </div>
+          <div class="metric-badge" v-if="card.badge">{{ card.badge }}</div>
+        </button>
+      </div>
+    </section>
+
+    <!-- 主内容区域 -->
+    <section class="content-section">
+      <!-- 趋势分析 -->
+      <div class="content-panel panel-trend">
+        <div class="panel-header">
+          <div class="panel-title">
+            <div class="panel-icon trend-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.4-2.4-4.3 4.3"/>
+              </svg>
+            </div>
+            <div><span class="panel-eyebrow">趋势分析</span><h3>近 6 期收支与结余</h3></div>
+          </div>
+          <div class="chart-legend">
+            <span class="legend-item"><i class="legend-dot income"></i>收入</span>
+            <span class="legend-item"><i class="legend-dot expense"></i>支出</span>
+            <span class="legend-item"><i class="legend-dot surplus"></i>结余</span>
+          </div>
+        </div>
+        <div ref="trendChartRef" class="chart-container"></div>
+      </div>
+
+      <!-- 待办风险 -->
+      <div class="content-panel panel-todo">
+        <div class="panel-header">
+          <div class="panel-title">
+            <div class="panel-icon todo-icon" :class="{ 'has-warning': riskSummaryCount > 0 }">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
+            </div>
+            <div><span class="panel-eyebrow">待办风险</span><h3>处理提醒</h3></div>
+          </div>
+          <span class="risk-badge" :class="riskSummaryType">{{ riskSummaryText }}</span>
+        </div>
+        <div class="risk-list">
+          <div v-for="item in insights.riskItems" :key="item.key" class="risk-item" :class="`risk-${item.level}`">
+            <span class="risk-status"></span>
+            <span class="risk-name">{{ item.title }}</span>
+            <span class="risk-count">{{ item.count }}</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 底部三栏 -->
+    <section class="bottom-section">
       <!-- 近期凭证 -->
-      <div class="recent-section">
-        <div class="section-header-row">
-          <div class="section-title">近期凭证</div>
-          <el-button type="primary" size="small" round @click="router.push({ path: '/voucher/entry', query: { action: 'add' } })">新增凭证</el-button>
+      <div class="content-panel panel-recent">
+        <div class="panel-header">
+          <div class="panel-title">
+            <div class="panel-icon recent-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>
+              </svg>
+            </div>
+            <div><span class="panel-eyebrow">业务流水</span><h3>近期凭证</h3></div>
+          </div>
+          <button class="view-all-btn" @click="router.push('/voucher/query')">
+            查看全部<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18l6-6-6-6"/></svg>
+          </button>
         </div>
-        <el-table :data="recentVouchers" stripe size="small" class="recent-table">
-          <el-table-column prop="voucherNo" label="凭证号" width="90" />
-          <el-table-column prop="voucherDate" label="日期" width="100" />
-          <el-table-column prop="abstract" label="摘要" show-overflow-tooltip />
-          <el-table-column prop="totalAmount" label="金额" width="120" align="right">
-            <template #default="{ row }">{{ formatMoney(row.totalAmount) }}</template>
-          </el-table-column>
-          <el-table-column prop="status" label="状态" width="72">
-            <template #default="{ row }">
-              <el-tag :type="getStatusType(row.status)" size="small" round>{{ getStatusText(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
+        <div class="voucher-list">
+          <button v-for="row in recentVouchers" :key="row.id" class="voucher-item" @click="router.push('/voucher/query')">
+            <div class="voucher-main">
+              <span class="voucher-date">{{ formatShortDate(row.voucherDate) }}</span>
+              <span class="voucher-no">{{ row.voucherNo }}</span>
+              <span class="voucher-abstract" v-if="row.abstract">{{ row.abstract }}</span>
+            </div>
+            <div class="voucher-meta">
+              <span class="voucher-status" :class="row.status">{{ getStatusText(row.status) }}</span>
+              <span class="voucher-amount">{{ formatMoney(row.totalAmount) }}</span>
+            </div>
+          </button>
+          <div v-if="!recentVouchers.length" class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+            </svg>
+            <span>暂无近期凭证</span>
+          </div>
+        </div>
       </div>
 
-      <!-- 期间进度 + 科目余额 -->
-      <div class="side-section">
-        <!-- 期间进度 -->
-        <div class="period-card">
-          <div class="section-title">当前期间</div>
-          <div class="period-title">{{ currentYear }}年 第{{ currentPeriod }}期</div>
-          <el-progress :percentage="periodProgress" :stroke-width="10" status="success" />
-          <div class="period-sub">本年已完成 {{ currentPeriod }}/12 期</div>
-          <div class="period-stat-row">
-            <div class="period-stat">
-              <div class="ps-val">{{ stats.voucherCount }}</div>
-              <div class="ps-label">本期凭证</div>
+      <!-- 现金银行结构 -->
+      <div class="content-panel panel-cash">
+        <div class="panel-header">
+          <div class="panel-title">
+            <div class="panel-icon cash-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+                <circle cx="12" cy="12" r="3"/>
+              </svg>
             </div>
-            <div class="period-stat">
-              <div class="ps-val warning">{{ stats.auditPending }}</div>
-              <div class="ps-label">待审核</div>
-            </div>
+            <div><span class="panel-eyebrow">资金洞察</span><h3>现金银行结构</h3></div>
           </div>
         </div>
-
-        <!-- 科目余额 Top5 -->
-        <div class="top-card">
-          <div class="section-title">科目余额 Top 5</div>
-          <div class="top-accounts">
-            <div class="account-row" v-for="(item, idx) in topAccounts" :key="item.code">
-              <span class="rank" :class="'rank-' + (idx+1)">{{ idx+1 }}</span>
-              <div class="account-name-wrap">
-                <span class="account-code">{{ item.code }}</span>
-                <span class="account-name">{{ item.name }}</span>
+        <div class="cash-structure">
+          <div v-for="item in cashStructureWithRatio" :key="item.name" class="cash-group">
+            <div class="cash-header">
+              <span class="cash-name">{{ item.name }}</span>
+              <span class="cash-total">{{ formatMoney(item.balance) }}</span>
+            </div>
+            <div class="cash-body">
+              <div class="cash-pie-wrap">
+                <div :ref="el => setCashPieRef(el, item.name)" class="cash-pie"></div>
               </div>
-              <span class="account-balance" :class="item.balance < 0 ? 'red' : ''">
-                {{ formatMoney(Math.abs(item.balance)) }}
-              </span>
+              <div class="cash-children">
+                <div v-for="child in item.children" :key="child.code" class="cash-row">
+                  <span class="cash-row-name">
+                    <i class="cash-row-dot" :style="{ background: child.color }"></i>
+                    <span :title="`${child.code} ${child.name}`">{{ child.code }} {{ child.name }}</span>
+                  </span>
+                  <span class="cash-row-value" :class="{ negative: child.balance < 0 }">
+                    <strong>{{ formatMoney(child.balance) }}</strong>
+                    <em>{{ formatSignedPercent(child.ratio) }}</em>
+                  </span>
+                </div>
+                <div v-if="!item.children.length" class="cash-empty">暂无{{ item.name }}子科目</div>
+              </div>
             </div>
-            <div v-if="!topAccounts.length" class="empty-tip">暂无数据</div>
+          </div>
+          <div v-if="!cashStructureWithRatio.length" class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <rect x="1" y="4" width="22" height="16" rx="2" ry="2"/>
+              <circle cx="12" cy="12" r="3"/>
+            </svg>
+            <span>暂无现金/银行数据</span>
           </div>
         </div>
+      </div>
+
+      <!-- 科目活跃度 -->
+      <div class="content-panel panel-activity">
+        <div class="panel-header">
+          <div class="panel-title">
+            <div class="panel-icon activity-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
+              </svg>
+            </div>
+            <div><span class="panel-eyebrow">科目活跃度</span><h3>本期发生额 Top 5</h3></div>
+          </div>
+        </div>
+        <div class="activity-list">
+          <div v-for="item in activityTopWithRatio" :key="item.code" class="activity-item">
+            <div class="activity-header">
+              <span class="activity-name">{{ item.code }} {{ item.name }}</span>
+              <span class="activity-amount">{{ formatMoney(item.amount) }}</span>
+            </div>
+            <div class="activity-bar">
+              <span class="activity-bar-fill" :style="{ width: `${item.ratio}%` }"></span>
+            </div>
+          </div>
+          <div v-if="!activityTopWithRatio.length" class="empty-state">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+              <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
+            </svg>
+            <span>暂无本期发生额数据</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 底部装饰 -->
+    <div class="footer-decoration">
+      <div class="footer-pattern"></div>
+      <div class="footer-text">
+        <span class="footer-brand">RCsoft</span>
+        <span class="footer-divider">|</span>
+        <span class="footer-edition">行政事业财务管理专版</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
-import { Money, Tickets, Wallet, Document, EditPen, CircleCheck, DataAnalysis, TrendCharts, List, Setting } from '@element-plus/icons-vue'
+import { CircleCheck, DataAnalysis, Document, EditPen, List, Money, Tickets, Wallet } from '@element-plus/icons-vue'
+import * as echarts from 'echarts'
 import { useUserStore } from '@/stores/user'
 import request from '@/api/request'
 import { formatAmount } from '@/utils/format'
+
+interface TrendItem { month: string; income: number; expense: number }
+interface RiskItem { key: string; title: string; count: number; level: 'normal' | 'warning' | 'danger'; actionPath: string }
+interface CashStructureItem { name: string; balance: number; children: Array<{ code: string; name: string; balance: number }> }
+interface CashStructureDisplayItem extends CashStructureItem { totalAbs: number; palette: string[]; children: Array<{ code: string; name: string; balance: number; ratio: number; absRatio: number; color: string }> }
+interface ActivityTopItem { code: string; name: string; amount: number }
 
 const router = useRouter()
 const userStore = useUserStore()
 const userName = computed(() => userStore.userInfo?.nickname || userStore.userInfo?.username || '')
 const accountSetName = computed(() => userStore.accountSetName || '未选账套')
 
-const stats = ref({ voucherCount: 0, debitTotal: 0, creditTotal: 0, auditPending: 0 })
+const stats = ref({ currentYear: 0, currentPeriod: 0, voucherCount: 0, unpostedVoucherCount: 0, pendingVoucherCount: 0, auditPending: 0, cashBalance: 0, monthlyIncome: 0, monthlyExpense: 0, monthlySurplus: 0 })
 const recentVouchers = ref<any[]>([])
-const trend = ref<{ month: string; debit: number; credit: number }[]>([])
-const topAccounts = ref<{ code: string; name: string; balance: number }[]>([])
+const trend = ref<TrendItem[]>([])
+const insights = ref({ riskItems: [] as RiskItem[], cashStructure: [] as CashStructureItem[], activityTop: [] as ActivityTopItem[] })
+const loginSecurityNotice = ref({ visible: false, time: '', ip: '' })
+let loginSecurityNoticeTimer: ReturnType<typeof window.setTimeout> | null = null
+let clockTimer: ReturnType<typeof window.setInterval> | null = null
 
-const now = new Date()
-const currentYear = now.getFullYear()
-const currentPeriod = now.getMonth() + 1
-const periodProgress = Math.round((currentPeriod / 12) * 100)
+const trendChartRef = ref<HTMLElement>()
+const cashPieRefs = new Map<string, HTMLElement>()
+let trendChart: echarts.ECharts | null = null
+const cashPieCharts = new Map<string, echarts.ECharts>()
+
+const currentTime = ref(new Date())
+const currentYear = computed(() => stats.value.currentYear || currentTime.value.getFullYear())
+const currentPeriod = computed(() => stats.value.currentPeriod || currentTime.value.getMonth() + 1)
 
 const greeting = computed(() => {
-  const h = now.getHours()
-  if (h < 6) return '夜深了'
-  if (h < 12) return '上午好'
-  if (h < 14) return '中午好'
-  if (h < 18) return '下午好'
-  return '晚上好'
+  const h = currentTime.value.getHours()
+  if (h < 6) return '夜深了，注意休息'
+  if (h < 9) return '早上好，新的一天开始了'
+  if (h < 12) return '上午好，工作顺利'
+  if (h < 14) return '中午好，记得休息'
+  if (h < 18) return '下午好，继续加油'
+  if (h < 22) return '晚上好，辛苦了'
+  return '夜深了，注意休息'
+})
+
+const currentDateTimeText = computed(() => {
+  const date = currentTime.value
+  const pad = (v: number) => String(v).padStart(2, '0')
+  const weekdays = ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六']
+  return `${date.getFullYear()}年${pad(date.getMonth() + 1)}月${pad(date.getDate())}日 ${weekdays[date.getDay()]} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 })
 
 const statCards = computed(() => [
-  { label: '本月凭证', value: stats.value.voucherCount, color: '#1a4b8c', gradient: 'linear-gradient(135deg, #1a4b8c, #2e6bc4)', icon: Tickets },
-  { label: '本月借方合计', value: formatMoney(stats.value.debitTotal), color: '#2e7d32', gradient: 'linear-gradient(135deg, #2e7d32, #43a047)', icon: Money },
-  { label: '本月贷方合计', value: formatMoney(stats.value.creditTotal), color: '#c17b1a', gradient: 'linear-gradient(135deg, #c17b1a, #d49520)', icon: Wallet },
-  { label: '待审核凭证', value: stats.value.auditPending, color: '#c0392b', gradient: 'linear-gradient(135deg, #c0392b, #d44637)', icon: Document },
+  { label: '本月凭证', value: stats.value.voucherCount, hint: `${currentYear.value} 年第 ${currentPeriod.value} 期`, color: '#007AFF', bg: 'rgba(0, 122, 255, 0.12)', icon: Tickets, path: '/voucher/query' },
+  { label: '未记账凭证', value: stats.value.unpostedVoucherCount, hint: '草稿 + 已审核', color: '#FF3B30', bg: 'rgba(255, 59, 48, 0.12)', icon: Document, path: '/voucher/audit', badge: stats.value.unpostedVoucherCount > 0 ? `${stats.value.unpostedVoucherCount}` : undefined },
+  { label: '货币资金', value: formatMoney(stats.value.cashBalance), hint: '现金与银行余额', color: '#34C759', bg: 'rgba(52, 199, 89, 0.12)', icon: Wallet, path: '/ledger/cash-journal' },
+  { label: '本月收入', value: formatMoney(stats.value.monthlyIncome), hint: '收入类发生额', color: '#5856D6', bg: 'rgba(88, 86, 214, 0.12)', icon: Money, path: '/ledger/detail' },
+  { label: '本月支出', value: formatMoney(stats.value.monthlyExpense), hint: '支出费用发生额', color: '#FF9500', bg: 'rgba(255, 149, 0, 0.12)', icon: DataAnalysis, path: '/ledger/detail' },
+  { label: '本月结余', value: formatMoney(stats.value.monthlySurplus), hint: stats.value.monthlySurplus >= 0 ? '收支结余为正' : '支出大于收入', color: stats.value.monthlySurplus >= 0 ? '#34C759' : '#FF3B30', bg: stats.value.monthlySurplus >= 0 ? 'rgba(52, 199, 89, 0.12)' : 'rgba(255, 59, 48, 0.12)', icon: CircleCheck, path: '/report/run/2' },
 ])
 
-const quickLinks = [
-  { label: '凭证录入', path: '/voucher/entry', icon: EditPen, gradient: 'linear-gradient(135deg, #1a4b8c, #2e6bc4)', action: 'add' },
-  { label: '凭证管理', path: '/voucher/audit', icon: CircleCheck, gradient: 'linear-gradient(135deg, #2e7d32, #43a047)' },
-  { label: '余额表', path: '/ledger/balance', icon: DataAnalysis, gradient: 'linear-gradient(135deg, #c17b1a, #d49520)' },
-  { label: '资产负债表', path: '/report/run/1', icon: TrendCharts, gradient: 'linear-gradient(135deg, #c0392b, #d44637)' },
-  { label: '凭证查询', path: '/voucher/query', icon: List, gradient: 'linear-gradient(135deg, #7b1fa2, #9c27b0)' },
-  { label: '系统参数', path: '/system/param', icon: Setting, gradient: 'linear-gradient(135deg, #607d8b, #78909c)' },
+const cashStructure = computed(() => insights.value.cashStructure)
+const cashStructureWithRatio = computed<CashStructureDisplayItem[]>(() => {
+  const palettes = [['#007AFF', '#5856D6', '#34C759', '#FF9500', '#FF3B30', '#AF52DE'], ['#5856D6', '#007AFF', '#34C759', '#FF9500', '#FF3B30', '#AF52DE']]
+  return cashStructure.value.map((group, gi) => {
+    const palette = palettes[gi % palettes.length]
+    const totalAbs = group.children.reduce((s, c) => s + Math.abs(c.balance || 0), 0)
+    return { ...group, totalAbs, palette, children: group.children.map((c, ci) => ({ ...c, ratio: totalAbs > 0 ? (c.balance || 0) / totalAbs : 0, absRatio: totalAbs > 0 ? Math.abs(c.balance || 0) / totalAbs : 0, color: palette[ci % palette.length] })) }
+  })
+})
+
+const activityTopWithRatio = computed(() => {
+  const max = Math.max(...insights.value.activityTop.map(i => Math.abs(i.amount)), 1)
+  return insights.value.activityTop.map(i => ({ ...i, ratio: Math.round((Math.abs(i.amount) / max) * 100) }))
+})
+
+const riskSummaryCount = computed(() => insights.value.riskItems.filter(i => i.count > 0).length)
+const riskSummaryType = computed(() => riskSummaryCount.value > 0 ? 'warning' : 'success')
+const riskSummaryText = computed(() => riskSummaryCount.value > 0 ? `${riskSummaryCount.value} 项需关注` : '运行平稳')
+
+const heroShortcuts = [
+  { label: '凭证录入', desc: '新增凭证', path: '/voucher/entry?action=add', icon: EditPen, color: '#007AFF', bg: 'rgba(0, 122, 255, 0.15)' },
+  { label: '凭证管理', desc: '审核与记账', path: '/voucher/audit', icon: CircleCheck, color: '#34C759', bg: 'rgba(52, 199, 89, 0.15)' },
+  { label: '余额表', desc: '打开科目余额表', path: '/ledger/general', icon: DataAnalysis, color: '#FF9500', bg: 'rgba(255, 149, 0, 0.15)' },
+  { label: '日记账', desc: '现金银行流水', path: '/ledger/cash-journal', icon: List, color: '#5856D6', bg: 'rgba(88, 86, 214, 0.15)' },
 ]
 
-function handleQuickLink(link: any) {
-  if (link.action === 'add') {
-    // 凭证录入：直接跳转到凭证录入页面并触发新增
-    router.push({ path: link.path, query: { action: 'add' } })
-  } else {
-    router.push(link.path)
-  }
+function goMetric(path?: string) { if (path) router.push(path) }
+function formatMoney(val: number) { return '¥' + formatAmount(val || 0) }
+function formatSignedPercent(v: number) { if (!v) return '0%'; const a = `${Math.round(Math.abs(v) * 1000) / 10}%`; return v < 0 ? `-${a}` : a }
+function setCashPieRef(el: Element | null, name: string) { if (el instanceof HTMLElement) cashPieRefs.set(name, el); else cashPieRefs.delete(name) }
+function formatShortDate(d?: string) { return d ? d.slice(5) : '--' }
+function getStatusText(s: string) { return ({ draft: '草稿', audited: '已审核', posted: '已记账' } as any)[s] || s }
+
+function showLastLoginNotice() {
+  const raw = sessionStorage.getItem('lastLoginNotice')
+  if (!raw) return
+  sessionStorage.removeItem('lastLoginNotice')
+  try {
+    const data = JSON.parse(raw)
+    loginSecurityNotice.value = { visible: true, time: data.lastLoginTime || '无记录', ip: data.lastLoginIp || '无记录' }
+    if (loginSecurityNoticeTimer) window.clearTimeout(loginSecurityNoticeTimer)
+    loginSecurityNoticeTimer = window.setTimeout(() => { loginSecurityNotice.value.visible = false }, 5000)
+  } catch { sessionStorage.removeItem('lastLoginNotice') }
 }
 
-function formatMoney(val: number) {
-  return '¥' + formatAmount(val || 0)
+function hideLastLoginNotice() {
+  loginSecurityNotice.value.visible = false
+  if (loginSecurityNoticeTimer) { window.clearTimeout(loginSecurityNoticeTimer); loginSecurityNoticeTimer = null }
 }
 
-function getStatusType(s: string): 'primary' | 'success' | 'warning' | 'info' | 'danger' {
-  return ({ draft: 'info', audited: 'success', posted: 'warning' } as any)[s] || 'info'
-}
-function getStatusText(s: string) {
-  return ({ draft: '草稿', audited: '已审核', posted: '已记账' } as any)[s] || s
+function renderTrendChart() {
+  if (!trendChartRef.value) return
+  if (!trendChart) trendChart = echarts.init(trendChartRef.value)
+  trendChart.setOption({
+    color: ['#34C759', '#FF9500', '#007AFF'],
+    tooltip: { trigger: 'axis', backgroundColor: 'rgba(255,255,255,0.95)', borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, borderRadius: 12, padding: [12, 16], textStyle: { color: '#1d1d1f', fontSize: 13 }, formatter: (p: any) => p.map((i: any) => `${i.marker}${i.seriesName}：${formatMoney(i.value)}`).join('<br/>') },
+    grid: { left: 48, right: 24, top: 48, bottom: 32 },
+    xAxis: { type: 'category', data: trend.value.map(i => i.month.slice(5) + '期'), axisLine: { lineStyle: { color: 'rgba(0,0,0,0.08)' } }, axisLabel: { color: '#86868b', fontSize: 12 }, axisTick: { show: false } },
+    yAxis: { type: 'value', axisLabel: { color: '#86868b', fontSize: 12, formatter: (v: number) => `${Math.round(v / 10000)}万` }, splitLine: { lineStyle: { color: 'rgba(0,0,0,0.06)', type: 'dashed' } }, axisTick: { show: false }, axisLine: { show: false } },
+    series: [
+      { name: '收入', type: 'bar', data: trend.value.map(i => i.income), barWidth: 20, itemStyle: { borderRadius: [8, 8, 0, 0] } },
+      { name: '支出', type: 'bar', data: trend.value.map(i => i.expense), barWidth: 20, itemStyle: { borderRadius: [8, 8, 0, 0] } },
+      { name: '结余', type: 'line', data: trend.value.map(i => i.income - i.expense), smooth: true, symbolSize: 8, lineStyle: { width: 3 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(0,122,255,0.15)' }, { offset: 1, color: 'rgba(0,122,255,0)' }]) } },
+    ],
+  })
 }
 
-const trendMax = computed(() => Math.max(...trend.value.flatMap(t => [t.debit, t.credit]), 1))
-function barHeight(val: number) {
-  return Math.max(4, Math.round((val / trendMax.value) * 120))
+function renderCashPieCharts() {
+  cashStructureWithRatio.value.forEach(group => {
+    const el = cashPieRefs.get(group.name)
+    if (!el) return
+    let chart = cashPieCharts.get(group.name)
+    if (!chart) { chart = echarts.init(el); cashPieCharts.set(group.name, chart) }
+    const data = group.children.filter(c => Math.abs(c.balance) > 0).map(c => ({ name: `${c.code} ${c.name}`, value: Math.abs(c.balance), rawBalance: c.balance, signedRatio: c.ratio, itemStyle: { color: c.color } }))
+    chart.setOption({
+      color: group.palette,
+      tooltip: { trigger: 'item', backgroundColor: 'rgba(255,255,255,0.95)', borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, borderRadius: 12, padding: [10, 14], textStyle: { color: '#1d1d1f', fontSize: 12 }, formatter: (p: any) => `${p.name}<br/>${formatMoney(p.data?.rawBalance || 0)} · ${formatSignedPercent(p.data?.signedRatio || 0)}` },
+      title: { text: group.name, subtext: formatMoney(group.balance), left: 'center', top: 'center', textStyle: { color: '#1d1d1f', fontSize: 13, fontWeight: 600 }, subtextStyle: { color: '#86868b', fontSize: 11, fontWeight: 500 }, itemGap: 4 },
+      series: [{ type: 'pie', radius: ['60%', '80%'], center: ['50%', '50%'], minAngle: 6, avoidLabelOverlap: true, label: { show: false }, itemStyle: { borderColor: '#fff', borderWidth: 3, borderRadius: 8 }, emphasis: { scaleSize: 6, itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,0,0,0.15)' } }, data: data.length ? data : [{ name: '暂无数据', value: 1, itemStyle: { color: '#f5f5f7' } }] }],
+    })
+  })
 }
 
-onMounted(async () => {
-  const [s, v, tr, ta] = await Promise.allSettled([
-    request.get<any>('/dashboard/stats'),
-    request.get<any>('/dashboard/recent-vouchers'),
-    request.get<any>('/dashboard/trend'),
-    request.get<any>('/dashboard/top-accounts'),
-  ])
+function resizeCharts() { trendChart?.resize(); cashPieCharts.forEach(c => c.resize()) }
+
+async function loadDashboard() {
+  const [s, v, tr, insight] = await Promise.allSettled([request.get<any>('/dashboard/stats'), request.get<any>('/dashboard/recent-vouchers'), request.get<any>('/dashboard/trend'), request.get<any>('/dashboard/insights')])
   if (s.status === 'fulfilled' && s.value.code === 0) Object.assign(stats.value, s.value.data)
   if (v.status === 'fulfilled' && v.value.code === 0) recentVouchers.value = v.value.data
   if (tr.status === 'fulfilled' && tr.value.code === 0) trend.value = tr.value.data
-  if (ta.status === 'fulfilled' && ta.value.code === 0) topAccounts.value = ta.value.data
+  if (insight.status === 'fulfilled' && insight.value.code === 0) insights.value = { riskItems: insight.value.data?.riskItems || [], cashStructure: insight.value.data?.cashStructure || [], activityTop: insight.value.data?.activityTop || insight.value.data?.expenseTop || [] }
+  await nextTick(); renderTrendChart(); renderCashPieCharts()
+}
+
+onMounted(async () => {
+  clockTimer = window.setInterval(() => { currentTime.value = new Date() }, 30000)
+  showLastLoginNotice()
+  await loadDashboard()
+  window.addEventListener('resize', resizeCharts)
 })
+
+onUnmounted(() => {
+  if (clockTimer) { window.clearInterval(clockTimer); clockTimer = null }
+  window.removeEventListener('resize', resizeCharts)
+  trendChart?.dispose()
+  cashPieCharts.forEach(c => c.dispose())
+  cashPieCharts.clear()
+})
+
+watch([trend, cashStructureWithRatio], async () => { await nextTick(); renderTrendChart(); renderCashPieCharts() })
 </script>
 
 <style scoped>
-.dashboard {
-  min-height: 100%;
-}
-
-/* 欢迎横幅 */
-.welcome-banner {
-  background: linear-gradient(135deg, #0d2b4e 0%, #1a4b8c 100%);
-  border-radius: 10px;
-  padding: 20px 28px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 20px;
-  box-shadow: 0 3px 12px rgba(13, 43, 78, 0.25);
-}
-
-.welcome-title {
-  font-size: 22px;
-  font-weight: 700;
-  color: #fff;
-  margin: 0 0 4px 0;
-  letter-spacing: 1px;
-}
-
-.welcome-sub {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.65);
-  margin: 0;
-}
-
-.period-badge {
-  background: rgba(240, 192, 64, 0.15);
-  border: 1px solid rgba(240, 192, 64, 0.3);
-  border-radius: 8px;
-  padding: 8px 16px;
-  display: flex;
-  align-items: baseline;
-  gap: 2px;
-}
-
-.period-badge-year {
-  font-size: 24px;
-  font-weight: 700;
-  color: #fff;
-}
-
-.period-badge-month {
-  font-size: 24px;
-  font-weight: 700;
-  color: #f0c040;
-}
-
-.period-badge-sep {
-  font-size: 14px;
-  color: rgba(255, 255, 255, 0.6);
-  margin: 0 2px;
-}
-
-/* 统计卡片行 */
-.stat-row {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.stat-card {
-  background: #fff;
-  border-radius: 16px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-  overflow: hidden;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.1);
-}
-
-.stat-card-inner {
-  display: flex;
-  align-items: center;
-  padding: 20px;
-  gap: 16px;
-}
-
-.stat-bar {
-  height: 3px;
-  width: 100%;
-}
-
-/* 苹果风格图标 */
-.apple-icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  flex-shrink: 0;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-}
-
-.stat-value {
-  font-size: 22px;
-  font-weight: 700;
-  color: #303133;
-  line-height: 1.2;
-}
-
-.stat-label {
-  font-size: 13px;
-  color: #909399;
-  margin-top: 4px;
-}
-
-/* 主行：快捷操作 + 趋势图 */
-.main-row {
-  display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 16px;
-  margin-bottom: 20px;
-}
-
-.section-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: #303133;
-  margin-bottom: 16px;
-}
-
-/* 快捷操作 */
-.quick-section {
-  background: #fff;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-}
-
-.quick-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.quick-entry {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 10px;
-  padding: 18px 8px;
-  border-radius: 14px;
-  background: #f8f9fb;
-  cursor: pointer;
-  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-}
-
-.quick-entry:hover {
-  background: #fff;
-  transform: translateY(-3px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
-}
-
-.apple-icon-lg {
-  width: 52px;
-  height: 52px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: #fff;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.18);
-}
-
-.quick-label {
-  font-size: 13px;
-  color: #606266;
-  font-weight: 500;
-}
-
-/* 趋势图 */
-.trend-section {
-  background: #fff;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-}
-
-.trend-chart {
-  padding: 8px 0;
-}
-
-.trend-legend {
-  font-size: 12px;
-  color: #606266;
-  margin-bottom: 12px;
-  display: flex;
-  align-items: center;
-}
-
-.legend-dot {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  margin-right: 4px;
-}
-
-.bar-group-wrap {
-  display: flex;
-  align-items: flex-end;
-  justify-content: space-around;
-  height: 140px;
-  border-bottom: 1px solid #ebeef5;
-}
-
-.bar-group {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  flex: 1;
-}
-
-.bars {
-  display: flex;
-  align-items: flex-end;
-  gap: 4px;
-  height: 120px;
-}
-
-.bar {
-  width: 20px;
-  border-radius: 4px 4px 0 0;
-  transition: height 0.4s;
-}
-
-.bar.debit { background: linear-gradient(180deg, #1a4b8c, #2e6bc4); }
-.bar.credit { background: linear-gradient(180deg, #2e7d32, #43a047); }
-
-.bar-label {
-  font-size: 11px;
-  color: #909399;
-  margin-top: 6px;
-}
-
-/* 底部行 */
-.bottom-row {
-  display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: 16px;
-}
-
-/* 近期凭证 */
-.recent-section {
-  background: #fff;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-}
-
-.section-header-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.section-header-row .section-title {
-  margin-bottom: 0;
-}
-
-/* 侧边区 */
-.side-section {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-}
-
-.period-card,
-.top-card {
-  background: #fff;
-  border-radius: 16px;
-  padding: 20px;
-  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06);
-}
-
-/* 期间进度 */
-.period-title {
-  font-size: 20px;
-  font-weight: 700;
-  color: #303133;
-  margin-bottom: 16px;
-}
-
-.period-sub {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 8px;
-  margin-bottom: 16px;
-}
-
-.period-stat-row {
-  display: flex;
-  justify-content: space-around;
-}
-
-.period-stat {
-  text-align: center;
-}
-
-.ps-val {
-  font-size: 24px;
-  font-weight: 700;
-  color: #303133;
-}
-
-.ps-val.warning {
-  color: #e6a23c;
-}
-
-.ps-label {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 4px;
-}
-
-/* 科目余额 */
-.top-accounts {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-
-.account-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.rank {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 11px;
-  font-weight: 700;
-  color: #fff;
-  flex-shrink: 0;
-  background: #c0c4cc;
-}
-
-.rank-1 { background: #f56c6c; }
-.rank-2 { background: #e6a23c; }
-.rank-3 { background: #409eff; }
-
-.account-name-wrap {
-  flex: 1;
-  min-width: 0;
-}
-
-.account-code {
-  font-size: 11px;
-  color: #909399;
-  margin-right: 4px;
-}
-
-.account-name {
-  font-size: 13px;
-  color: #303133;
-}
-
-.account-balance {
-  font-size: 13px;
-  font-weight: 700;
-  color: #303133;
-  white-space: nowrap;
-}
-
-.account-balance.red { color: #f56c6c; }
-
-.empty-tip {
-  color: #c0c4cc;
-  font-size: 13px;
-  text-align: center;
-  padding: 20px 0;
-}
+@import './Dashboard.styles.css';
 </style>

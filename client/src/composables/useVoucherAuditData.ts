@@ -1,7 +1,6 @@
 import { ref, computed } from 'vue'
-import type { Ref, ComputedRef } from 'vue'
+import type { ComputedRef } from 'vue'
 import request from '@/api/request'
-import { useTableSearch } from '@/composables/useTableSearch'
 import { performanceMonitor } from '@/utils/performanceMonitor'
 import { formatAmount } from '@/utils/format'
 
@@ -35,7 +34,7 @@ export const statusType: Record<string, 'primary' | 'success' | 'warning' | 'inf
 export const statusText: Record<string, string> = {
   draft: '草稿',
   audited: '已审核',
-  posted: '已记账'
+  posted: '已记账',
 }
 
 export function useVoucherAuditData() {
@@ -45,6 +44,7 @@ export function useVoucherAuditData() {
   const voucherTypes = ref<any[]>([])
   const allowDirectPost = ref(false)
   const requireAudit = ref(true)
+  const directPrint = ref(false)
   const sortField = ref<string>('voucher_date')
   const sortOrder = ref<'asc' | 'desc'>('asc')
 
@@ -53,6 +53,9 @@ export function useVoucherAuditData() {
 
   // 搜索关键词
   const searchKeyword = ref('')
+
+  // 全选所有页标记
+  const selectAllMode = ref(false)
 
   async function fetchData() {
     return performanceMonitor.measure('voucherAudit fetchData', async () => {
@@ -104,15 +107,6 @@ export function useVoucherAuditData() {
     fetchData()
   }
 
-  // 提取凭证号序号（用于排序）
-  function extractVoucherSeq(voucherNo: string): number {
-    if (!voucherNo) return 0
-    const dashIndex = voucherNo.indexOf('-')
-    if (dashIndex < 0) return parseInt(voucherNo, 10) || 0
-    const seqStr = voucherNo.substring(dashIndex + 1)
-    return parseInt(seqStr, 10) || 0
-  }
-
   function isVoucherSelected(row: any) {
     const voucherId = row._voucherId || row.id
     return selected.value.some(item => item.id === voucherId)
@@ -144,6 +138,18 @@ export function useVoucherAuditData() {
       }
     }
     selected.value = Array.from(map.values())
+
+    // 判断是否全选了当前页
+    const selectableRows = flatList.value.filter(row => row._isFirstEntryRow === true)
+    const isCurrentPageFullSelected = rows.length > 0 && rows.length === selectableRows.length
+
+    // 如果全选了当前页，且有多页数据，则标记为"全选所有"
+    if (isCurrentPageFullSelected && pagination.value.total > pagination.value.pageSize) {
+      selectAllMode.value = true
+    } else if (rows.length === 0) {
+      // 取消全选
+      selectAllMode.value = false
+    }
   }
 
   const flatList: ComputedRef<any[]> = computed(() => {
@@ -164,14 +170,16 @@ export function useVoucherAuditData() {
                 auxFields[`_aux_${code}`] = (val as any).name
               }
             }
-          } catch { /* ignore */ }
+          } catch {
+            /* ignore */
+          }
         }
         rows.push({
           ...v,
           ...(e || {}),
           ...auxFields,
           voucher_no: voucherLabel,
-          summary: e ? (e.summary || v.remark || '') : (v.remark || ''),
+          summary: e ? e.summary || v.remark || '' : v.remark || '',
           _voucherId: v.id,
           _stripeGroup: index % 2,
           _isFirstEntryRow: entryIndex === 0,
@@ -193,6 +201,7 @@ export function useVoucherAuditData() {
     for (const p of res.data || []) {
       if (p.param_key === 'allow_direct_post') allowDirectPost.value = p.param_value === 'true'
       if (p.param_key === 'require_audit') requireAudit.value = p.param_value === 'true'
+      if (p.param_key === 'direct_print') directPrint.value = p.param_value === 'true'
     }
   }
 
@@ -203,11 +212,13 @@ export function useVoucherAuditData() {
     voucherTypes,
     allowDirectPost,
     requireAudit,
+    directPrint,
     sortField,
     sortOrder,
     pagination,
     flatList,
     searchKeyword,
+    selectAllMode,
     clearSearch,
     isVoucherSelected,
     isSelectableRow,

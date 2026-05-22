@@ -1,4 +1,4 @@
-import type { Migration } from '../db/migrations.ts'
+import type { Migration } from '../db/migrations.js'
 
 export const migrations: Migration[] = [
   {

@@ -2,11 +2,12 @@
   <el-dialog
     v-model="visible"
     :title="mode === 'add' ? '新增记账凭证' : mode === 'insert' ? '插入凭证' : '编辑记账凭证'"
-    width="1200px"
-    top="4vh"
+    width="1180px"
+    top="2vh"
     class="voucher-dialog"
     destroy-on-close
     @close="handleClose"
+    @keydown="onVoucherDialogKeydown"
   >
     <div class="paper-voucher">
       <div class="voucher-paper-header">
@@ -18,6 +19,7 @@
               v-model="form.voucher_type_id"
               placeholder="凭证类型"
               class="meta-control"
+              size="small"
               clearable
             >
               <el-option v-for="t in voucherTypes" :key="t.id" :label="t.name" :value="t.id" />
@@ -29,6 +31,7 @@
               v-model="form.voucher_no"
               placeholder="凭证编号"
               class="meta-control"
+              size="small"
               @blur="handleVoucherNoBlur"
             />
           </div>
@@ -43,6 +46,7 @@
               type="date"
               value-format="YYYY-MM-DD"
               class="meta-control"
+              size="small"
             />
           </div>
           <div class="meta-item meta-readonly">
@@ -95,34 +99,53 @@
           </span>
         </div>
 
-        <!-- 当前选中科目的余额显示 -->
-        <div v-if="currentEntryBalance" class="account-balance-display">
-          <span class="balance-account">{{ currentEntryBalance.code }} {{ currentEntryBalance.name }}</span>
-          <span class="balance-label">余额：</span>
-          <span :class="currentEntryBalance.isSameSide ? 'balance-amount-same' : 'balance-amount-opposite'">
-            {{ currentEntryBalance.direction === 'debit' ? '借' : '贷' }} {{ formatMoney(currentEntryBalance.end_balance) }}
-          </span>
+        <!-- 当前选中科目的余额显示（含辅助核算各类目余额） -->
+        <div
+          v-if="currentEntryBalance || currentEntryAuxBalances.length > 0"
+          class="account-balance-display-wrap"
+        >
+          <div v-if="currentEntryBalance" class="account-balance-display">
+            <span class="balance-account">{{ currentEntryBalance.code }} {{ currentEntryBalance.name }}</span>
+            <span class="balance-label">科目余额：</span>
+            <span :class="currentEntryBalance.isSameSide ? 'balance-amount-same' : 'balance-amount-opposite'">
+              {{ currentEntryBalance.direction === 'debit' ? '借' : '贷' }}
+              {{ formatMoney(currentEntryBalance.end_balance) }}
+            </span>
+          </div>
+          <div
+            v-for="aux in currentEntryAuxBalances"
+            :key="`${aux.category_code}-${aux.item_id}`"
+            class="account-balance-display aux-balance-chip"
+          >
+            <span class="balance-label">{{ aux.category_name }}：</span>
+            <span class="balance-aux-item">{{ aux.item_name }}</span>
+            <span :class="aux.isSameSide ? 'balance-amount-same' : 'balance-amount-opposite'">
+              {{ aux.direction === 'debit' ? '借' : '贷' }} {{ formatMoney(aux.end_balance) }}
+            </span>
+          </div>
         </div>
       </div>
 
-      <div class="voucher-table-wrap">
+      <div class="voucher-table-wrap table-summary-scroll">
         <el-table
           :data="form.entries"
           border
+          size="small"
           show-summary
           :summary-method="getSummary"
           highlight-current-row
           class="voucher-table paper-table"
           @current-change="handleCurrentEntryChange"
         >
-          <el-table-column label="摘要" min-width="220">
-            <template #default="{ row }">
+          <el-table-column label="摘要" min-width="200">
+            <template #default="{ row, $index }">
               <div class="entry-row">
                 <el-input
                   v-model="row.summary"
                   placeholder="摘要"
+                  size="small"
                   @focus="setCurrentEntry(row)"
-                  @keydown.enter="moveToAccount(row)"
+                  @keydown.enter="moveToAccount(row, $event)"
                 />
                 <el-button
                   v-if="$index === 0"
@@ -136,11 +159,11 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="会计科目" min-width="260">
+          <el-table-column label="会计科目" min-width="240">
             <template #default="{ row }">
               <div @dblclick="emit('quickCreateAccount', row)" style="width: 100%">
               <el-autocomplete
-                ref="accountInputRefs"
+                :ref="(el: any) => setAccountAutocompleteRef(row, el)"
                 :model-value="getAccountInput(row)"
                 :fetch-suggestions="(queryString, cb) => queryAccountSuggestions(row, queryString, cb)"
                 placeholder="输入科目编码或名称"
@@ -149,17 +172,19 @@
                 @update:model-value="val => onAccountInputChange(row, val)"
                 @select="item => handleAccountSelect(row, item)"
                 @focus="onAccountAutoFocus(row)"
-                @keydown.enter="onAccountEnter(row)"
+                @keydown.enter="onAccountEnter(row, $event)"
+                @keydown.tab="onAccountTab(row, $event)"
                 @keydown.delete="onAccountDelete(row, $event)"
                 @keydown.up="onAccountArrowKey(row, $event, 'up')"
                 @keydown.down="onAccountArrowKey(row, $event, 'down')"
               >
                 <template #default="{ item }">
-                  <div 
+                  <div
                     class="account-suggestion-item"
                     :class="{ 'is-parent-account': item.isParent }"
                     :style="{ cursor: item.isParent ? 'not-allowed' : 'pointer' }"
-                    @click="item.isParent ? $event.stopPropagation() : undefined"
+                    @mousedown="onAccountSuggestionPointer(item, $event)"
+                    @click="onAccountSuggestionPointer(item, $event)"
                   >
                     <span
                       :style="{
@@ -189,39 +214,39 @@
             </template>
           </el-table-column>
 
-          <el-table-column label="借方金额" width="170" align="right">
+          <el-table-column label="借方金额" width="148" align="right">
             <template #default="{ row }">
               <el-input-number
                 v-model="row.debit_amount"
                 :precision="2"
                 :controls="false"
-                style="width: 140px"
-                placeholder="0.00"
+                size="small"
+                class="amount-input"
                 @focus="setCurrentEntry(row)"
                 @change="onAmountChange(row, 'debit')"
-                @keydown.enter="onDebitEnter(row)"
+                @keydown.enter="onDebitEnter(row, $event)"
                 @keydown="onDebitKeydown(row, $event)"
               />
             </template>
           </el-table-column>
 
-          <el-table-column label="贷方金额" width="170" align="right">
+          <el-table-column label="贷方金额" width="148" align="right">
             <template #default="{ row }">
               <el-input-number
                 v-model="row.credit_amount"
                 :precision="2"
                 :controls="false"
-                style="width: 140px"
-                placeholder="0.00"
+                size="small"
+                class="amount-input"
                 @focus="setCurrentEntry(row)"
                 @change="onAmountChange(row, 'credit')"
-                @keydown.enter="onCreditEnter(row)"
+                @keydown.enter="onCreditEnter(row, $event)"
                 @keydown="onCreditKeydown(row, $event)"
               />
             </template>
           </el-table-column>
 
-          <el-table-column label="操作" width="90" fixed="right">
+          <el-table-column label="操作" width="72" fixed="right">
             <template #default="{ row, $index }">
               <el-button
                 link
@@ -237,7 +262,7 @@
       </div>
 
       <div class="voucher-paper-toolbar">
-        <el-button @click="addEntry">+ 添加分录</el-button>
+        <el-button size="small" @click="addEntry">+ 添加分录</el-button>
         <div class="voucher-balance" :class="{ balanced: isBalanced, unbalanced: !isBalanced }">
           借方合计：{{ formatMoney(totalDebit) }}
           <span class="divider">|</span>
@@ -247,7 +272,39 @@
         </div>
       </div>
 
-      <div v-if="currentEntry && currentEntryAuxCategories.length > 0" class="voucher-aux-panel">
+      <div
+        v-if="enableCashFlow && currentEntry && showCashFlowForCurrentEntry"
+        class="voucher-aux-panel voucher-cash-flow-panel"
+      >
+        <div class="voucher-aux-header">
+          <span>现金流量项目</span>
+          <span v-if="cashFlowRequired" class="cash-flow-required-tag">必填</span>
+        </div>
+        <div class="voucher-aux-rows">
+          <div class="voucher-aux-row">
+            <span class="voucher-aux-row-label">项目</span>
+            <el-select
+              v-model="currentEntry.cash_flow_code"
+              data-voucher-focus="cash-flow"
+              filterable
+              clearable
+              placeholder="请选择现金流量项目"
+              style="width: 320px"
+              @change="onCashFlowCodeChange"
+              @keydown="e => onVoucherFieldKeydown(currentEntry, { kind: 'cash_flow' }, e)"
+            >
+              <el-option
+                v-for="item in cashFlowItems"
+                :key="item.code"
+                :label="`${item.code} ${item.name}`"
+                :value="item.code"
+              />
+            </el-select>
+          </div>
+        </div>
+      </div>
+
+      <div v-if="currentEntry && filteredAuxCategories.length > 0" class="voucher-aux-panel">
         <div class="voucher-aux-header">
           <span>当前分录辅助核算</span>
           <span class="voucher-aux-summary">
@@ -258,14 +315,16 @@
         </div>
 
         <div class="voucher-aux-rows">
-          <div v-for="cat in currentEntryAuxCategories" :key="cat.id" class="voucher-aux-row">
+          <div v-for="cat in filteredAuxCategories" :key="cat.id" class="voucher-aux-row">
             <span class="voucher-aux-row-label">{{ cat.name }}</span>
             <el-select
               v-model="currentEntry[`_${cat.code}_id`]"
+              :data-voucher-focus="`aux-select-${cat.code}`"
               filterable
               clearable
               :placeholder="`请选择${cat.name}`"
               style="width: 200px"
+              @keydown="e => onVoucherFieldKeydown(currentEntry, { kind: 'aux_select', catCode: cat.code }, e)"
             >
               <el-option
                 v-for="item in auxItemsByCategory[cat.id]"
@@ -282,10 +341,38 @@
                   {{ field.field_name }}
                   <span v-if="field.required_in_voucher" style="color: #f56c6c">*</span>
                 </span>
-                <el-input v-if="field.field_type === 'text'" v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]" style="width: 140px" />
-                <el-input-number v-else-if="field.field_type === 'number'" v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]" :controls="false" style="width: 140px" />
-                <el-date-picker v-else-if="field.field_type === 'date'" v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]" type="date" value-format="YYYY-MM-DD" style="width: 160px" />
-                <el-select v-else-if="field.field_type === 'select'" v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]" clearable style="width: 140px">
+                <el-input
+                  v-if="field.field_type === 'text'"
+                  v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]"
+                  :data-voucher-focus="`aux-field-${cat.code}-${field.field_key}`"
+                  style="width: 140px"
+                  @keydown="e => onVoucherFieldKeydown(currentEntry, { kind: 'aux_field', catCode: cat.code, fieldKey: field.field_key }, e)"
+                />
+                <el-input-number
+                  v-else-if="field.field_type === 'number'"
+                  v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]"
+                  :data-voucher-focus="`aux-field-${cat.code}-${field.field_key}`"
+                  :controls="false"
+                  style="width: 140px"
+                  @keydown="e => onVoucherFieldKeydown(currentEntry, { kind: 'aux_field', catCode: cat.code, fieldKey: field.field_key }, e)"
+                />
+                <el-date-picker
+                  v-else-if="field.field_type === 'date'"
+                  v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]"
+                  :data-voucher-focus="`aux-field-${cat.code}-${field.field_key}`"
+                  type="date"
+                  value-format="YYYY-MM-DD"
+                  style="width: 160px"
+                  @keydown="e => onVoucherFieldKeydown(currentEntry, { kind: 'aux_field', catCode: cat.code, fieldKey: field.field_key }, e)"
+                />
+                <el-select
+                  v-else-if="field.field_type === 'select'"
+                  v-model="currentEntry[`_${cat.code}_fv_${field.field_key}`]"
+                  :data-voucher-focus="`aux-field-${cat.code}-${field.field_key}`"
+                  clearable
+                  style="width: 140px"
+                  @keydown="e => onVoucherFieldKeydown(currentEntry, { kind: 'aux_field', catCode: cat.code, fieldKey: field.field_key }, e)"
+                >
                   <el-option v-for="opt in parseFieldOpts(field.options_json)" :key="opt" :label="opt" :value="opt" />
                 </el-select>
               </div>
@@ -346,7 +433,7 @@
 
       <div class="voucher-paper-remark">
         <span class="remark-label">附注</span>
-        <el-input v-model="form.remark" placeholder="凭证备注" />
+        <el-input v-model="form.remark" placeholder="凭证备注" size="small" />
       </div>
 
       <div class="voucher-attachments-container">
@@ -410,13 +497,22 @@
       <div class="voucher-paper-signatures">
         <div class="signature-item"><span>制单</span><em>{{ props.form.maker_name || '' }}</em></div>
         <div class="signature-item"><span>审核</span><em>{{ props.form.auditor_name || '' }}</em></div>
-        <div class="signature-item"><span>记账</span><em>{{ props.form.poster_name || '' }}</em></div>
         <div class="signature-item"><span>出纳</span><em></em></div>
       </div>
     </div>
 
     <template #footer>
       <div class="dialog-footer-enhanced">
+        <div class="action-controls">
+          <el-button plain size="small" @click="emit('import-template')">
+            <el-icon><Document /></el-icon>
+            引模版
+          </el-button>
+          <el-button plain size="small" @click="emit('turn-template')">
+            <el-icon><Collection /></el-icon>
+            转模版
+          </el-button>
+        </div>
         <div class="submit-controls">
           <el-button @click="handleClose">取消</el-button>
           <el-tooltip v-if="props.mode === 'edit' && props.form.id" content="打印当前凭证" placement="top">
@@ -425,11 +521,15 @@
               打印
             </el-button>
           </el-tooltip>
-          <el-tooltip content="Ctrl+S" placement="top">
-            <el-button type="primary" :loading="props.submitLoading" @click="emit('submit')">保存凭证</el-button>
+          <el-tooltip content="Ctrl+S 保存；Ctrl+Enter 保存并新增" placement="top">
+            <el-button type="primary" :loading="props.submitLoading" @click="emit('submit')">
+              保存凭证 (Ctrl+S)
+            </el-button>
           </el-tooltip>
-          <el-tooltip content="Ctrl+N" placement="top">
-            <el-button type="success" :loading="props.submitLoading" @click="emit('submit-and-add')">保存并新增</el-button>
+          <el-tooltip content="Ctrl+Enter" placement="top">
+            <el-button type="success" :loading="props.submitLoading" @click="emit('submit-and-add')">
+              保存并新增 (Ctrl+Enter)
+            </el-button>
           </el-tooltip>
         </div>
       </div>
@@ -438,13 +538,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, watch, toRefs, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
 import type { VoucherForm, VoucherEntry } from '@/composables/useVoucherForm'
 import { useKeyboardShortcuts, commonShortcuts } from '@/composables/useKeyboardShortcuts'
 import { showSuccess, showError } from '@/composables/useMessage'
 import request from '@/api/request'
-import { Document, Upload, Download, Printer } from '@element-plus/icons-vue'
+import { Document, Upload, Download, Printer, Collection } from '@element-plus/icons-vue'
 import { formatAmount } from '@/utils/format'
+import { accountNeedsCashFlowItem, isAuxCategoryExcludedFromAccount } from '@/utils/accountCashFlow'
 
 interface NavigationInfo {
   current: number
@@ -472,17 +573,45 @@ interface Props {
   onAmountChange: (entry: any, side: 'debit' | 'credit') => void
   addEntry: () => void
   removeEntry: (index: number, row: VoucherEntry) => void
-  setCurrentEntry: (row: VoucherEntry) => void
+  setCurrentEntry: (row: VoucherEntry | null) => void
   attachments?: any[]
   updateAttachments?: (attachments: any[]) => void
   submitLoading?: boolean
   navigationInfo?: NavigationInfo | null
+  enableCashFlow?: boolean
+  cashFlowItems?: Array<{ code: string; name: string }>
 }
 
 const props = withDefaults(defineProps<Props>(), {
   submitLoading: false,
   navigationInfo: null,
+  enableCashFlow: false,
+  cashFlowItems: () => [],
 })
+
+const filteredAuxCategories = computed(() =>
+  props.currentEntryAuxCategories.filter(cat => !isAuxCategoryExcludedFromAccount(cat.code))
+)
+
+const currentEntryAccount = computed(() => {
+  if (!props.currentEntry?.account_id) return null
+  return props.accounts.find(a => a.id === props.currentEntry!.account_id) || null
+})
+
+const showCashFlowForCurrentEntry = computed(() => {
+  const acc = currentEntryAccount.value
+  if (!acc) return false
+  return accountNeedsCashFlowItem(acc)
+})
+
+const cashFlowRequired = computed(() => showCashFlowForCurrentEntry.value)
+
+function onCashFlowCodeChange(code: string) {
+  if (!props.currentEntry) return
+  const item = props.cashFlowItems.find(cf => cf.code === code)
+  props.currentEntry.cash_flow_name = item?.name || ''
+}
+
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   'ai-summary': []
@@ -496,9 +625,10 @@ const emit = defineEmits<{
   'add-aux-item': [item: { id: string; name: string; type: string }, catCode: string]
   print: []
   quickCreateAccount: [row: any]
+  'turn-template': []
+  'import-template': []
 }>()
 
-// 处理更多操作命令
 // Attachments data
 const attachments = ref(props.attachments || [])
 
@@ -749,7 +879,7 @@ function handleClose() {
 }
 
 // ========== 当前选中科目的余额查询 ==========
-// 不考虑过账因素，直接从 init_balances（期初）+ 所有凭证分录实时汇总
+// 不考虑记账因素，直接从 init_balances（期初）+ 所有凭证分录实时汇总
 
 const currentEntryBalance = ref<{
   code: string
@@ -759,27 +889,65 @@ const currentEntryBalance = ref<{
   isSameSide: boolean
 } | null>(null)
 
+const currentEntryAuxBalances = ref<
+  {
+    category_code: string
+    category_name: string
+    item_id: string
+    item_name: string
+    direction: string
+    end_balance: number
+    isSameSide: boolean
+  }[]
+>([])
+
 let balanceFetchTimer: ReturnType<typeof setTimeout> | null = null
+
+function getBalanceQueryParams() {
+  const voucherDate = props.form.voucher_date
+  const d = voucherDate ? new Date(voucherDate) : new Date()
+  return {
+    year: d.getFullYear(),
+    period: d.getMonth() + 1,
+  }
+}
+
+function buildAuxBalanceSelections(): string {
+  const entry = props.currentEntry
+  if (!entry) return ''
+  const parts: string[] = []
+  for (const cat of props.currentEntryAuxCategories) {
+    const itemId = entry[`_${cat.code}_id`]
+    if (itemId) {
+      parts.push(`${cat.code}:${itemId}`)
+    }
+  }
+  return parts.join(',')
+}
 
 async function fetchCurrentEntryBalance() {
   if (!props.currentEntry?.account_id) {
     currentEntryBalance.value = null
+    currentEntryAuxBalances.value = []
     return
   }
   const acc = props.accounts.find(a => a.id === props.currentEntry!.account_id)
   if (!acc) {
     currentEntryBalance.value = null
+    currentEntryAuxBalances.value = []
     return
   }
+
+  const queryParams = getBalanceQueryParams()
+
   try {
-    // 调用后端接口，实时计算期初余额+所有凭证分录汇总（不过账依赖）
     const res = await request.get<any>(`/base/accounts/${acc.id}/realtime-balance`, {
-      params: { year: props.form.voucher_date ? new Date(props.form.voucher_date).getFullYear() : undefined, period: props.form.voucher_date ? new Date(props.form.voucher_date).getMonth() + 1 : undefined }
+      params: queryParams,
     })
     const data = res.data
     if (data && data.end_balance !== undefined) {
       const endBalance = data.end_balance || 0
-      const balanceDirection = endBalance >= 0 ? data.direction : (data.direction === 'debit' ? 'credit' : 'debit')
+      const balanceDirection = endBalance >= 0 ? data.direction : data.direction === 'debit' ? 'credit' : 'debit'
       const isSameSide = balanceDirection === acc.direction
       currentEntryBalance.value = {
         code: acc.code,
@@ -788,14 +956,59 @@ async function fetchCurrentEntryBalance() {
         end_balance: Math.abs(endBalance),
         isSameSide,
       }
+    } else {
+      currentEntryBalance.value = null
     }
   } catch {
     currentEntryBalance.value = null
   }
+
+  const selections = buildAuxBalanceSelections()
+  if (!selections) {
+    currentEntryAuxBalances.value = []
+    return
+  }
+
+  try {
+    const auxRes = await request.get<any[]>(`/base/accounts/${acc.id}/realtime-aux-balances`, {
+      params: { ...queryParams, selections },
+    })
+    const catNameMap = new Map(props.currentEntryAuxCategories.map(c => [c.code, c.name]))
+    currentEntryAuxBalances.value = (auxRes.data || []).map((row: any) => {
+      const endBalance = row.end_balance || 0
+      const balanceDirection =
+        endBalance >= 0 ? row.direction : row.direction === 'debit' ? 'credit' : 'debit'
+      return {
+        category_code: row.category_code,
+        category_name: catNameMap.get(row.category_code) || row.category_code,
+        item_id: row.item_id,
+        item_name: row.item_name || '',
+        direction: balanceDirection,
+        end_balance: Math.abs(endBalance),
+        isSameSide: row.is_same_side ?? balanceDirection === acc.direction,
+      }
+    })
+  } catch {
+    currentEntryAuxBalances.value = []
+  }
 }
 
-// 监听当前分录变化，防抖查询余额
-watch(() => [props.currentEntry?.account_id, props.currentEntry?.debit_amount, props.currentEntry?.credit_amount], () => {
+function getAuxBalanceWatchDeps(): unknown[] {
+  const entry = props.currentEntry
+  const auxIds = props.currentEntryAuxCategories.map(cat =>
+    entry ? entry[`_${cat.code}_id`] : null
+  )
+  return [
+    entry?.account_id,
+    entry?.debit_amount,
+    entry?.credit_amount,
+    props.form.voucher_date,
+    ...auxIds,
+  ]
+}
+
+// 监听当前分录及辅助项目变化，防抖查询余额
+watch(getAuxBalanceWatchDeps, () => {
   if (balanceFetchTimer) clearTimeout(balanceFetchTimer)
   balanceFetchTimer = setTimeout(fetchCurrentEntryBalance, 300)
 }, { immediate: true })
@@ -880,34 +1093,212 @@ function parseFieldOpts(optionsJson: string | null): string[] {
   }
 }
 
-// ========== 回车键智能导航 ==========
+// ========== 回车 / Tab 智能导航 ==========
 
-// 摘要回车 → 跳到科目
-function moveToAccount(row: VoucherEntry) {
-  focusCellInput(row, 1) // 第2列：会计科目
-}
+type VoucherFocusStep =
+  | { kind: 'cash_flow' }
+  | { kind: 'aux_select'; catCode: string }
+  | { kind: 'aux_field'; catCode: string; fieldKey: string }
+  | { kind: 'amount'; side: 'debit' | 'credit' }
 
-// 科目回车 → 根据余额方向跳到借方或贷方
-function onAccountEnter(row: VoucherEntry) {
-  // 如果科目还没选好，不跳
-  if (!row.account_id) return
-  const acc = props.accounts.find(a => a.id === row.account_id)
-  if (!acc) return
-  if (acc.direction === 'debit') {
-    focusCellInput(row, 2) // 借方金额
-  } else {
-    focusCellInput(row, 3) // 贷方金额
+function getAuxCategoryIdsForAccount(acc: any): string[] {
+  if (!acc?.aux_types) return []
+  try {
+    const parsed = typeof acc.aux_types === 'string' ? JSON.parse(acc.aux_types) : acc.aux_types
+    let ids: string[] = []
+    if (Array.isArray(parsed)) ids = parsed
+    else if (parsed && typeof parsed === 'object') ids = Object.keys(parsed)
+    return ids
+      .map(id => String(id))
+      .filter(id => {
+        const cat = props.auxCategories.find(c => String(c.id) === id)
+        return cat && !isAuxCategoryExcludedFromAccount(cat.code)
+      })
+  } catch {
+    return []
   }
 }
 
-// 借方金额回车 → 如果是最后一行则新增行并复制摘要，否则跳到下一行摘要
-function onDebitEnter(row: VoucherEntry) {
+function getEntryAuxCategories(row: VoucherEntry) {
+  const acc = props.accounts.find(a => a.id === row.account_id)
+  if (!acc?.is_aux) return []
+  const linkedIds = new Set(getAuxCategoryIdsForAccount(acc))
+  return props.auxCategories.filter(cat => linkedIds.has(String(cat.id)))
+}
+
+function buildVoucherFocusSteps(row: VoucherEntry): VoucherFocusStep[] {
+  const steps: VoucherFocusStep[] = []
+  const acc = props.accounts.find(a => a.id === row.account_id)
+  if (!acc) {
+    return [{ kind: 'amount', side: 'debit' }]
+  }
+
+  if (props.enableCashFlow && accountNeedsCashFlowItem(acc)) {
+    steps.push({ kind: 'cash_flow' })
+  }
+
+  for (const cat of getEntryAuxCategories(row)) {
+    steps.push({ kind: 'aux_select', catCode: cat.code })
+    if (row[`_${cat.code}_id`]) {
+      for (const field of getVoucherFields(cat)) {
+        steps.push({ kind: 'aux_field', catCode: cat.code, fieldKey: field.field_key })
+      }
+    }
+  }
+
+  steps.push({ kind: 'amount', side: acc.direction === 'credit' ? 'credit' : 'debit' })
+  return steps
+}
+
+function focusStepEquals(a: VoucherFocusStep, b: VoucherFocusStep): boolean {
+  if (a.kind !== b.kind) return false
+  if (a.kind === 'cash_flow' && b.kind === 'cash_flow') return true
+  if (a.kind === 'aux_select' && b.kind === 'aux_select') return a.catCode === b.catCode
+  if (a.kind === 'aux_field' && b.kind === 'aux_field') {
+    return a.catCode === b.catCode && a.fieldKey === b.fieldKey
+  }
+  return false
+}
+
+function focusStepSelector(step: VoucherFocusStep): string {
+  if (step.kind === 'cash_flow') return '[data-voucher-focus="cash-flow"]'
+  if (step.kind === 'aux_select') return `[data-voucher-focus="aux-select-${step.catCode}"]`
+  if (step.kind === 'aux_field') {
+    return `[data-voucher-focus="aux-field-${step.catCode}-${step.fieldKey}"]`
+  }
+  return ''
+}
+
+function isSelectDropdownOpen(): boolean {
+  const poppers = document.querySelectorAll('.el-select-dropdown')
+  for (const popper of poppers) {
+    const el = popper as HTMLElement
+    if (el.offsetParent !== null && el.clientHeight > 0) return true
+  }
+  return false
+}
+
+function focusVoucherField(step: VoucherFocusStep): boolean {
+  const selector = focusStepSelector(step)
+  if (!selector) return false
+  const host = document.querySelector(selector)
+  if (!host) return false
+  const input =
+    (host.querySelector('input:not([type="hidden"])') as HTMLInputElement | HTMLElement | null) ||
+    (host.querySelector('.el-select__wrapper') as HTMLElement | null)
+  if (!input) return false
+  ;(input as HTMLElement).focus()
+  if (input instanceof HTMLInputElement && typeof input.select === 'function') {
+    input.select()
+  }
+  return true
+}
+
+function focusAmountForRow(row: VoucherEntry, side: 'debit' | 'credit') {
+  focusCellInput(row, side === 'debit' ? 2 : 3)
+}
+
+function advanceVoucherFocus(row: VoucherEntry, fromStep: VoucherFocusStep | null) {
+  props.setCurrentEntry(row)
+  const run = () => {
+    const steps = buildVoucherFocusSteps(row)
+    const startIdx = fromStep ? steps.findIndex(s => focusStepEquals(s, fromStep)) : -1
+    for (let i = startIdx + 1; i < steps.length; i++) {
+      const step = steps[i]
+      if (step.kind === 'aux_field' && !row[`_${step.catCode}_id`]) continue
+      if (step.kind === 'amount') {
+        focusAmountForRow(row, step.side)
+        return
+      }
+      if (focusVoucherField(step)) return
+    }
+    const acc = props.accounts.find(a => a.id === row.account_id)
+    focusAmountForRow(row, acc?.direction === 'credit' ? 'credit' : 'debit')
+  }
+  // 从科目进入时需等待辅助核算面板渲染
+  if (fromStep === null) {
+    nextTick(() => nextTick(run))
+  } else {
+    nextTick(run)
+  }
+}
+
+function stopEnterBubble(event?: KeyboardEvent) {
+  if (!event) return
+  event.preventDefault()
+  event.stopPropagation()
+}
+
+function onVoucherFieldKeydown(
+  row: VoucherEntry | null,
+  step: VoucherFocusStep,
+  event: KeyboardEvent
+) {
+  if (!row) return
+  if (event.key !== 'Enter' && event.key !== 'Tab') return
+  if (event.key === 'Enter' && isSelectDropdownOpen()) return
+  stopEnterBubble(event)
+  advanceVoucherFocus(row, step)
+}
+
+// 摘要回车 → 跳到科目
+function moveToAccount(row: VoucherEntry, event?: KeyboardEvent) {
+  stopEnterBubble(event)
+  focusCellInput(row, 1) // 第2列：会计科目
+}
+
+// 科目回车 / Tab → 依次经过现金流量、辅助项目，最后到金额
+function onAccountEnter(row: VoucherEntry, event?: KeyboardEvent) {
+  stopEnterBubble(event)
+  if (!row.account_id) return
+  const acc = props.accounts.find(a => a.id === row.account_id)
+  if (!acc) return
+  advanceVoucherFocus(row, null)
+}
+
+function onAccountTab(row: VoucherEntry, event: KeyboardEvent) {
+  if (!row.account_id) return
+  if (isSelectDropdownOpen()) return
+  event.preventDefault()
+  advanceVoucherFocus(row, null)
+}
+
+// 借方金额回车 → 跳到下一行
+function onDebitEnter(row: VoucherEntry, event?: KeyboardEvent) {
+  stopEnterBubble(event)
+  syncInputAmount(row, event, 'debit')
   moveToNextRow(row)
 }
 
-// 贷方金额回车 → 同上
-function onCreditEnter(row: VoucherEntry) {
+// 贷方金额回车 → 跳到下一行
+function onCreditEnter(row: VoucherEntry, event?: KeyboardEvent) {
+  stopEnterBubble(event)
+  syncInputAmount(row, event, 'credit')
   moveToNextRow(row)
+}
+
+function syncInputAmount(row: VoucherEntry, event: KeyboardEvent | undefined, side: 'debit' | 'credit') {
+  const input = event?.target as HTMLInputElement | null
+  if (!input) return
+  const rawValue = String(input.value || '').replace(/,/g, '').trim()
+  if (!rawValue) {
+    if (side === 'debit') {
+      row.debit_amount = null
+    } else {
+      row.credit_amount = null
+    }
+    return
+  }
+  const amount = Number(rawValue)
+  if (!Number.isFinite(amount)) return
+
+  if (side === 'debit') {
+    row.debit_amount = amount
+    props.onAmountChange(row, 'debit')
+  } else {
+    row.credit_amount = amount
+    props.onAmountChange(row, 'credit')
+  }
 }
 
 // ============= 借方金额快捷键 =============
@@ -929,7 +1320,7 @@ function onDebitKeydown(row: VoucherEntry, event: KeyboardEvent) {
     const debit = row.debit_amount || 0
     if (debit !== 0) {
       row.credit_amount = debit
-      row.debit_amount = 0
+      row.debit_amount = null
       props.onAmountChange(row, 'credit')
     }
   }
@@ -954,63 +1345,77 @@ function onCreditKeydown(row: VoucherEntry, event: KeyboardEvent) {
     const credit = row.credit_amount || 0
     if (credit !== 0) {
       row.debit_amount = credit
-      row.credit_amount = 0
+      row.credit_amount = null
       props.onAmountChange(row, 'debit')
     }
   }
 }
 
-// 跳到下一行，最后一行则新增并自动平衡
+// 跳到下一行，并把试算平衡差额自动填入下一条空分录
 function moveToNextRow(currentRow: VoucherEntry) {
   const idx = props.form.entries.indexOf(currentRow)
   if (idx === -1) return
 
-  // 如果不是最后一行，跳到下一行摘要
+  // 如果不是最后一行，跳到下一行
   if (idx < props.form.entries.length - 1) {
     const nextRow = props.form.entries[idx + 1]
     // 复制摘要
     if (!nextRow.summary && currentRow.summary) {
       nextRow.summary = currentRow.summary
     }
-    focusCellInput(nextRow, 0)
+    const balanced = autoBalanceNextRow(nextRow)
+    focusCellInput(nextRow, balanced ? 1 : 0)
     return
   }
 
-  // 是最后一行，自动平衡并新增
-  autoBalance(currentRow)
-
-  // 新增分录
+  // 是最后一行，新增分录并在新行自动补齐差额
   props.addEntry()
   const newRow = props.form.entries[props.form.entries.length - 1]
   // 复制摘要
   if (currentRow.summary) {
     newRow.summary = currentRow.summary
   }
+  const balanced = autoBalanceNextRow(newRow)
   // 延迟聚焦，等 DOM 更新
   nextTick(() => {
-    focusCellInput(newRow, 0)
+    focusCellInput(newRow, balanced ? 1 : 0)
   })
 }
 
-// 自动平衡：计算差额填入当前行
-function autoBalance(row: VoucherEntry) {
-  const debit = props.totalDebit
-  const credit = props.totalCredit
-  const diff = Math.abs(debit - credit)
-  if (diff < 0.005) return // 已平衡
+function getCurrentEntryTotals() {
+  return props.form.entries.reduce(
+    (totals, entry) => {
+      totals.debit += Number(entry.debit_amount || 0)
+      totals.credit += Number(entry.credit_amount || 0)
+      return totals
+    },
+    { debit: 0, credit: 0 }
+  )
+}
 
-  const acc = props.accounts.find(a => a.id === row.account_id)
-  if (!acc) return
+// 自动平衡：把当前借贷差额填入下一条空分录，等同于在金额栏按 =
+function autoBalanceNextRow(row: VoucherEntry) {
+  if ((row.debit_amount || 0) !== 0 || (row.credit_amount || 0) !== 0) {
+    return false
+  }
 
-  if (debit > credit && acc.direction === 'credit') {
-    // 借方多，当前科目是贷方，自动填差额到贷方
+  const { debit, credit } = getCurrentEntryTotals()
+  const diff = +(Math.abs(debit - credit)).toFixed(2)
+  if (diff < 0.005) return false
+
+  if (debit > credit) {
     row.credit_amount = diff
     props.onAmountChange(row, 'credit')
-  } else if (credit > debit && acc.direction === 'debit') {
-    // 贷方多，当前科目是借方，自动填差额到借方
+    return true
+  }
+
+  if (credit > debit) {
     row.debit_amount = diff
     props.onAmountChange(row, 'debit')
+    return true
   }
+
+  return false
 }
 
 // 聚焦表格指定单元格内的 input
@@ -1027,10 +1432,10 @@ function focusCellInput(row: VoucherEntry, colIndex: number) {
     const cells = tr.querySelectorAll('td')
     const cell = cells[colIndex]
     if (!cell) return
-    const input = cell.querySelector('input') as HTMLElement
+    const input = cell.querySelector('input') as HTMLInputElement | null
     if (input) {
       input.focus()
-      input.select?.()
+      input.select()
     }
   })
 }
@@ -1246,9 +1651,9 @@ function queryAccountSuggestions(
   cb(result)
 }
 
-function onAccountInputChange(row: any, val: string) {
+function onAccountInputChange(row: any, val: string | number) {
   const state = ensureAccountInputState(row)
-  state.input = val || ''
+  state.input = String(val || '')
 
   const trimmed = state.input.trim()
   const selectedAcc = row.account_id ? props.accounts.find(a => a.id === row.account_id) : null
@@ -1282,17 +1687,24 @@ function onAccountInputChange(row: any, val: string) {
   }
 }
 
-function handleAccountSelect(row: any, item: AccountSuggestion) {
+function handleAccountSelect(row: any, item: any) {
   // 父科目标题项不可选 - 多重检查确保父科目无法被选中
   if (!item) return
   if (item.isParent) return
   if (String(item.value).startsWith('__parent__')) return
-  
+
   const acc = props.accounts.find(a => a.id === item.id)
   if (!acc) return
   if (props.isParentAccount(acc.id)) return
-  
+
   applySelectedAccount(row, acc)
+}
+
+/** 阻止父科目标题行把点击/mousedown 冒泡到 el-autocomplete 的 li，避免误选中父科目 */
+function onAccountSuggestionPointer(item: any, e: MouseEvent) {
+  if (!item?.isParent && !String(item?.value || '').startsWith('__parent__')) return
+  e.preventDefault()
+  e.stopPropagation()
 }
 
 function applySelectedAccount(row: any, acc: any) {
@@ -1335,48 +1747,62 @@ function onAccountDelete(row: any, event: KeyboardEvent) {
   props.onAccountChange(row)
 }
 
-// 上下键导航时跳过父科目
-function onAccountArrowKey(row: any, event: KeyboardEvent, direction: 'up' | 'down') {
-  event.preventDefault()
+// 每行 autocomplete 实例的引用（用于读取暴露的 highlightedIndex / suggestions / highlight）
+const accountAutocompleteRefs = new Map<string, any>()
 
-  nextTick(() => {
-    const suggestionPanel = document.querySelector('.el-autocomplete-suggestion')
-    if (!suggestionPanel) return
+function setAccountAutocompleteRef(row: any, instance: any) {
+  const key = getAccountRowKey(row)
+  if (instance) {
+    accountAutocompleteRefs.set(key, instance)
+  } else {
+    accountAutocompleteRefs.delete(key)
+  }
+}
 
-    const items = Array.from(suggestionPanel.querySelectorAll('.el-autocomplete-suggestion__list li'))
-    if (items.length === 0) return
+// 上下键导航时跳过父科目（保留父科目作为分组标题显示，仅在键盘导航时跳过）
+function onAccountArrowKey(row: any, _event: KeyboardEvent, direction: 'up' | 'down') {
+  // 不阻止默认行为，让 Element Plus 先正常移动 highlightedIndex；
+  // 之后在 nextTick 中检查当前高亮项，如果是父科目则继续推进
+  const key = getAccountRowKey(row)
+  const instance = accountAutocompleteRefs.get(key)
+  if (!instance) return
 
-    // Element Plus 用 is-active 标记当前高亮项
-    let currentIndex = items.findIndex(item => item.classList.contains('is-active'))
+  nextTick(() => skipParentInHighlight(instance, direction))
+}
 
-    if (currentIndex === -1) {
-      currentIndex = direction === 'down' ? -1 : items.length
-    }
+function skipParentInHighlight(instance: any, direction: 'up' | 'down', remaining = 50) {
+  if (remaining <= 0) return
 
-    const step = direction === 'down' ? 1 : -1
-    let nextIndex = currentIndex
-    let attempts = 0
+  const idx = instance.highlightedIndex as number
+  const suggestions = (instance.suggestions || []) as any[]
+  if (!Array.isArray(suggestions) || suggestions.length === 0) return
+  if (idx < 0 || idx >= suggestions.length) return
 
-    while (attempts < items.length) {
-      nextIndex += step
+  const item = suggestions[idx]
+  const isParent = !!item?.isParent || String(item?.value || '').startsWith('__parent__')
+  if (!isParent) return
 
-      if (nextIndex < 0) nextIndex = items.length - 1
-      if (nextIndex >= items.length) nextIndex = 0
+  const nextIdx = direction === 'down' ? idx + 1 : idx - 1
+  // 边界处理：到顶/到底都没有非父项时，保持现状不再递归
+  if (nextIdx < 0 || nextIdx >= suggestions.length) return
 
-      const item = items[nextIndex]
-      const isParent = item.querySelector('.is-parent-account') !== null
+  if (typeof instance.highlight === 'function') {
+    instance.highlight(nextIdx)
+  }
 
-      if (!isParent) {
-        // 移除所有高亮，设置新高亮
-        items.forEach(i => i.classList.remove('is-active'))
-        item.classList.add('is-active')
-        item.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-        break
-      }
+  nextTick(() => skipParentInHighlight(instance, direction, remaining - 1))
+}
 
-      attempts++
-    }
-  })
+function onVoucherDialogKeydown(e: KeyboardEvent) {
+  if (!visible.value || props.submitLoading) return
+  if (e.key !== 'Enter') return
+
+  // 仅 Ctrl+Enter / Cmd+Enter 保存并新增；普通 Enter 不再触发保存，避免录入时误保存
+  if (e.ctrlKey || e.metaKey) {
+    e.preventDefault()
+    e.stopPropagation()
+    emit('submit-and-add')
+  }
 }
 
 // 键盘快捷键
@@ -1384,11 +1810,6 @@ useKeyboardShortcuts([
   commonShortcuts.save(() => {
     if (visible.value) {
       emit('submit')
-    }
-  }),
-  commonShortcuts.add(() => {
-    if (visible.value) {
-      emit('submit-and-add')
     }
   }),
   commonShortcuts.search(() => {
@@ -1408,41 +1829,41 @@ useKeyboardShortcuts([
 .paper-voucher {
   border: 1px solid #dcdfe6;
   background: #fffdf7;
-  padding: 20px;
+  padding: 10px 12px;
 }
 
 .voucher-paper-header {
   border-bottom: 2px solid #303133;
-  padding-bottom: 16px;
-  margin-bottom: 16px;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
 }
 
 .voucher-paper-title {
-  font-size: 26px;
-  letter-spacing: 8px;
+  font-size: 20px;
+  letter-spacing: 6px;
   text-align: center;
   font-weight: 700;
   color: #303133;
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .voucher-paper-meta {
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 8px;
+  gap: 6px;
 }
 
 .meta-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
 }
 
 .meta-label {
   width: auto;
   white-space: nowrap;
   color: #606266;
-  font-size: 13px;
+  font-size: 12px;
   flex-shrink: 0;
 }
 
@@ -1452,9 +1873,9 @@ useKeyboardShortcuts([
 }
 
 .meta-readonly {
-  padding: 0 8px;
+  padding: 0 6px;
   border: 1px solid #dcdfe6;
-  min-height: 32px;
+  min-height: 26px;
   background: #fff;
   flex: 1;
   min-width: 0;
@@ -1463,27 +1884,47 @@ useKeyboardShortcuts([
 .meta-text {
   font-weight: 600;
   color: #303133;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .voucher-top-actions {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 6px;
   flex-wrap: wrap;
+}
+
+.account-balance-display-wrap {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
 }
 
 .account-balance-display {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 14px;
-  padding: 4px 12px;
+  gap: 4px;
+  font-size: 12px;
+  padding: 2px 8px;
   background: #f5f7fa;
   border-radius: 4px;
   border: 1px solid #e4e7ed;
+}
+
+.aux-balance-chip {
+  background: #ecf5ff;
+  border-color: #c6e2ff;
+}
+
+.balance-aux-item {
+  color: #606266;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .balance-account {
@@ -1506,36 +1947,86 @@ useKeyboardShortcuts([
 }
 
 .voucher-table-wrap {
-  margin-bottom: 16px;
+  margin-bottom: 8px;
 }
 
 .paper-table :deep(.el-table__header-wrapper th) {
   background: #f8f1df;
   color: #303133;
+  font-size: 12px;
+}
+
+.paper-table :deep(.el-table__header .el-table__cell) {
+  padding: 3px 0 !important;
+}
+
+.paper-table :deep(.el-table__body .el-table__cell) {
+  padding: 2px 0 !important;
+}
+
+.paper-table :deep(.el-table__body .el-table__row) {
+  height: 30px;
+}
+
+.paper-table :deep(.cell) {
+  padding: 0 4px !important;
+  line-height: 24px;
+  font-size: 12px;
+}
+
+.paper-table :deep(.el-input__wrapper) {
+  min-height: 26px !important;
+  padding: 0 6px !important;
+  box-shadow: 0 0 0 1px var(--el-input-border-color, var(--el-border-color)) inset;
+}
+
+.paper-table :deep(.el-input__inner) {
+  height: 24px !important;
+  line-height: 24px !important;
+  font-size: 12px;
+}
+
+.paper-table :deep(.amount-input) {
+  width: 100% !important;
+}
+
+.paper-table :deep(.amount-input .el-input__wrapper) {
+  padding: 0 4px !important;
 }
 
 .paper-table :deep(.el-table__footer) {
   font-weight: bold;
+  font-size: 12px;
+}
+
+.paper-table :deep(.el-table__footer .el-table__cell) {
+  padding: 4px 0 !important;
 }
 
 .entry-row {
   display: flex;
-  gap: 4px;
+  gap: 2px;
   align-items: center;
+}
+
+.entry-row :deep(.el-button.is-link) {
+  padding: 0 4px;
+  font-size: 12px;
 }
 
 .voucher-paper-toolbar {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 16px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .voucher-balance {
-  padding: 10px 14px;
+  padding: 4px 10px;
   border-radius: 4px;
   font-weight: 600;
+  font-size: 12px;
 }
 
 .voucher-balance.balanced {
@@ -1554,23 +2045,24 @@ useKeyboardShortcuts([
 }
 
 .voucher-aux-panel {
-  margin-bottom: 18px;
+  margin-bottom: 8px;
   border: 1px solid #e4e7ed;
   background: #fff;
-  padding: 16px;
+  padding: 8px 10px;
 }
 
 .voucher-aux-header {
   display: flex;
   justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
-  margin-bottom: 14px;
+  margin-bottom: 6px;
   font-weight: 600;
+  font-size: 12px;
 }
 
 .voucher-aux-summary {
-  font-size: 13px;
+  font-size: 12px;
   color: #606266;
   font-weight: 400;
 }
@@ -1578,21 +2070,21 @@ useKeyboardShortcuts([
 .voucher-aux-rows {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 6px;
 }
 
 .voucher-aux-row {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 .voucher-aux-row-label {
   color: #606266;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 500;
-  min-width: 56px;
+  min-width: 52px;
   flex-shrink: 0;
 }
 
@@ -1611,49 +2103,50 @@ useKeyboardShortcuts([
 .voucher-paper-remark {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 18px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .remark-label {
-  width: 48px;
+  width: 40px;
   color: #606266;
   flex-shrink: 0;
+  font-size: 12px;
 }
 
 .voucher-paper-signatures {
   display: flex;
   justify-content: space-between;
   border-top: 1px dashed #c0c4cc;
-  padding-top: 16px;
+  padding-top: 8px;
 }
 
 .signature-item {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   color: #606266;
 }
 
 .signature-item span {
-  font-size: 13px;
+  font-size: 12px;
   white-space: nowrap;
 }
 
 .signature-item em {
   font-style: normal;
-  font-size: 14px;
-  min-width: 80px;
+  font-size: 12px;
+  min-width: 72px;
   border-bottom: 1px solid #909399;
-  padding: 0 4px 2px;
+  padding: 0 4px 1px;
   text-align: center;
   display: inline-block;
-  line-height: 20px;
-  height: 20px;
+  line-height: 18px;
+  height: 18px;
 }
 
 .voucher-attachments-container {
-  margin-bottom: 18px;
+  margin-bottom: 8px;
 }
 
 .attachment-inline {
@@ -1667,7 +2160,7 @@ useKeyboardShortcuts([
   display: flex;
   align-items: center;
   gap: 4px;
-  font-size: 14px;
+  font-size: 12px;
   color: #606266;
 }
 
@@ -1687,8 +2180,14 @@ useKeyboardShortcuts([
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
   flex-wrap: wrap;
+}
+
+.dialog-footer-enhanced :deep(.el-button) {
+  height: 28px;
+  padding: 0 10px;
+  font-size: 12px;
 }
 
 .navigation-controls {
@@ -1700,14 +2199,17 @@ useKeyboardShortcuts([
 }
 
 .navigation-info {
-  font-size: 13px;
+  font-size: 12px;
   color: #606266;
   white-space: nowrap;
 }
 
 .action-controls {
   display: flex;
-  justify-content: center;
+  align-items: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
 }
 
 .submit-controls {
@@ -1716,19 +2218,32 @@ useKeyboardShortcuts([
   flex-shrink: 0;
 }
 
+.meta-control :deep(.el-input__wrapper),
+.meta-control :deep(.el-select__wrapper) {
+  min-height: 26px !important;
+}
+
 .account-suggestion-item {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  min-height: 24px;
+  min-height: 22px;
+  font-size: 12px;
 }
 
 .account-suggestion-item.is-parent-account {
-  pointer-events: none;
   user-select: none;
 }
 
 :deep(.el-table__body-wrapper) {
+  overflow: visible !important;
+}
+
+:deep(.el-table__body-wrapper .el-scrollbar__bar) {
+  display: none !important;
+}
+
+:deep(.el-table__body-wrapper .el-scrollbar__wrap) {
   overflow: visible !important;
 }
 
@@ -1741,8 +2256,13 @@ useKeyboardShortcuts([
   line-height: 1.5;
 }
 
-:deep(.el-autocomplete-suggestion li:has(.is-parent-account)) {
-  pointer-events: none;
-  cursor: not-allowed;
+.cash-flow-required-tag {
+  margin-left: 8px;
+  color: #f56c6c;
+  font-size: 12px;
+}
+
+.voucher-cash-flow-panel {
+  margin-bottom: 8px;
 }
 </style>

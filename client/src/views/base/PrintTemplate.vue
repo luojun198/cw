@@ -8,32 +8,39 @@
     </div>
 
     <div class="page-content">
-      <el-table :data="templates" border stripe v-loading="loading">
-        <el-table-column prop="name" label="模版名称" min-width="200" />
-        <el-table-column prop="paper_size" label="纸张规格" width="120">
+      <el-table
+        ref="tableRef"
+        :data="templates"
+        border
+        stripe
+        v-loading="loading"
+        @header-dragend="onDragEnd"
+      >
+        <el-table-column prop="name" label="模版名称" :width="colWidth('name', 200)" />
+        <el-table-column prop="paper_size" label="纸张规格" :width="colWidth('paper_size', 120)">
           <template #default="{ row }">
             {{ getPaperSizeLabel(row.paper_size) }}
           </template>
         </el-table-column>
-        <el-table-column label="纸张尺寸" width="150">
+        <el-table-column column-key="纸张尺寸" label="纸张尺寸" :width="colWidth('纸张尺寸', 150)">
           <template #default="{ row }">
             {{ row.paper_width }}mm × {{ row.paper_height }}mm
           </template>
         </el-table-column>
-        <el-table-column label="页边距" width="200">
+        <el-table-column column-key="页边距" label="页边距" :width="colWidth('页边距', 200)">
           <template #default="{ row }">
             上{{ row.margin_top }}mm 下{{ row.margin_bottom }}mm 左{{ row.margin_left }}mm 右{{
               row.margin_right
             }}mm
           </template>
         </el-table-column>
-        <el-table-column prop="is_default" label="默认模版" width="100" align="center">
+        <el-table-column prop="is_default" label="默认模版" :width="colWidth('is_default', 100)" align="center">
           <template #default="{ row }">
             <el-tag v-if="row.is_default" type="success">是</el-tag>
             <el-tag v-else type="info">否</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" align="center" fixed="right">
+        <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 220)" align="center" fixed="right">
           <template #default="{ row }">
             <el-button type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button
@@ -82,7 +89,9 @@ import type { PrintTemplate } from '@/types/print'
 import { useUserStore } from '@/stores/user'
 import request from '@/api/request'
 import TemplateDesigner from '@/components/print/TemplateDesigner.vue'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
+const { tableRef, onDragEnd, colWidth } = useListColumnWidth('base_print_template')
 const userStore = useUserStore()
 const loading = ref(false)
 const templates = ref<PrintTemplate[]>([])

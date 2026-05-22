@@ -5,13 +5,22 @@
       <el-button type="primary" @click="openDialog('add')">新增账套</el-button>
     </div>
 
-    <el-table :data="list" stripe border height="100%">
+    <el-table
+      ref="tableRef"
+      :data="list"
+      stripe
+      border
+      size="small"
+      class="compact-data-table"
+      height="100%"
+      @header-dragend="onDragEnd"
+    >
       <el-table-column prop="name" label="单位名称" />
-      <el-table-column prop="code" label="账套编码" width="120" />
-      <el-table-column prop="credit_code" label="统一社会信用代码" width="180" />
-      <el-table-column prop="start_date" label="启用日期" width="120" />
-      <el-table-column prop="chief_accountant" label="财务负责人" width="100" />
-      <el-table-column prop="status" label="状态" width="100">
+      <el-table-column prop="code" label="账套编码" :width="colWidth('code', 120)" />
+      <el-table-column prop="credit_code" label="统一社会信用代码" :width="colWidth('credit_code', 180)" />
+      <el-table-column prop="start_date" label="启用日期" :width="colWidth('start_date', 120)" />
+      <el-table-column prop="chief_accountant" label="财务负责人" :width="colWidth('chief_accountant', 100)" />
+      <el-table-column prop="status" label="状态" :width="colWidth('status', 100)">
         <template #default="{ row }">
           <div class="status-cell">
             <div class="status-tags">
@@ -40,7 +49,7 @@
           </div>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="250" fixed="right">
+      <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 200)" fixed="right">
         <template #default="{ row }">
           <el-button v-if="row.id !== currentAccountSetId" link type="success" size="small" @click="handleSelect(row)">选择</el-button>
           <el-button link type="primary" size="small" @click="openDialog('edit', row)">编辑</el-button>
@@ -49,38 +58,61 @@
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="600px">
-      <el-form :model="form" label-width="140px">
-        <el-form-item label="单位名称" required>
-          <el-input v-model="form.name" />
+    <el-dialog
+      v-model="dialogVisible"
+      :title="dialogTitle"
+      width="480px"
+      class="create-account-dialog"
+      :close-on-click-modal="false"
+    >
+      <el-form
+        ref="formRef"
+        :model="form"
+        :rules="formRules"
+        label-width="108px"
+        size="small"
+        class="create-account-form"
+      >
+        <el-form-item label="单位名称" prop="name">
+          <el-input v-model="form.name" placeholder="例如:某某单位" maxlength="100" />
         </el-form-item>
         <el-form-item label="账套编码">
           <el-input v-model="form.code" disabled placeholder="自动生成" />
         </el-form-item>
         <el-form-item v-if="dialogType === 'add'" label="选择模版">
-          <el-select v-model="form.template_id" placeholder="不使用模版（创建空账套）" clearable style="width: 100%">
+          <el-radio-group v-model="form.use_template" class="template-radio-group">
+            <el-radio :label="true">标准模版</el-radio>
+            <el-radio :label="false">空账套</el-radio>
+          </el-radio-group>
+          <el-select
+            v-if="form.use_template"
+            v-model="form.standard_template_id"
+            placeholder="选择标准模版"
+            clearable
+            class="template-select"
+          >
             <el-option
-              v-for="tpl in templates"
+              v-for="tpl in standardTemplates"
               :key="tpl.id"
               :label="tpl.name"
               :value="tpl.id"
-            >
-              <span>{{ tpl.name }}</span>
-              <span style="color: var(--el-text-color-secondary); font-size: 12px; margin-left: 8px">{{ tpl.description }}</span>
-            </el-option>
+            />
           </el-select>
-          <div v-if="form.template_id" class="template-hint">
-            将从模版预设会计科目、结转关系及报表模板（不含凭证和期初数）
-          </div>
         </el-form-item>
         <el-form-item label="统一社会信用代码">
-          <el-input v-model="form.credit_code" />
+          <el-input v-model="form.credit_code" maxlength="18" />
         </el-form-item>
         <el-form-item label="隶属财政部门">
           <el-input v-model="form.fiscal_dept" />
         </el-form-item>
-        <el-form-item label="账套启用日期" required>
-          <el-date-picker v-model="form.start_date" type="date" value-format="YYYY-MM-DD" style="width: 100%" />
+        <el-form-item label="账套启用日期" prop="start_date">
+          <el-date-picker
+            v-model="form.start_date"
+            type="date"
+            value-format="YYYY-MM-DD"
+            style="width: 100%"
+            placeholder="选择启用日期"
+          />
         </el-form-item>
         <el-form-item label="单位负责人">
           <el-input v-model="form.unit_leader" />
@@ -88,44 +120,49 @@
         <el-form-item label="财务负责人">
           <el-input v-model="form.chief_accountant" />
         </el-form-item>
-        <el-form-item label="科目级数">
+        <el-form-item v-if="dialogType === 'add' && !form.use_template" label="科目级数">
           <el-input-number
-            v-if="dialogType === 'add'"
             v-model="form.account_levels"
             :min="1" :max="10"
             :controls="false"
             style="width: 100px"
           />
-          <span v-else class="readonly-value">{{ form.account_levels ?? 6 }} 级</span>
         </el-form-item>
-        <el-form-item label="科目长度">
-          <template v-if="dialogType === 'add'">
-            <div class="code-lengths-row">
-              <template v-for="(_, index) in Array(form.account_levels)" :key="index">
-                <span v-if="index > 0" class="lengths-sep">-</span>
-                <el-input-number
-                  v-model="form.account_code_lengths[index]"
-                  :min="1" :max="9"
-                  :controls="false"
-                  style="width: 52px"
-                />
-              </template>
-            </div>
-          </template>
-          <span v-else class="readonly-value">
-            {{ (form.account_code_lengths || []).slice(0, form.account_levels ?? 6).join(' - ') }}
-          </span>
+        <el-form-item v-if="dialogType === 'add' && !form.use_template" label="科目长度">
+          <div class="code-lengths-row">
+            <template v-for="(_, index) in Array(form.account_levels)" :key="index">
+              <span v-if="index > 0" class="lengths-sep">-</span>
+              <el-input-number
+                v-model="form.account_code_lengths[index]"
+                :min="1" :max="9"
+                :controls="false"
+                style="width: 52px"
+              />
+            </template>
+          </div>
         </el-form-item>
-        <el-form-item v-if="dialogType === 'edit'" label="状态">
-          <el-select v-model="form.status" style="width: 100%">
-            <el-option label="启用" value="active" />
-            <el-option label="停用" value="inactive" />
-          </el-select>
-        </el-form-item>
+        <template v-if="dialogType === 'edit'">
+          <el-form-item label="科目级数">
+            <span class="readonly-value">{{ form.account_levels ?? 6 }} 级</span>
+          </el-form-item>
+          <el-form-item label="科目长度">
+            <span class="readonly-value">
+              {{ (form.account_code_lengths || []).slice(0, form.account_levels ?? 6).join(' - ') }}
+            </span>
+          </el-form-item>
+          <el-form-item label="状态">
+            <el-select v-model="form.status" style="width: 100%">
+              <el-option label="启用" value="active" />
+              <el-option label="停用" value="inactive" />
+            </el-select>
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+        <el-button @click="dialogVisible = false">取 消</el-button>
+        <el-button type="primary" :loading="saving" @click="handleSave">
+          {{ dialogType === 'add' ? '创建账套' : '保存' }}
+        </el-button>
       </template>
     </el-dialog>
   </div>
@@ -134,15 +171,27 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import request from '@/api/request'
 import { useUserStore } from '@/stores/user'
+import { getAccountSetDefaultStartDate } from '@/utils/format'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, onDragEnd, colWidth } = useListColumnWidth('system_account_set')
 
 interface Template {
   id: string
   name: string
   file: string
   description: string
+}
+
+interface StandardTemplate {
+  id: string
+  name: string
+  description: string
+  acdFile: string
+  excelFiles: Array<{ name: string; path: string }>
 }
 
 const router = useRouter()
@@ -155,6 +204,13 @@ const dialogType = ref('add')
 const saving = ref(false)
 const dialogTitle = computed(() => dialogType.value === 'add' ? '新增账套' : '编辑账套')
 const templates = ref<Template[]>([])
+const standardTemplates = ref<StandardTemplate[]>([])
+
+const formRef = ref<FormInstance>()
+const formRules: FormRules = {
+  name: [{ required: true, message: '请输入单位名称', trigger: 'blur' }],
+  start_date: [{ required: true, message: '请选择启用日期', trigger: 'change' }],
+}
 
 const form = ref<any>({})
 
@@ -169,6 +225,15 @@ async function fetchTemplates() {
     templates.value = res.data || []
   } catch {
     templates.value = []
+  }
+}
+
+async function fetchStandardTemplates() {
+  try {
+    const res = await request.get<StandardTemplate[]>('/system/standard-account-set-templates')
+    standardTemplates.value = res.data || []
+  } catch {
+    standardTemplates.value = []
   }
 }
 
@@ -187,16 +252,30 @@ function openDialog(type: string, row?: any) {
     }
   } else {
     form.value = {
-      start_date: '', name: '', code: generateCode(), status: 'active', template_id: '',
+      name: '',
+      code: generateCode(),
+      credit_code: '',
+      fiscal_dept: '',
+      start_date: getAccountSetDefaultStartDate(),
+      unit_leader: '',
+      chief_accountant: '',
+      status: 'active',
+      use_template: true,
+      standard_template_id: standardTemplates.value[0]?.id || '',
       account_levels: 6,
       account_code_lengths: [4,2,2,2,2,2,2,2,2,2],
     }
   }
   dialogVisible.value = true
+  // 清理上一次的校验状态
+  setTimeout(() => formRef.value?.clearValidate(), 0)
 }
 
 async function handleSave() {
   if (saving.value) return
+  const valid = await formRef.value?.validate().catch(() => false)
+  if (!valid) return
+
   // 前端名称重复校验
   const duplicate = list.value.find(item =>
     item.name === form.value.name && item.id !== form.value.id
@@ -216,15 +295,22 @@ async function handleSave() {
       payload.fiscal_year = new Date().getFullYear()
     }
     if (dialogType.value === 'add') {
-      if (payload.template_id) {
-        // Create from template
-        const res = await request.post('/system/account-sets/from-template', payload)
-        ElMessage.success(res.data?.message || '从模板创建成功')
+      if (payload.use_template && !payload.standard_template_id) {
+        ElMessage.warning('请选择标准模版')
+        return
+      }
+      if (payload.use_template && payload.standard_template_id) {
+        // 从标准模板创建
+        const res = await request.post('/system/account-sets/from-standard-template', payload)
+        ElMessage.success((res.data as any)?.message || '从标准模板创建成功')
       } else {
+        // 创建空账套
         await request.post('/system/account-sets', payload)
+        ElMessage.success('创建成功')
       }
     } else {
       await request.put(`/system/account-sets/${payload.id}`, payload)
+      ElMessage.success('保存成功')
     }
     dialogVisible.value = false
     fetchData()
@@ -273,33 +359,72 @@ async function handleDelete(row: any) {
 onMounted(() => {
   fetchData()
   fetchTemplates()
+  fetchStandardTemplates()
 })
 </script>
 
 <style scoped>
-.page { padding: 16px; }
-.page-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
-.page-header h3 { margin: 0; }
+/* === 与登录页"新增账套"对话框保持一致的紧凑样式 === */
+.create-account-dialog :deep(.el-dialog__header) {
+  padding: 12px 16px !important;
+}
+.create-account-dialog :deep(.el-dialog__title) {
+  font-size: 15px !important;
+}
+.create-account-dialog :deep(.el-dialog__body) {
+  padding: 12px 16px 4px !important;
+}
+.create-account-dialog :deep(.el-dialog__footer) {
+  padding: 10px 16px !important;
+}
+.create-account-form :deep(.el-form-item) {
+  margin-bottom: 10px;
+}
+.create-account-form :deep(.el-form-item__label) {
+  font-size: 12px !important;
+  padding-right: 8px !important;
+}
+.template-radio-group {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.template-radio-group :deep(.el-radio) {
+  margin-right: 0;
+  height: 24px;
+}
+.template-radio-group :deep(.el-radio__label) {
+  font-size: 12px !important;
+  padding-left: 6px;
+}
+.template-select {
+  width: 100%;
+}
+.code-lengths-row :deep(.el-input-number) {
+  width: 56px;
+}
+
 .template-hint { color: var(--el-text-color-secondary); font-size: 12px; margin-top: 4px; line-height: 1.4; }
 .readonly-value { color: #606266; font-size: 14px; line-height: 32px; }
-.code-lengths-row { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
-.lengths-sep { color: #909399; font-size: 14px; }
+.code-lengths-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.lengths-sep { color: #86868b; font-size: 14px; }
 
-/* 状态列样式优化 */
+/* 状态列：紧凑表行高较矮，标签横排以免撑破行 */
 .status-cell {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 48px;
-  padding: 4px 0;
+  min-height: 0;
+  padding: 0;
 }
 
 .status-tags {
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: 4px;
   width: 100%;
 }
 
@@ -307,21 +432,18 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 52px;
-  height: 26px;
+  min-width: 0;
   font-size: 12px;
   font-weight: 600;
   border-radius: 4px;
   transition: all 0.2s ease;
-  letter-spacing: 0.5px;
 }
 
 .current-tag {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 44px;
-  height: 22px;
+  min-width: 0;
   font-size: 11px;
   font-weight: 600;
   border-radius: 3px;
@@ -329,7 +451,12 @@ onMounted(() => {
   border: none;
   box-shadow: 0 2px 4px rgba(64, 158, 255, 0.2);
   transition: all 0.2s ease;
-  letter-spacing: 0.5px;
+}
+
+/* 紧凑表默认行高较矮，本页状态/操作列略高时允许行撑开 */
+.el-table.compact-data-table :deep(.el-table__body .el-table__row) {
+  height: auto !important;
+  min-height: 30px;
 }
 
 .current-tag:hover {

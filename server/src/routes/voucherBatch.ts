@@ -1,19 +1,16 @@
 import { Router } from 'express'
-import { getDb } from '../db/index.ts'
-import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.ts'
+import { getDb } from '../db/index.js'
+import { authMiddleware, AuthRequest, requirePermission, operationLog } from '../middleware/index.js'
 import {
-  auditBatchVouchers,
   buildBatchAuditPreviewData,
   buildBatchDeletePreviewData,
   deleteBatchVouchers,
   findPostedVoucher,
-  findSelfMadeVoucher,
   getBatchVoucherFilters,
-  getBatchVoucherQuery,
   loadBatchDraftVouchers,
   loadBatchFilteredVouchers,
   validateBatchVoucherFilters,
-} from '../services/voucherEntry.ts'
+} from '../services/voucherEntry.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -30,14 +27,6 @@ router.post(
     }
 
     const db = getDb()
-    const query = getBatchVoucherQuery({
-      voucherTypeIds: filters.voucherTypeIds,
-      accountSetId: req.accountSetId || '',
-      startDate: filters.startDate,
-      endDate: filters.endDate,
-      startNo: filters.startNo,
-      endNo: filters.endNo,
-    })
     const vouchers = loadBatchDraftVouchers({
       db,
       accountSetId: req.accountSetId || '',
@@ -51,55 +40,9 @@ router.post(
   }
 )
 
-router.post(
-  '/vouchers/batch-audit',
-  operationLog('批量审核凭证', '凭证管理'),
-  (req: AuthRequest, res) => {
-    const filters = getBatchVoucherFilters(req.body)
-    if (!validateBatchVoucherFilters(filters)) {
-      return res.status(400).json({ code: 400, message: '日期区间、凭证类型不能为空' })
-    }
-
-    const db = getDb()
-    const query = getBatchVoucherQuery({
-      voucherTypeIds: filters.voucherTypeIds,
-      accountSetId: req.accountSetId || '',
-      startDate: filters.startDate,
-      endDate: filters.endDate,
-      startNo: filters.startNo,
-      endNo: filters.endNo,
-    })
-    const vouchers = loadBatchDraftVouchers({
-      db,
-      accountSetId: req.accountSetId || '',
-      filters,
-    })
-
-    if (vouchers.length === 0) {
-      return res.status(400).json({ code: 400, message: '未找到符合条件的草稿凭证' })
-    }
-
-    const selfMadeVoucher = findSelfMadeVoucher(vouchers, req.userId)
-    if (selfMadeVoucher) {
-      return res
-        .status(400)
-        .json({ code: 400, message: `制单人与审核人不能为同一人：${selfMadeVoucher.voucher_no}` })
-    }
-
-    auditBatchVouchers({
-      db,
-      vouchers,
-      userId: req.userId,
-      userName: req.userName,
-    })
-
-    res.json({
-      code: 0,
-      message: `批量审核成功，共审核 ${vouchers.length} 张凭证`,
-      data: { count: vouchers.length },
-    })
-  }
-)
+// /vouchers/batch-audit 的实际实现在 routes/voucherAudit.ts；
+// Express 路由按注册顺序匹配，voucherAuditRoutes 在 index.ts 中先 use，所以这里曾经的同名 handler 永远不会被调用。
+// 已于 2026-05-21 删除该死代码，本文件保留 batch-audit/preview。
 
 // ===================== 批量删除 =====================
 
@@ -113,14 +56,6 @@ router.post(
     }
 
     const db = getDb()
-    const query = getBatchVoucherQuery({
-      voucherTypeIds: filters.voucherTypeIds,
-      accountSetId: req.accountSetId || '',
-      startDate: filters.startDate,
-      endDate: filters.endDate,
-      startNo: filters.startNo,
-      endNo: filters.endNo,
-    })
     const vouchers = loadBatchFilteredVouchers({
       db,
       accountSetId: req.accountSetId || '',
@@ -136,6 +71,7 @@ router.post(
 
 router.post(
   '/vouchers/batch-delete',
+  requirePermission('voucher:entry'),
   operationLog('批量删除凭证', '凭证管理'),
   (req: AuthRequest, res) => {
     const filters = getBatchVoucherFilters(req.body)
@@ -144,14 +80,6 @@ router.post(
     }
 
     const db = getDb()
-    const query = getBatchVoucherQuery({
-      voucherTypeIds: filters.voucherTypeIds,
-      accountSetId: req.accountSetId || '',
-      startDate: filters.startDate,
-      endDate: filters.endDate,
-      startNo: filters.startNo,
-      endNo: filters.endNo,
-    })
     const vouchers = loadBatchFilteredVouchers({
       db,
       accountSetId: req.accountSetId || '',
@@ -166,7 +94,7 @@ router.post(
     if (postedVoucher) {
       return res
         .status(400)
-        .json({ code: 400, message: `存在已过账凭证，无法批量删除：${postedVoucher.voucher_no}` })
+        .json({ code: 400, message: `存在已记账凭证，无法批量删除：${postedVoucher.voucher_no}` })
     }
 
     deleteBatchVouchers({ db, vouchers })
@@ -224,6 +152,7 @@ router.post(
 
 router.post(
   '/vouchers/batch-unaudit',
+  requirePermission('voucher:audit'),
   operationLog('批量反审核凭证', '凭证管理'),
   (req: AuthRequest, res) => {
     const filters = getBatchVoucherFilters(req.body)
@@ -273,11 +202,11 @@ router.post(
   }
 )
 
-// ===================== 批量过账 =====================
+// ===================== 批量记账 =====================
 
 router.post(
   '/vouchers/batch-post/preview',
-  operationLog('预览批量过账凭证', '凭证管理'),
+  operationLog('预览批量记账凭证', '凭证管理'),
   (req: AuthRequest, res) => {
     const filters = getBatchVoucherFilters(req.body)
     if (!validateBatchVoucherFilters(filters)) {
@@ -318,7 +247,8 @@ router.post(
 
 router.post(
   '/vouchers/batch-post',
-  operationLog('批量过账凭证', '凭证管理'),
+  requirePermission('voucher:post'),
+  operationLog('批量记账凭证', '凭证管理'),
   (req: AuthRequest, res) => {
     const filters = getBatchVoucherFilters(req.body)
     if (!validateBatchVoucherFilters(filters)) {
@@ -349,7 +279,7 @@ router.post(
       return res.status(400).json({ code: 400, message: '未找到符合条件的已审核凭证' })
     }
 
-    // 批量过账逻辑
+    // 批量记账逻辑
     const { applyVoucherPosting } = require('../services/voucherPosting.ts')
     const { v4: uuidv4 } = require('uuid')
 
@@ -372,17 +302,17 @@ router.post(
 
     res.json({
       code: 0,
-      message: `批量过账成功，共过账 ${vouchers.length} 张凭证`,
+      message: `批量记账成功，共记账 ${vouchers.length} 张凭证`,
       data: { count: vouchers.length },
     })
   }
 )
 
-// ===================== 批量反过账 =====================
+// ===================== 批量反记账 =====================
 
 router.post(
   '/vouchers/batch-unpost/preview',
-  operationLog('预览批量反过账凭证', '凭证管理'),
+  operationLog('预览批量反记账凭证', '凭证管理'),
   (req: AuthRequest, res) => {
     const filters = getBatchVoucherFilters(req.body)
     if (!validateBatchVoucherFilters(filters)) {
@@ -423,7 +353,8 @@ router.post(
 
 router.post(
   '/vouchers/batch-unpost',
-  operationLog('批量反过账凭证', '凭证管理'),
+  requirePermission('voucher:unpost'),
+  operationLog('批量反记账凭证', '凭证管理'),
   (req: AuthRequest, res) => {
     const filters = getBatchVoucherFilters(req.body)
     if (!validateBatchVoucherFilters(filters)) {
@@ -451,10 +382,10 @@ router.post(
       ) as any[]
 
     if (vouchers.length === 0) {
-      return res.status(400).json({ code: 400, message: '未找到符合条件的已过账凭证' })
+      return res.status(400).json({ code: 400, message: '未找到符合条件的已记账凭证' })
     }
 
-    // 批量反过账逻辑
+    // 批量反记账逻辑
     const { applyVoucherUnpost } = require('../services/voucherPosting.ts')
 
     const transaction = db.transaction(() => {
@@ -476,7 +407,7 @@ router.post(
 
     res.json({
       code: 0,
-      message: `批量反过账成功，共反过账 ${vouchers.length} 张凭证`,
+      message: `批量反记账成功，共反记账 ${vouchers.length} 张凭证`,
       data: { count: vouchers.length },
     })
   }

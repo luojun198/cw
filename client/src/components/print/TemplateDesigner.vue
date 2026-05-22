@@ -8,29 +8,71 @@
             <el-input v-model="template.name" placeholder="请输入模版名称" style="width: 200px" />
           </el-form-item>
           <el-form-item label="纸张规格">
-            <el-select v-model="template.paper_size" style="width: 120px" @change="handlePaperSizeChange">
+            <el-select
+              v-model="template.paper_size"
+              style="width: 120px"
+              @change="handlePaperSizeChange"
+            >
               <el-option label="自定义" value="custom" />
               <el-option label="A4" value="a4" />
               <el-option label="A5" value="a5" />
             </el-select>
           </el-form-item>
           <el-form-item label="宽度(mm)">
-            <el-input-number v-model="template.paper_width" :min="100" :max="500" :disabled="template.paper_size !== 'custom'" />
+            <el-input-number
+              v-model="template.paper_width"
+              :min="100"
+              :max="500"
+              :disabled="template.paper_size !== 'custom'"
+            />
           </el-form-item>
           <el-form-item label="高度(mm)">
-            <el-input-number v-model="template.paper_height" :min="100" :max="500" :disabled="template.paper_size !== 'custom'" />
+            <el-input-number
+              v-model="template.paper_height"
+              :min="100"
+              :max="500"
+              :disabled="template.paper_size !== 'custom'"
+            />
           </el-form-item>
           <el-form-item label="上边距">
-            <el-input-number v-model="template.margin_top" :min="0" :max="50" :step="1" :precision="1" style="width: 90px" />
+            <el-input-number
+              v-model="template.margin_top"
+              :min="0"
+              :max="50"
+              :step="1"
+              :precision="1"
+              style="width: 90px"
+            />
           </el-form-item>
           <el-form-item label="下边距">
-            <el-input-number v-model="template.margin_bottom" :min="0" :max="50" :step="1" :precision="1" style="width: 90px" />
+            <el-input-number
+              v-model="template.margin_bottom"
+              :min="0"
+              :max="50"
+              :step="1"
+              :precision="1"
+              style="width: 90px"
+            />
           </el-form-item>
           <el-form-item label="左边距">
-            <el-input-number v-model="template.margin_left" :min="0" :max="50" :step="1" :precision="1" style="width: 90px" />
+            <el-input-number
+              v-model="template.margin_left"
+              :min="0"
+              :max="50"
+              :step="1"
+              :precision="1"
+              style="width: 90px"
+            />
           </el-form-item>
           <el-form-item label="右边距">
-            <el-input-number v-model="template.margin_right" :min="0" :max="50" :step="1" :precision="1" style="width: 90px" />
+            <el-input-number
+              v-model="template.margin_right"
+              :min="0"
+              :max="50"
+              :step="1"
+              :precision="1"
+              style="width: 90px"
+            />
           </el-form-item>
         </el-form>
       </div>
@@ -45,7 +87,7 @@
       <!-- 左侧元素面板 -->
       <div class="element-panel">
         <div class="panel-title">元素库</div>
-        
+
         <!-- 基础元素 -->
         <div class="element-group">
           <div class="group-title">基础元素</div>
@@ -135,11 +177,7 @@
       <!-- 中间画布区域 -->
       <div class="canvas-container">
         <div class="canvas-wrapper">
-          <div
-            ref="canvasRef"
-            class="canvas"
-            :style="canvasOuterStyle"
-          >
+          <div ref="canvasRef" class="canvas" :style="canvasOuterStyle">
             <!-- 内容区容器：元素在此内部定位 -->
             <div
               ref="contentRef"
@@ -149,11 +187,7 @@
               @dragover.prevent
               @mousedown.self="handleCanvasMouseDown"
             >
-              <div
-                v-if="selBoxVisible"
-                class="selection-box"
-                :style="selectionBoxStyle"
-              />
+              <div v-if="selBoxVisible" class="selection-box" :style="selectionBoxStyle" />
               <!-- 渲染所有元素 -->
               <vue-draggable-resizable
                 v-for="element in elements"
@@ -165,20 +199,23 @@
                 :parent="true"
                 :grid="[mm2px(0.5), mm2px(0.5)]"
                 :class="{ 'vdr-selected': isSelected(element) }"
-                @dragging="(left, top) => onDrag(element, left, top)"
-                @resizing="(left, top, width, height) => onResize(element, left, top, width, height)"
+                @dragging="(left: number, top: number) => onDrag(element, left, top)"
+                @resizing="
+                  (left: number, top: number, width: number, height: number) =>
+                    onResize(element, left, top, width, height)
+                "
                 @activated="selectElement(element)"
                 @deactivated="deselectElement"
               >
                 <div
                   class="element-content"
                   :style="{
-                    fontSize: (element.fontSize * 1.333) + 'px',
+                    fontSize: element.fontSize * pxPerPt + 'px',
                     fontWeight: element.fontWeight,
                     textAlign: element.align,
                     width: '100%',
                     height: '100%',
-                    overflow: 'hidden'
+                    overflow: 'hidden',
                   }"
                   @click.stop="handleElementClick(element, $event)"
                 >
@@ -193,7 +230,7 @@
       <!-- 右侧属性面板 -->
       <div class="property-panel">
         <div class="panel-title">属性设置</div>
-        
+
         <div v-if="selectedElements.length > 1" class="property-form">
           <el-form label-width="80px" size="small">
             <el-form-item label="已选元素">
@@ -220,11 +257,21 @@
               </div>
             </el-form-item>
             <el-form-item label="移动步长">
-              <el-input-number v-model="moveStep" :min="0.5" :max="20" :step="0.5" :precision="1" size="small" style="width: 100px" />
-              <span style="margin-left: 8px; font-size: 12px; color: #909399;">mm</span>
+              <el-input-number
+                v-model="moveStep"
+                :min="0.5"
+                :max="20"
+                :step="0.5"
+                :precision="1"
+                size="small"
+                style="width: 100px"
+              />
+              <span style="margin-left: 8px; font-size: 12px; color: #909399">mm</span>
             </el-form-item>
             <el-form-item>
-              <el-button type="danger" size="small" @click="handleDeleteElement">删除元素 ({{ selectedElements.length }})</el-button>
+              <el-button type="danger" size="small" @click="handleDeleteElement"
+                >删除元素 ({{ selectedElements.length }})</el-button
+              >
             </el-form-item>
           </el-form>
         </div>
@@ -237,34 +284,34 @@
               <el-input-number v-model="selectedElement.x" :min="0" :step="1" :precision="1" />
               <span class="unit-hint">mm</span>
             </el-form-item>
-            
+
             <el-form-item label="Y 坐标">
               <el-input-number v-model="selectedElement.y" :min="0" :step="1" :precision="1" />
               <span class="unit-hint">mm</span>
             </el-form-item>
-            
+
             <el-form-item label="宽度">
               <el-input-number v-model="selectedElement.width" :min="5" :step="1" :precision="1" />
               <span class="unit-hint">mm</span>
             </el-form-item>
-            
+
             <el-form-item label="高度">
               <el-input-number v-model="selectedElement.height" :min="5" :step="1" :precision="1" />
               <span class="unit-hint">mm</span>
             </el-form-item>
-            
+
             <el-form-item label="字体大小">
               <el-input-number v-model="selectedElement.fontSize" :min="6" :max="48" :step="1" />
               <span class="unit-hint">pt</span>
             </el-form-item>
-            
+
             <el-form-item label="字体粗细">
               <el-select v-model="selectedElement.fontWeight">
                 <el-option label="正常" value="normal" />
                 <el-option label="加粗" value="bold" />
               </el-select>
             </el-form-item>
-            
+
             <el-form-item label="对齐方式">
               <el-select v-model="selectedElement.align">
                 <el-option label="左对齐" value="left" />
@@ -274,7 +321,10 @@
             </el-form-item>
 
             <!-- 自定义文本 -->
-            <el-form-item v-if="selectedElement.type === 'text' || selectedElement.type === 'title'" label="文本内容">
+            <el-form-item
+              v-if="selectedElement.type === 'text' || selectedElement.type === 'title'"
+              label="文本内容"
+            >
               <el-input v-model="selectedElement.text" type="textarea" :rows="3" />
             </el-form-item>
 
@@ -289,7 +339,9 @@
 
             <!-- 金额格式 -->
             <el-form-item
-              v-if="selectedElement.type === 'total_debit' || selectedElement.type === 'total_credit'"
+              v-if="
+                selectedElement.type === 'total_debit' || selectedElement.type === 'total_credit'
+              "
               label="金额格式"
             >
               <el-select v-model="selectedElement.numberFormat">
@@ -304,45 +356,147 @@
               <el-form-item label="边框宽度">
                 <el-input-number v-model="selectedElement.borderWidth" :min="0" :max="5" />
               </el-form-item>
-              
+
               <el-form-item label="显示表头">
                 <el-switch v-model="selectedElement.showHeader" />
               </el-form-item>
-              
+
               <el-form-item label="行高">
-                <el-input-number v-model="selectedElement.rowHeight" :min="4" :max="25" :step="1" :precision="1" />
+                <el-input-number
+                  v-model="selectedElement.rowHeight"
+                  :min="4"
+                  :max="25"
+                  :step="1"
+                  :precision="1"
+                />
                 <span class="unit-hint">mm</span>
               </el-form-item>
-              
+
               <el-form-item label="打印行数">
                 <el-input-number v-model="selectedElement.printRows" :min="3" :max="20" :step="1" />
                 <span class="unit-hint">含合计行</span>
               </el-form-item>
-              
+
               <el-form-item label="表格列">
+                <el-alert type="info" :closable="false" style="margin-bottom: 12px">
+                  <template #default>
+                    <span style="font-size: 12px"
+                      >列头永远居中显示，垂直对齐和内边距设置仅对明细行生效</span
+                    >
+                  </template>
+                </el-alert>
                 <div class="table-columns">
                   <div
                     v-for="(col, index) in selectedElement.columns"
                     :key="index"
                     class="column-item"
                   >
-                    <el-checkbox v-model="col.visible">{{ col.label }}</el-checkbox>
-                    <el-input v-model="col.width" size="small" style="width: 80px; margin-left: 10px;" placeholder="宽度" />
-                    <el-button
-                      type="danger"
-                      size="small"
-                      text
-                      @click="removeColumn(index)"
-                      style="margin-left: 10px;"
-                    >
-                      删除
-                    </el-button>
+                    <div class="column-main-row">
+                      <el-checkbox v-model="col.visible">{{ col.label }}</el-checkbox>
+                      <el-input
+                        v-model="col.width"
+                        size="small"
+                        style="width: 80px; margin-left: 10px"
+                        placeholder="宽度"
+                      />
+                      <el-select
+                        v-model="col.align"
+                        size="small"
+                        style="width: 90px; margin-left: 10px"
+                        placeholder="水平对齐"
+                      >
+                        <el-option label="左" value="left" />
+                        <el-option label="中" value="center" />
+                        <el-option label="右" value="right" />
+                      </el-select>
+                      <el-select
+                        v-model="col.verticalAlign"
+                        size="small"
+                        style="width: 90px; margin-left: 10px"
+                        placeholder="垂直对齐"
+                      >
+                        <el-option label="上" value="top" />
+                        <el-option label="中" value="middle" />
+                        <el-option label="下" value="bottom" />
+                      </el-select>
+                      <el-button
+                        size="small"
+                        text
+                        style="margin-left: 10px"
+                        @click="toggleColumnPadding(index)"
+                      >
+                        内边距
+                      </el-button>
+                      <el-button
+                        type="danger"
+                        size="small"
+                        text
+                        style="margin-left: 10px"
+                        @click="removeColumn(index)"
+                      >
+                        删除
+                      </el-button>
+                    </div>
+
+                    <!-- 内边距详细设置（可折叠） -->
+                    <div v-if="(col as any).showPaddingSettings" class="column-padding-settings">
+                      <el-form label-width="40px" size="small">
+                        <el-form-item label="上">
+                          <el-input-number
+                            v-model="col.paddingTop"
+                            :min="0"
+                            :max="10"
+                            :step="0.5"
+                            :precision="1"
+                            size="small"
+                            style="width: 100px"
+                          />
+                          <span class="unit-hint">mm</span>
+                        </el-form-item>
+                        <el-form-item label="下">
+                          <el-input-number
+                            v-model="col.paddingBottom"
+                            :min="0"
+                            :max="10"
+                            :step="0.5"
+                            :precision="1"
+                            size="small"
+                            style="width: 100px"
+                          />
+                          <span class="unit-hint">mm</span>
+                        </el-form-item>
+                        <el-form-item label="左">
+                          <el-input-number
+                            v-model="col.paddingLeft"
+                            :min="0"
+                            :max="10"
+                            :step="0.5"
+                            :precision="1"
+                            size="small"
+                            style="width: 100px"
+                          />
+                          <span class="unit-hint">mm</span>
+                        </el-form-item>
+                        <el-form-item label="右">
+                          <el-input-number
+                            v-model="col.paddingRight"
+                            :min="0"
+                            :max="10"
+                            :step="0.5"
+                            :precision="1"
+                            size="small"
+                            style="width: 100px"
+                          />
+                          <span class="unit-hint">mm</span>
+                        </el-form-item>
+                      </el-form>
+                    </div>
                   </div>
                   <el-select
                     v-model="newColumnField"
                     placeholder="添加列"
                     size="small"
-                    style="width: 100%; margin-top: 10px;"
+                    style="width: 100%; margin-top: 10px"
                     @change="addColumn"
                   >
                     <el-option
@@ -357,11 +511,13 @@
             </template>
 
             <el-form-item>
-              <el-button type="danger" size="small" @click="handleDeleteElement">删除元素</el-button>
+              <el-button type="danger" size="small" @click="handleDeleteElement"
+                >删除元素</el-button
+              >
             </el-form-item>
           </el-form>
         </div>
-        
+
         <div v-else class="no-selection">
           <el-empty description="请选择一个元素" />
         </div>
@@ -369,12 +525,7 @@
     </div>
 
     <!-- 预览对话框 -->
-    <el-dialog
-      v-model="previewVisible"
-      title="打印预览"
-      width="90%"
-      :close-on-click-modal="false"
-    >
+    <el-dialog v-model="previewVisible" title="打印预览" width="90%" :close-on-click-modal="false">
       <PrintPreview
         v-if="previewVisible"
         :template="currentTemplate"
@@ -385,7 +536,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import VueDraggableResizable from 'vue-draggable-resizable'
 import 'vue-draggable-resizable/style.css'
@@ -394,6 +545,7 @@ import type { PrintTemplate, FieldElement, FieldElementType, TableColumn } from 
 import type { VoucherPrintData } from '@/types/print'
 import { useUserStore } from '@/stores/user'
 import request from '@/api/request'
+import { normalizePrintTemplateElements } from '@/utils/printTemplate'
 
 // 图标组件
 import {
@@ -406,7 +558,7 @@ import {
   Grid,
   Plus,
   User,
-  OfficeBuilding
+  OfficeBuilding,
 } from '@element-plus/icons-vue'
 
 const props = defineProps<{
@@ -435,7 +587,7 @@ const template = ref<PrintTemplate>({
   elements: [],
   is_default: false,
   created_at: '',
-  updated_at: ''
+  updated_at: '',
 })
 
 // 画布引用（外层纸张容器）
@@ -443,10 +595,31 @@ const canvasRef = ref<HTMLElement>()
 // 内容区引用
 const contentRef = ref<HTMLElement>()
 
-// mm → px 换算常量（1mm = 3.7795px @ 96 DPI）
-const MM_PER_PX = 3.7795275591
-function mm2px(mm: number): number { return mm * MM_PER_PX }
-function px2mm(px: number): number { return px / MM_PER_PX }
+// mm → px 动态换算（根据实际屏幕 DPI 计算，与浏览器 CSS mm 单位一致）
+let mmPerPx = 3.7795275591
+let pxPerPt = 1.333 // pt → px 换算（屏幕 DPI / 72）
+
+function calibrateMmPerPx() {
+  if (!document.body) return
+  const testEl = document.createElement('div')
+  testEl.style.cssText =
+    'width:100mm;position:fixed;visibility:hidden;pointer-events:none;font-size:72pt'
+  document.body.appendChild(testEl)
+  const pxWidth = testEl.offsetWidth
+  const ptHeight = parseFloat(getComputedStyle(testEl).fontSize) || 96
+  document.body.removeChild(testEl)
+  if (pxWidth > 0) {
+    mmPerPx = pxWidth / 100
+    pxPerPt = ptHeight / 72
+  }
+}
+
+function mm2px(mm: number): number {
+  return mm * mmPerPx
+}
+function px2mm(px: number): number {
+  return px / mmPerPx
+}
 
 // 获取鼠标在内容区的坐标，返回 mm
 function getCanvasOffsetMm(e: MouseEvent): { x: number; y: number } {
@@ -455,7 +628,7 @@ function getCanvasOffsetMm(e: MouseEvent): { x: number; y: number } {
   const rect = target.getBoundingClientRect()
   return {
     x: px2mm(e.clientX - rect.left),
-    y: px2mm(e.clientY - rect.top)
+    y: px2mm(e.clientY - rect.top),
   }
 }
 
@@ -466,7 +639,7 @@ const elements = ref<FieldElement[]>([])
 const selectedElements = ref<FieldElement[]>([])
 
 // 兼容旧单选逻辑（属性面板等场景只需要第一个）
-const selectedElement = computed<FieldElement | null>(() => 
+const selectedElement = computed<FieldElement | null>(() =>
   selectedElements.value.length === 1 ? selectedElements.value[0] : null
 )
 
@@ -490,7 +663,10 @@ function pushUndo() {
 }
 
 function undo() {
-  if (undoIndex.value <= 0) { ElMessage.info('没有可撤销的操作'); return }
+  if (undoIndex.value <= 0) {
+    ElMessage.info('没有可撤销的操作')
+    return
+  }
   undoIndex.value--
   elements.value = JSON.parse(undoStack.value[undoIndex.value])
   selectedElements.value = []
@@ -498,7 +674,10 @@ function undo() {
 }
 
 function redo() {
-  if (undoIndex.value >= undoStack.value.length - 1) { ElMessage.info('没有可恢复的操作'); return }
+  if (undoIndex.value >= undoStack.value.length - 1) {
+    ElMessage.info('没有可恢复的操作')
+    return
+  }
   undoIndex.value++
   elements.value = JSON.parse(undoStack.value[undoIndex.value])
   selectedElements.value = []
@@ -519,7 +698,7 @@ const selectionBoxStyle = computed(() => {
     left: `${mm2px(selBoxX.value)}px`,
     top: `${mm2px(selBoxY.value)}px`,
     width: `${mm2px(selBoxW.value)}px`,
-    height: `${mm2px(selBoxH.value)}px`
+    height: `${mm2px(selBoxH.value)}px`,
   }
 })
 
@@ -541,14 +720,14 @@ const availableColumns = computed(() => {
     { field: 'account_code', label: '科目代码' },
     { field: 'account_name', label: '科目名称' },
     { field: 'debit', label: '借方' },
-    { field: 'credit', label: '贷方' }
+    { field: 'credit', label: '贷方' },
   ]
-  
+
   const auxColumns = auxCategories.value.map(cat => ({
     field: `aux_${cat.code}`,
-    label: cat.name
+    label: cat.name,
   }))
-  
+
   return [...baseColumns, ...auxColumns]
 })
 
@@ -567,7 +746,7 @@ const newColumnField = ref<string>('')
 // 元素库定义
 const basicElements = [
   { type: 'title' as FieldElementType, label: '标题', icon: Document },
-  { type: 'text' as FieldElementType, label: '自定义文本', icon: Edit }
+  { type: 'text' as FieldElementType, label: '自定义文本', icon: Edit },
 ]
 
 const voucherElements = [
@@ -576,44 +755,43 @@ const voucherElements = [
   { type: 'voucher_no' as FieldElementType, label: '凭证字号', icon: Tickets },
   { type: 'date' as FieldElementType, label: '日期', icon: Calendar },
   { type: 'voucher_type' as FieldElementType, label: '凭证类型', icon: Files },
-  { type: 'attachments' as FieldElementType, label: '附件张数', icon: Paperclip }
+  { type: 'attachments' as FieldElementType, label: '附件张数', icon: Paperclip },
 ]
 
-const tableElements = [
-  { type: 'table' as FieldElementType, label: '分录表格', icon: Grid }
-]
+const tableElements = [{ type: 'table' as FieldElementType, label: '分录表格', icon: Grid }]
 
 const totalElements = [
   { type: 'total_label' as FieldElementType, label: '合计标签', icon: Document },
   { type: 'total_debit' as FieldElementType, label: '借方合计', icon: Plus },
-  { type: 'total_credit' as FieldElementType, label: '贷方合计', icon: Plus }
+  { type: 'total_credit' as FieldElementType, label: '贷方合计', icon: Plus },
 ]
 
 const signatureElements = [
   { type: 'signature_maker' as FieldElementType, label: '制单', icon: User },
   { type: 'signature_auditor' as FieldElementType, label: '审核', icon: User },
   { type: 'signature_poster' as FieldElementType, label: '记账', icon: User },
-  { type: 'signature_supervisor' as FieldElementType, label: '主管', icon: User }
+  { type: 'signature_supervisor' as FieldElementType, label: '主管', icon: User },
 ]
 
 // 画布外层样式（纸张尺寸，padding 显示页边距区域）
 const canvasOuterStyle = computed(() => ({
   width: `${template.value.paper_width}mm`,
   height: `${template.value.paper_height}mm`,
-  padding: `${template.value.margin_top}mm ${template.value.margin_right}mm ${template.value.margin_bottom}mm ${template.value.margin_left}mm`
+  padding: `${template.value.margin_top}mm ${template.value.margin_right}mm ${template.value.margin_bottom}mm ${template.value.margin_left}mm`,
+  boxSizing: 'border-box' as const,
 }))
 
 // 画布内容区样式（元素实际放置区域）
 const canvasContentStyle = computed(() => ({
   width: '100%',
   height: '100%',
-  position: 'relative' as const
+  position: 'relative' as const,
 }))
 
 // 当前模版（用于预览）
 const currentTemplate = computed<PrintTemplate>(() => ({
   ...template.value,
-  elements: elements.value
+  elements: elements.value,
 }))
 
 // 模拟凭证数据
@@ -624,21 +802,35 @@ const mockVouchers = ref<VoucherPrintData[]>([
     date: '2026-04-28',
     voucher_type: '记账凭证',
     attachments: 2,
+    account_set_name: '示例账套',
     entries: [
-      { summary: '购买办公用品', account_code: '6602', account_name: '办公费', debit: 1000, credit: 0 },
-      { summary: '银行存款', account_code: '1002', account_name: '银行存款', debit: 0, credit: 1000 }
+      {
+        summary: '购买办公用品',
+        account_code: '6602',
+        account_name: '办公费',
+        debit: 1000,
+        credit: 0,
+      },
+      {
+        summary: '银行存款',
+        account_code: '1002',
+        account_name: '银行存款',
+        debit: 0,
+        credit: 1000,
+      },
     ],
     total_debit: 1000,
     total_credit: 1000,
     created_by: '张三',
     created_at: '2026-04-28 10:00:00',
     auditor: '李四',
-    audit_time: '2026-04-28 11:00:00'
-  }
+    audit_time: '2026-04-28 11:00:00',
+  },
 ])
 
 // 初始化
 onMounted(() => {
+  calibrateMmPerPx()
   loadAuxCategories()
   loadTemplate()
   window.addEventListener('keydown', handleKeyDown)
@@ -666,9 +858,14 @@ async function loadTemplate() {
     try {
       const response = await request.get<PrintTemplate>(`/base/print-templates/${props.templateId}`)
       template.value = response.data
-      
-      if (template.value.elements && template.value.elements.length > 0) {
-        elements.value = JSON.parse(JSON.stringify(template.value.elements))
+
+      const normalized = normalizePrintTemplateElements(
+        template.value.elements,
+        template.value.paper_width,
+        template.value.paper_height
+      )
+      if (normalized.length > 0) {
+        elements.value = JSON.parse(JSON.stringify(normalized))
         pushUndo()
       } else {
         generatePresetLayout()
@@ -686,47 +883,131 @@ async function loadTemplate() {
 // 生成预设布局
 function generatePresetLayout() {
   // 内容区 200mm x 120mm（220-10-10, 140-10-10）
-  const cw = 200  // 内容区宽度
+  const cw = 200 // 内容区宽度
   const presetElements: FieldElement[] = []
-  
+
   // 标题
-  presetElements.push(createFieldElement('title', 50, 2, 100, 10, {
-    text: '记账凭证', fontSize: 16, fontWeight: 'bold', align: 'center'
-  }))
-  
+  presetElements.push(
+    createFieldElement('title', 50, 2, 100, 10, {
+      text: '记账凭证',
+      fontSize: 16,
+      fontWeight: 'bold',
+      align: 'center',
+    })
+  )
+
   // 账套名称
-  presetElements.push(createFieldElement('account_set_name', 60, 12, 80, 6, {
-    fontSize: 9, align: 'center'
-  }))
-  
+  presetElements.push(
+    createFieldElement('account_set_name', 60, 12, 80, 6, {
+      fontSize: 9,
+      align: 'center',
+    })
+  )
+
   // 凭证字号 / 日期
-  presetElements.push(createFieldElement('voucher_no', 0, 20, 50, 6, {
-    fontSize: 9, align: 'left'
-  }))
-  presetElements.push(createFieldElement('date', 150, 20, 50, 6, {
-    fontSize: 9, align: 'right', dateFormat: 'YYYY-MM-DD'
-  }))
-  
+  presetElements.push(
+    createFieldElement('voucher_no', 0, 20, 50, 6, {
+      fontSize: 9,
+      align: 'left',
+    })
+  )
+  presetElements.push(
+    createFieldElement('date', 150, 20, 50, 6, {
+      fontSize: 9,
+      align: 'right',
+      dateFormat: 'YYYY-MM-DD',
+    })
+  )
+
   // 分录表格（6行含合计，行高 6mm，表头 6mm → 6+6*6=42mm）
-  presetElements.push(createFieldElement('table', 0, 28, cw, 50, {
-    fontSize: 9, borderWidth: 1, showHeader: true,
-    rowHeight: 6, printRows: 6, numberFormat: 'thousand',
-    columns: [
-      { field: 'summary', label: '摘要', width: '30%', align: 'left', visible: true },
-      { field: 'account_code', label: '科目代码', width: '12%', align: 'center', visible: true },
-      { field: 'account_name', label: '科目名称', width: '23%', align: 'left', visible: true },
-      { field: 'debit', label: '借方金额', width: '17.5%', align: 'right', visible: true },
-      { field: 'credit', label: '贷方金额', width: '17.5%', align: 'right', visible: true }
-    ]
-  }))
-  
+  presetElements.push(
+    createFieldElement('table', 0, 28, cw, 50, {
+      fontSize: 9,
+      borderWidth: 1,
+      showHeader: true,
+      rowHeight: 6,
+      printRows: 6,
+      numberFormat: 'thousand',
+      columns: [
+        {
+          field: 'summary',
+          label: '摘要',
+          width: '30%',
+          align: 'left',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'account_code',
+          label: '科目代码',
+          width: '12%',
+          align: 'center',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'account_name',
+          label: '科目名称',
+          width: '23%',
+          align: 'left',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'debit',
+          label: '借方金额',
+          width: '17.5%',
+          align: 'right',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'credit',
+          label: '贷方金额',
+          width: '17.5%',
+          align: 'right',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+      ],
+    })
+  )
+
   // 签名栏（四列均匀分布）
   const sigY = 82
-  presetElements.push(createFieldElement('signature_maker', 0, sigY, 45, 6, { fontSize: 9, align: 'center' }))
-  presetElements.push(createFieldElement('signature_auditor', 50, sigY, 45, 6, { fontSize: 9, align: 'center' }))
-  presetElements.push(createFieldElement('signature_poster', 100, sigY, 45, 6, { fontSize: 9, align: 'center' }))
-  presetElements.push(createFieldElement('signature_supervisor', 150, sigY, 45, 6, { fontSize: 9, align: 'center' }))
-  
+  presetElements.push(
+    createFieldElement('signature_maker', 0, sigY, 45, 6, { fontSize: 9, align: 'center' })
+  )
+  presetElements.push(
+    createFieldElement('signature_auditor', 50, sigY, 45, 6, { fontSize: 9, align: 'center' })
+  )
+  presetElements.push(
+    createFieldElement('signature_poster', 100, sigY, 45, 6, { fontSize: 9, align: 'center' })
+  )
+  presetElements.push(
+    createFieldElement('signature_supervisor', 150, sigY, 45, 6, { fontSize: 9, align: 'center' })
+  )
+
   elements.value = presetElements
   pushUndo()
 }
@@ -750,7 +1031,7 @@ function createFieldElement(
     fontSize: 12,
     fontWeight: 'normal',
     align: 'left',
-    ...options
+    ...options,
   }
 }
 
@@ -765,25 +1046,32 @@ function handleDragStart(event: DragEvent, type: FieldElementType) {
 // 放置元素
 function handleDrop(event: DragEvent) {
   event.preventDefault()
-  
+
   const type = event.dataTransfer?.getData('elementType') as FieldElementType
   if (!type) return
-  
+
   const { x, y } = getCanvasOffsetMm(event)
-  
-  const newElement = createFieldElement(type, Math.round(x * 10) / 10, Math.round(y * 10) / 10, 50, 10, getDefaultElementOptions(type))
-  
+
+  const newElement = createFieldElement(
+    type,
+    Math.round(x * 10) / 10,
+    Math.round(y * 10) / 10,
+    50,
+    10,
+    getDefaultElementOptions(type)
+  )
+
   pushUndo()
   elements.value.push(newElement)
   selectedElements.value = [newElement]
-  
+
   ElMessage.success('元素已添加')
 }
 
 // 获取默认元素选项
 function getDefaultElementOptions(type: FieldElementType): Partial<FieldElement> {
   const options: Partial<FieldElement> = {}
-  
+
   switch (type) {
     case 'title':
       options.text = '记账凭证'
@@ -825,11 +1113,66 @@ function getDefaultElementOptions(type: FieldElementType): Partial<FieldElement>
       options.width = 170
       options.height = 80
       options.columns = [
-        { field: 'summary', label: '摘要', width: '35%', align: 'left', visible: true },
-        { field: 'account_code', label: '科目代码', width: '12%', align: 'center', visible: true },
-        { field: 'account_name', label: '科目名称', width: '18%', align: 'left', visible: true },
-        { field: 'debit', label: '借方', width: '17.5%', align: 'right', visible: true },
-        { field: 'credit', label: '贷方', width: '17.5%', align: 'right', visible: true }
+        {
+          field: 'summary',
+          label: '摘要',
+          width: '35%',
+          align: 'left',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'account_code',
+          label: '科目代码',
+          width: '12%',
+          align: 'center',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'account_name',
+          label: '科目名称',
+          width: '18%',
+          align: 'left',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'debit',
+          label: '借方',
+          width: '17.5%',
+          align: 'right',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
+        {
+          field: 'credit',
+          label: '贷方',
+          width: '17.5%',
+          align: 'right',
+          verticalAlign: 'middle',
+          paddingTop: 1,
+          paddingBottom: 1,
+          paddingLeft: 1,
+          paddingRight: 1,
+          visible: true,
+        },
       ]
       break
     case 'signature_maker':
@@ -842,7 +1185,7 @@ function getDefaultElementOptions(type: FieldElementType): Partial<FieldElement>
       options.height = 8
       break
   }
-  
+
   return options
 }
 
@@ -891,7 +1234,7 @@ function onResize(element: FieldElement, left: number, top: number, width: numbe
 // 元素点击（支持 Ctrl 多选）
 function handleElementClick(element: FieldElement, event: MouseEvent) {
   const ctrlOrMeta = event.ctrlKey || event.metaKey
-  
+
   if (ctrlOrMeta) {
     const idx = selectedElements.value.findIndex(e => e.id === element.id)
     if (idx >= 0) {
@@ -905,7 +1248,7 @@ function handleElementClick(element: FieldElement, event: MouseEvent) {
 }
 
 // 选中元素（activated 回调）
-function selectElement(element: FieldElement) {
+function selectElement(_element: FieldElement) {
   pushUndo()
 }
 
@@ -916,7 +1259,7 @@ function deselectElement() {
 
 function handleCanvasMouseDown(event: MouseEvent) {
   if (event.button !== 0) return
-  
+
   const { x, y } = getCanvasOffsetMm(event)
   selStartX = x
   selStartY = y
@@ -925,7 +1268,7 @@ function handleCanvasMouseDown(event: MouseEvent) {
   selBoxW.value = 0
   selBoxH.value = 0
   selBoxVisible.value = true
-  
+
   const onMouseMove = (e: MouseEvent) => {
     const { x: cx, y: cy } = getCanvasOffsetMm(e)
     selBoxX.value = Math.min(selStartX, cx)
@@ -933,20 +1276,27 @@ function handleCanvasMouseDown(event: MouseEvent) {
     selBoxW.value = Math.abs(cx - selStartX)
     selBoxH.value = Math.abs(cy - selStartY)
   }
-  
+
   const onMouseUp = () => {
     selBoxVisible.value = false
     document.removeEventListener('mousemove', onMouseMove)
     document.removeEventListener('mouseup', onMouseUp)
-    if (selBoxW.value < 1 && selBoxH.value < 1) { selectedElements.value = []; return }
-    const bl = selBoxX.value, bt = selBoxY.value, br = bl + selBoxW.value, bb = bt + selBoxH.value
+    if (selBoxW.value < 1 && selBoxH.value < 1) {
+      selectedElements.value = []
+      return
+    }
+    const bl = selBoxX.value,
+      bt = selBoxY.value,
+      br = bl + selBoxW.value,
+      bb = bt + selBoxH.value
     const inBox = elements.value.filter(el => {
-      const er = el.x + el.width, eb = el.y + el.height
+      const er = el.x + el.width,
+        eb = el.y + el.height
       return el.x < br && er > bl && el.y < bb && eb > bt
     })
     selectedElements.value = inBox
   }
-  
+
   document.addEventListener('mousemove', onMouseMove)
   document.addEventListener('mouseup', onMouseUp)
 }
@@ -954,7 +1304,7 @@ function handleCanvasMouseDown(event: MouseEvent) {
 // 删除元素
 function handleDeleteElement() {
   if (selectedElements.value.length === 0) return
-  
+
   pushUndo()
   const ids = new Set(selectedElements.value.map(e => e.id))
   elements.value = elements.value.filter(e => !ids.has(e.id))
@@ -968,27 +1318,32 @@ function addColumn() {
   if (!selectedElement.value || selectedElement.value.type !== 'table' || !newColumnField.value) {
     return
   }
-  
+
   const columnDef = availableColumns.value.find(col => col.field === newColumnField.value)
   if (!columnDef) return
-  
+
   const newColumn: TableColumn = {
     field: columnDef.field as any,
     label: columnDef.label,
     width: '120',
     align: 'left',
-    visible: true
+    verticalAlign: 'middle',
+    paddingTop: 1,
+    paddingBottom: 1,
+    paddingLeft: 1,
+    paddingRight: 1,
+    visible: true,
   }
-  
+
   // 如果是辅助项目列，添加 auxCategoryCode
   if (columnDef.field.startsWith('aux_')) {
     newColumn.auxCategoryCode = columnDef.field.replace('aux_', '')
   }
-  
+
   if (!selectedElement.value.columns) {
     selectedElement.value.columns = []
   }
-  
+
   selectedElement.value.columns.push(newColumn)
   newColumnField.value = ''
   ElMessage.success('列已添加')
@@ -999,10 +1354,23 @@ function removeColumn(index: number) {
   if (!selectedElement.value || selectedElement.value.type !== 'table') {
     return
   }
-  
+
   if (selectedElement.value.columns && selectedElement.value.columns.length > index) {
     selectedElement.value.columns.splice(index, 1)
     ElMessage.success('列已删除')
+  }
+}
+
+// 切换列的内边距设置显示
+function toggleColumnPadding(index: number) {
+  if (!selectedElement.value || selectedElement.value.type !== 'table') return
+  const col = selectedElement.value.columns?.[index]
+  if (col) {
+    // 使用 Vue 的响应式方式添加属性
+    if (!('showPaddingSettings' in col)) {
+      ;(col as any).showPaddingSettings = false
+    }
+    ;(col as any).showPaddingSettings = !(col as any).showPaddingSettings
   }
 }
 
@@ -1052,7 +1420,7 @@ function getElementTypeLabel(type: FieldElementType): string {
     ...voucherElements,
     ...tableElements,
     ...totalElements,
-    ...signatureElements
+    ...signatureElements,
   ]
   return allElements.find(e => e.type === type)?.label || type
 }
@@ -1077,7 +1445,7 @@ async function handleSave() {
       margin_bottom: template.value.margin_bottom,
       margin_left: template.value.margin_left,
       margin_right: template.value.margin_right,
-      elements: elements.value
+      elements: elements.value,
     }
 
     if (props.templateId) {
@@ -1121,11 +1489,15 @@ function handleReset() {
 function handleKeyDown(event: KeyboardEvent) {
   const tag = (event.target as HTMLElement)?.tagName
   const isInput = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-  
+
   if ((event.ctrlKey || event.metaKey) && !isInput) {
     if (event.key === 'z' || event.key === 'Z') {
       event.preventDefault()
-      if (event.shiftKey) { redo() } else { undo() }
+      if (event.shiftKey) {
+        redo()
+      } else {
+        undo()
+      }
       return
     }
     if (event.key === 'y' || event.key === 'Y') {
@@ -1134,9 +1506,9 @@ function handleKeyDown(event: KeyboardEvent) {
       return
     }
   }
-  
+
   if (selectedElements.value.length === 0) return
-  
+
   // 删除键
   if (event.key === 'Delete' || event.key === 'Backspace') {
     if (isInput) return
@@ -1144,20 +1516,30 @@ function handleKeyDown(event: KeyboardEvent) {
     handleDeleteElement()
     return
   }
-  
+
   // 方向键移动
   if (isInput) return
   const step = moveStep.value
-  let dx = 0, dy = 0
-  
+  let dx = 0,
+    dy = 0
+
   switch (event.key) {
-    case 'ArrowUp': dy = -step; break
-    case 'ArrowDown': dy = step; break
-    case 'ArrowLeft': dx = -step; break
-    case 'ArrowRight': dx = step; break
-    default: return
+    case 'ArrowUp':
+      dy = -step
+      break
+    case 'ArrowDown':
+      dy = step
+      break
+    case 'ArrowLeft':
+      dx = -step
+      break
+    case 'ArrowRight':
+      dx = step
+      break
+    default:
+      return
   }
-  
+
   event.preventDefault()
   selectedElements.value.forEach(el => {
     el.x = Math.max(0, Math.round((el.x + dx) * 10) / 10)
@@ -1170,14 +1552,14 @@ function handleKeyDown(event: KeyboardEvent) {
 function alignLeft() {
   pushUndo()
   const minX = Math.min(...selectedElements.value.map(e => e.x))
-  selectedElements.value.forEach(e => e.x = minX)
+  selectedElements.value.forEach(e => (e.x = minX))
   ElMessage.success('左对齐')
 }
 
 function alignRight() {
   pushUndo()
   const maxR = Math.max(...selectedElements.value.map(e => e.x + e.width))
-  selectedElements.value.forEach(e => e.x = maxR - e.width)
+  selectedElements.value.forEach(e => (e.x = maxR - e.width))
   ElMessage.success('右对齐')
 }
 
@@ -1186,21 +1568,21 @@ function alignCenterH() {
   const minX = Math.min(...selectedElements.value.map(e => e.x))
   const maxR = Math.max(...selectedElements.value.map(e => e.x + e.width))
   const center = (minX + maxR) / 2
-  selectedElements.value.forEach(e => e.x = Math.round(center - e.width / 2))
+  selectedElements.value.forEach(e => (e.x = Math.round(center - e.width / 2)))
   ElMessage.success('水平居中')
 }
 
 function alignTop() {
   pushUndo()
   const minY = Math.min(...selectedElements.value.map(e => e.y))
-  selectedElements.value.forEach(e => e.y = minY)
+  selectedElements.value.forEach(e => (e.y = minY))
   ElMessage.success('上对齐')
 }
 
 function alignBottom() {
   pushUndo()
   const maxB = Math.max(...selectedElements.value.map(e => e.y + e.height))
-  selectedElements.value.forEach(e => e.y = maxB - e.height)
+  selectedElements.value.forEach(e => (e.y = maxB - e.height))
   ElMessage.success('下对齐')
 }
 
@@ -1209,7 +1591,7 @@ function alignMiddleV() {
   const minY = Math.min(...selectedElements.value.map(e => e.y))
   const maxB = Math.max(...selectedElements.value.map(e => e.y + e.height))
   const center = (minY + maxB) / 2
-  selectedElements.value.forEach(e => e.y = Math.round(center - e.height / 2))
+  selectedElements.value.forEach(e => (e.y = Math.round(center - e.height / 2)))
   ElMessage.success('垂直居中')
 }
 
@@ -1217,7 +1599,7 @@ function equalWidth() {
   pushUndo()
   const refWidth = selectedElements.value[0]?.width
   if (!refWidth) return
-  selectedElements.value.forEach(e => e.width = refWidth)
+  selectedElements.value.forEach(e => (e.width = refWidth))
   ElMessage.success('等宽')
 }
 
@@ -1225,7 +1607,7 @@ function equalHeight() {
   pushUndo()
   const refHeight = selectedElements.value[0]?.height
   if (!refHeight) return
-  selectedElements.value.forEach(e => e.height = refHeight)
+  selectedElements.value.forEach(e => (e.height = refHeight))
   ElMessage.success('等高')
 }
 </script>
@@ -1393,10 +1775,29 @@ function equalHeight() {
 
 .column-item {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   padding: 8px;
   background: #f5f7fa;
   border-radius: 4px;
+}
+
+.column-main-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.column-padding-settings {
+  margin-top: 12px;
+  padding: 12px;
+  background: #fff;
+  border-radius: 4px;
+  border: 1px solid #e4e7ed;
+}
+
+.column-padding-settings .el-form-item {
+  margin-bottom: 8px;
 }
 
 :deep(.vdr-selected) {

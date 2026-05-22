@@ -10,23 +10,31 @@ export interface PerformanceMetrics {
 
 class PerformanceMonitor {
   private metrics: PerformanceMetrics[] = []
-  private marks: Map<string, number> = new Map()
+  private marks: Map<string, number[]> = new Map()
 
   /**
    * 开始计时
    */
   start(name: string) {
-    this.marks.set(name, performance.now())
+    const stack = this.marks.get(name) || []
+    stack.push(performance.now())
+    this.marks.set(name, stack)
   }
 
   /**
    * 结束计时并记录
    */
   end(name: string) {
-    const startTime = this.marks.get(name)
+    const stack = this.marks.get(name)
+    const startTime = stack?.pop()
     if (!startTime) {
       console.warn(`Performance mark "${name}" not found`)
       return
+    }
+    if (stack && stack.length > 0) {
+      this.marks.set(name, stack)
+    } else {
+      this.marks.delete(name)
     }
 
     const duration = performance.now() - startTime
@@ -35,8 +43,6 @@ class PerformanceMonitor {
       duration,
       timestamp: Date.now(),
     })
-
-    this.marks.delete(name)
 
     // 如果耗时超过阈值，输出警告
     if (duration > 1000) {
@@ -137,7 +143,7 @@ export { performanceMonitor }
  * }
  */
 export function measurePerformance(name: string) {
-  return function (target: any, propertyKey: string, descriptor: PropertyDescriptor) {
+  return function (_target: any, _propertyKey: string, descriptor: PropertyDescriptor) {
     const originalMethod = descriptor.value
 
     descriptor.value = async function (...args: any[]) {

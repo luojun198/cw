@@ -1,13 +1,13 @@
 import { Router } from 'express'
-import { getDb } from '../db/index.ts'
-import { authMiddleware, AuthRequest } from '../middleware/index.ts'
+import { getDb } from '../db/index.js'
+import { authMiddleware, AuthRequest } from '../middleware/index.js'
 import {
   buildAiSummaryEntryText,
   buildAiSummaryRequestBody,
   extractAiSummary,
   getAiSummaryApiUrl,
   isAiSummaryEnabled,
-} from '../services/voucherEntry.ts'
+} from '../services/voucherEntry.js'
 
 const router = Router()
 router.use(authMiddleware)

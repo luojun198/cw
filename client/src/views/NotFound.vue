@@ -9,10 +9,5 @@
 </template>
 
 <style scoped>
-.not-found {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-}
+@import './NotFound.styles.css';
 </style>

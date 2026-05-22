@@ -216,17 +216,22 @@ export function useDynamicReportEditor(templateSheets: Ref<TemplateSheet[]>, sel
       sheetId: sheet.id,
       cells: Object.values(draftCells.value)
         .filter(cell => cell.row_index !== undefined && cell.col_index !== undefined)
-        .map(cell => ({
-          id: cell.id,
-          row_index: cell.row_index,
-          col_index: cell.col_index,
-          cell_type: cell.cell_type,
-          text_value: cell.text_value === undefined ? null : cell.text_value,
-          formula_text: cell.formula_text === undefined ? null : cell.formula_text,
-          format_text: cell.format_text === undefined ? null : cell.format_text,
-          style_key: cell.style_key === undefined ? null : cell.style_key,
-          merge_info: cell.merge_info === undefined ? null : cell.merge_info,
-        })),
+        .map(cell => {
+          const entry: Record<string, unknown> = {
+            id: cell.id,
+            row_index: cell.row_index,
+            col_index: cell.col_index,
+            cell_type: cell.cell_type,
+            text_value: cell.text_value === undefined ? null : cell.text_value,
+            formula_text: cell.formula_text === undefined ? null : cell.formula_text,
+            format_text: cell.format_text === undefined ? null : cell.format_text,
+            style_key: cell.style_key === undefined ? null : cell.style_key,
+          }
+          if (cell.merge_info !== undefined) {
+            entry.merge_info = cell.merge_info
+          }
+          return entry
+        }),
     }
   }
 

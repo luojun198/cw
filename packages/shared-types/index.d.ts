@@ -13,6 +13,11 @@ export interface LoginResponse {
   user: UserInfo
   accountSetId?: string
   accountSetName?: string
+  lastLoginTime?: string | null
+  lastLoginIp?: string | null
+  currentLoginIp?: string
+  forcedLogin?: boolean
+  forcedOldLoginIp?: string | null
 }
 
 export interface UserInfo {
@@ -23,6 +28,7 @@ export interface UserInfo {
   roleName: string
   accountSetId: string
   accountSetName: string
+  permissions?: string[]
 }
 
 export interface CaptchaResponse {

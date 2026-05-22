@@ -10,18 +10,17 @@ function buildWhereClause(conditions: string[]) {
 
 export function buildSystemUsersQuery(filters: {
   currentAccountSetId: string
-  accountSetId?: string
 }) {
   const conditions = ['u.account_set_id = ?']
-  const params: SqlParam[] = [filters.accountSetId || filters.currentAccountSetId]
+  const params: SqlParam[] = [filters.currentAccountSetId]
 
   return {
     sql: `
       SELECT u.id, u.username, u.nickname, u.email, u.phone, u.status, u.last_login_at, u.created_at,
-             u.account_set_id, a.name as account_set_name,
+             u.account_set_id, u.role_id, a.name as account_set_name,
              r.name as role_name
       FROM users u
-      LEFT JOIN roles r ON u.role_id = r.id
+      LEFT JOIN roles r ON u.role_id = r.id AND r.account_set_id = u.account_set_id
       LEFT JOIN account_sets a ON a.id = u.account_set_id
       ${buildWhereClause(conditions)}
     `,

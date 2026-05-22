@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import jwt from 'jsonwebtoken'
-import { generateToken } from '../middleware/auth'
+import { generateToken } from '../middleware/auth.js'
 
 describe('auth middleware', () => {
   // 设置测试环境变量

@@ -1,3 +1,5 @@
+import type Database from 'better-sqlite3'
+
 export interface VoucherListFilters {
   accountSetId: string
   page: number
@@ -16,6 +18,9 @@ export interface VoucherListFilters {
   auxFields?: Record<string, string>
   sortField?: string
   sortOrder?: string
+  // 游标分页参数
+  cursor?: string // 上次查询的最后一条记录的游标（base64 编码的 JSON）
+  useCursor?: boolean // 是否使用游标分页
 }
 
 export interface BatchVoucherQueryFilters {
@@ -63,9 +68,17 @@ export function buildBatchVoucherQuery({
   }
 }
 
-export function buildVoucherListQuery(filters: VoucherListFilters) {
+export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.Database) {
   const conditions = ['v.account_set_id = ?']
   const params: Array<string | number> = [filters.accountSetId]
+
+  // 判断是否需要 JOIN voucher_entries（仅在需要分录级过滤时）
+  const needsEntryJoin = !!(
+    filters.accountId ||
+    (filters.accountIds && filters.accountIds.length > 0) ||
+    filters.auxItems ||
+    filters.auxFields
+  )
 
   if (filters.year !== undefined && filters.year !== '') {
     conditions.push('v.year = ?')
@@ -98,22 +111,40 @@ export function buildVoucherListQuery(filters: VoucherListFilters) {
   }
 
   if (filters.keyword) {
-    const keywordPattern = `%${filters.keyword}%`
-    // 基础字段：凭证号、备注、摘要、金额、制单人、记账人
-    // 科目字段：科目编码、科目名称
-    // 辅助核算：通过 JSON 搜索 aux_data 中的所有内容（包括辅助项目名称和自定义字段值）
-    conditions.push(`(
-      v.voucher_no LIKE ? 
-      OR v.remark LIKE ? 
-      OR ve.summary LIKE ? 
-      OR CAST(v.total_amount AS TEXT) LIKE ? 
-      OR v.maker_name LIKE ? 
-      OR v.poster_name LIKE ?
-      OR ve.account_code LIKE ?
-      OR ve.account_name LIKE ?
-      OR ve.aux_data LIKE ?
-    )`)
-    params.push(keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern, keywordPattern)
+    // 使用 FTS5 全文索引进行搜索
+    // unicode61 分词器将连续中文字符视为一个 token（如"安盾安保服务有限公司"）
+    // 因此需要追加 * 做前缀匹配，否则 MATCH '安盾' 找不到"安盾安保服务有限公司"
+    const rawKeyword = filters.keyword.trim()
+    // 追加 * 做前缀匹配，否则 unicode61 分词器下 MATCH '安盾' 找不到"安盾安保服务有限公司"
+    const ftsQuery = rawKeyword.endsWith('*') ? rawKeyword : `${rawKeyword}*`
+
+    // 从 FTS5 表中搜索匹配的凭证 ID
+    const voucherFtsResults = db.prepare(`
+      SELECT DISTINCT voucher_id FROM vouchers_fts
+      WHERE vouchers_fts MATCH ?
+    `).all(ftsQuery) as Array<{ voucher_id: number }>
+
+    // 从分录 FTS5 表中搜索匹配的凭证 ID
+    const entryFtsResults = db.prepare(`
+      SELECT DISTINCT voucher_id FROM voucher_entries_fts
+      WHERE voucher_entries_fts MATCH ?
+    `).all(ftsQuery) as Array<{ voucher_id: number }>
+
+    // 合并两个结果集
+    const matchedVoucherIds = new Set<number>()
+    voucherFtsResults.forEach(r => matchedVoucherIds.add(r.voucher_id))
+    entryFtsResults.forEach(r => matchedVoucherIds.add(r.voucher_id))
+
+    // 如果有匹配结果，添加到查询条件
+    if (matchedVoucherIds.size > 0) {
+      const voucherIdList = Array.from(matchedVoucherIds)
+      const placeholders = voucherIdList.map(() => '?').join(',')
+      conditions.push(`v.rowid IN (${placeholders})`)
+      params.push(...voucherIdList)
+    } else {
+      // 没有匹配结果，返回空
+      conditions.push('1 = 0')
+    }
   }
 
   if (filters.accountId) {
@@ -138,12 +169,14 @@ export function buildVoucherListQuery(filters: VoucherListFilters) {
   // aux_data 格式：{ category_code: { id: itemId, field_values: {...} } }
   // filters.auxItems 的 key 已经是 categoryCode（在路由层转换）
   if (filters.auxItems) {
-    for (const [categoryCode, itemIds] of Object.entries(filters.auxItems)) {
+    for (let [categoryCode, itemIds] of Object.entries(filters.auxItems)) {
+        categoryCode = (categoryCode || '').replace(/[^a-zA-Z0-9_]/g, '')
+        if (!categoryCode) continue
       if (itemIds && Array.isArray(itemIds) && itemIds.length > 0) {
         const placeholders = itemIds.map(() => '?').join(',')
         conditions.push(
-          `EXISTS (SELECT 1 FROM voucher_entries ve2 
-           WHERE ve2.voucher_id = v.id 
+          `EXISTS (SELECT 1 FROM voucher_entries ve2
+           WHERE ve2.voucher_id = v.id
            AND json_extract(ve2.aux_data, '$.${categoryCode}.id') IN (${placeholders}))`
         )
         params.push(...itemIds)
@@ -160,11 +193,12 @@ export function buildVoucherListQuery(filters: VoucherListFilters) {
         // key 格式：categoryCode_fieldKey
         const parts = key.split('_')
         if (parts.length >= 2) {
-          const categoryCode = parts[0]
-          const fieldKey = parts.slice(1).join('_')
+          const categoryCode = (parts[0] || '').replace(/[^a-zA-Z0-9_]/g, '')
+          const fieldKey = (parts.slice(1).join('_') || '').replace(/[^a-zA-Z0-9_]/g, '')
+          if (!categoryCode || !fieldKey) continue
           conditions.push(
-            `EXISTS (SELECT 1 FROM voucher_entries ve3 
-             WHERE ve3.voucher_id = v.id 
+            `EXISTS (SELECT 1 FROM voucher_entries ve3
+             WHERE ve3.voucher_id = v.id
              AND json_extract(ve3.aux_data, '$.${categoryCode}.field_values.${fieldKey}') LIKE ?)`
           )
           params.push(`%${value}%`)
@@ -187,21 +221,54 @@ export function buildVoucherListQuery(filters: VoucherListFilters) {
   const sortDir = filters.sortOrder === 'asc' ? 'ASC' : 'DESC'
   const orderBy = `ORDER BY ${sortExpr} ${sortDir}, v.voucher_no ASC`
 
+  // 游标分页支持
+  let cursorCondition = ''
+  if (filters.useCursor && filters.cursor) {
+    try {
+      const cursorData = JSON.parse(Buffer.from(filters.cursor, 'base64').toString('utf-8'))
+      const { sortValue, voucherNo } = cursorData
+
+      // 根据排序方向构建游标条件
+      if (filters.sortOrder === 'asc') {
+        cursorCondition = ` AND ((${sortExpr} > ?) OR (${sortExpr} = ? AND v.voucher_no > ?))`
+      } else {
+        cursorCondition = ` AND ((${sortExpr} < ?) OR (${sortExpr} = ? AND v.voucher_no > ?))`
+      }
+      params.push(sortValue, sortValue, voucherNo)
+    } catch (err) {
+      console.error('解析游标失败:', err)
+    }
+  }
+
+  const finalWhereClause = whereClause + cursorCondition
+
   // pageSize 为 -1 时返回全部，不加 LIMIT/OFFSET
   const isAll = filters.pageSize === -1
-  const limitClause = isAll ? '' : '\n      LIMIT ? OFFSET ?'
+  // 游标分页只需要 LIMIT，不需要 OFFSET
+  const limitClause = isAll ? '' : (filters.useCursor ? '\n      LIMIT ?' : '\n      LIMIT ? OFFSET ?')
+
+  // 条件性 JOIN：仅在需要分录级过滤时才 JOIN voucher_entries
+  // 这样可以避免 5x 行膨胀和 DISTINCT 开销
+  const entryJoinClause = needsEntryJoin ? 'LEFT JOIN voucher_entries ve ON v.id = ve.voucher_id' : ''
+  const distinctClause = needsEntryJoin ? 'DISTINCT' : ''
 
   return {
-    countSql: `SELECT COUNT(DISTINCT v.id) as count FROM vouchers v LEFT JOIN voucher_entries ve ON v.id=ve.voucher_id ${whereClause}`,
+    countSql: needsEntryJoin
+      ? `SELECT COUNT(DISTINCT v.id) as count FROM vouchers v ${entryJoinClause} ${whereClause}`
+      : `SELECT COUNT(*) as count FROM vouchers v ${whereClause}`,
     listSql: `
-      SELECT DISTINCT v.*, vt.name as voucher_type_name
+      SELECT ${distinctClause} v.*, vt.name as voucher_type_name
       FROM vouchers v
       LEFT JOIN voucher_types vt ON v.voucher_type_id = vt.id
-      LEFT JOIN voucher_entries ve ON v.id = ve.voucher_id
-      ${whereClause}
+      ${entryJoinClause}
+      ${finalWhereClause}
       ${orderBy}${limitClause}
     `,
-    countParams: params,
-    listParams: isAll ? params : [...params, filters.pageSize, (filters.page - 1) * filters.pageSize],
+    countParams: params.slice(0, params.length - (filters.useCursor && filters.cursor ? 3 : 0)),
+    listParams: isAll
+      ? params
+      : (filters.useCursor
+          ? [...params, filters.pageSize]
+          : [...params, filters.pageSize, (filters.page - 1) * filters.pageSize]),
   }
 }

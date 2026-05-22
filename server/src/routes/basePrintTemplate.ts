@@ -1,7 +1,8 @@
 import { Router } from 'express'
+import { normalizePrintTemplateElements } from '../utils/printTemplateNormalize.js'
 import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '../db/index.ts'
-import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.ts'
+import { getDb } from '../db/index.js'
+import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -26,7 +27,7 @@ router.get('/print-templates', (req: AuthRequest, res) => {
     code: 0,
     data: templates.map((t: any) => ({
       ...t,
-      elements: JSON.parse(t.elements || '[]'),
+      elements: normalizePrintTemplateElements(t.elements ? JSON.parse(t.elements) : [], t.paper_width, t.paper_height),
       is_default: Boolean(t.is_default),
     })),
   })
@@ -54,7 +55,11 @@ router.get('/print-templates/:id', (req: AuthRequest, res) => {
     code: 0,
     data: {
       ...template,
-      elements: JSON.parse(template.elements || '[]'),
+      elements: normalizePrintTemplateElements(
+        JSON.parse(template.elements || '[]'),
+        template.paper_width,
+        template.paper_height
+      ),
       is_default: Boolean(template.is_default),
     },
   })

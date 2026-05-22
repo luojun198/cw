@@ -14,6 +14,7 @@
 - 导入凭证类型（pzlx.txt）→ voucher_types表
 - 导入报表模板（bbml.txt + bb*.vts）→ report_definitions等报表系列表
 - 导入系统参数（xt.txt）→ system_params表
+- 导入辅助核算主数据（xmk/dwk/bmk/grk/xjll_xm/zjly）→ aux_items；其中 **xjll_xm（现金流量项目）** 含 `jd` 流向：`0`=流入、`1`=流出，同步写入 `cash_flow_items.direction`
 - 导入完成后显示各模块导入数量统计
 - 支持文件格式校验，非ACD文件或损坏文件给出友好提示
 
@@ -37,6 +38,7 @@
 3. **凭证数据映射**：pz.txt每行是一条分录（非凭证主表），通过 nf+yf+pzlx+pzbh 组合键聚合为一张凭证，pzdj.txt提供凭证级别信息（制单人、审核人等）
 4. **结转关系映射**：jzlx.txt中每行代表一个结转分录，按结转类型代码（10/20/60/70/80等）分组为transfer_types，每行映射为transfer_items
 5. **期初余额修复**：nc.txt中列索引对应为：row[0]=科目代码, row[2]=年初借方, row[3]=年初贷方, row[4]=借方累计, row[5]=贷方累计, row[6]=余额方向标志, row[14]=年度；当前代码只插入0，需提取实际金额
+6. **现金流量流向**：xjll_xm 表结构为 row[0]=xjbm(编码), row[1]=xjmc(名称), row[2]=jd(流向)；导入时双写 aux_items.field_values 与 cash_flow_items
 
 ### 性能考虑
 

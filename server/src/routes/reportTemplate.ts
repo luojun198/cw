@@ -1,39 +1,69 @@
 import { Router } from 'express'
 import crypto from 'node:crypto'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import multer from 'multer'
 import { v4 as uuidv4 } from 'uuid'
-import { authMiddleware, AuthRequest } from '../middleware/index.ts'
-import { getDb } from '../db/index.ts'
-import { executeTemplateSheets } from '../services/reportTemplateExecutor.ts'
+import { authMiddleware, AuthRequest } from '../middleware/index.js'
+import { getDb } from '../db/index.js'
+import { executeTemplateSheets } from '../services/reportTemplateExecutor.js'
+import { exportReportTemplateToBuffer } from '../services/reportTemplateExport.js'
+import { saveReportTemplateExcelSource } from '../services/reportTemplatePersistence.js'
 import {
   createReportTask,
   getReportTask,
   updateReportTask,
   runWithProgress,
-} from '../services/reportTaskManager.ts'
+} from '../services/reportTaskManager.js'
+import { getSheetContentBounds, readExcelStyleBundle } from '../services/standardTemplateImport.js'
 
 const router = Router()
 router.use(authMiddleware)
 
 // Excel 模板上传配置
-const ALLOWED_EXCEL_MIMES = [
-  'application/vnd.ms-excel',
-  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-]
-
 const excelUpload = multer({
   storage: multer.memoryStorage(),
   limits: {
     fileSize: 10 * 1024 * 1024, // 10MB
     files: 1,
   },
-  fileFilter: (req, file, cb) => {
-    if (!ALLOWED_EXCEL_MIMES.includes(file.mimetype)) {
-      return cb(new Error('仅支持 Excel 文件 (.xls, .xlsx)'))
-    }
-    cb(null, true)
-  },
 })
+
+function sanitizeReportTemplateFilePart(value: string) {
+  return value.replace(/[\\/:*?"<>|\x00-\x1F]/g, '_').trim() || 'template'
+}
+
+function persistUploadedReportTemplate(params: {
+  accountSetId: string
+  reportCode: string
+  originalName: string
+  buffer: Buffer
+}) {
+  const { accountSetId, reportCode, originalName, buffer } = params
+  const ext = originalName.toLowerCase().endsWith('.xls') ? '.xls' : '.xlsx'
+  const baseName = sanitizeReportTemplateFilePart(originalName.replace(/\.[^.]+$/, ''))
+  const safeCode = sanitizeReportTemplateFilePart(reportCode)
+  const dir = join(process.cwd(), 'uploads', 'report-templates', sanitizeReportTemplateFilePart(accountSetId))
+  mkdirSync(dir, { recursive: true })
+  const fileName = `${safeCode}_${Date.now()}_${baseName}${ext}`
+  const fullPath = join(dir, fileName)
+  writeFileSync(fullPath, buffer)
+  return fullPath
+}
+
+function buildCoveredMergeKeys(mergeMap: Map<string, { colSpan: number; rowSpan: number }>) {
+  const covered = new Set<string>()
+  for (const [key, span] of mergeMap.entries()) {
+    const [rowIndex, colIndex] = key.split(':').map(Number)
+    for (let dr = 0; dr < span.rowSpan; dr += 1) {
+      for (let dc = 0; dc < span.colSpan; dc += 1) {
+        if (dr === 0 && dc === 0) continue
+        covered.add(`${rowIndex + dr}:${colIndex + dc}`)
+      }
+    }
+  }
+  return covered
+}
 
 // 报表生成进度查询接口
 router.get('/tasks/:taskId', (req: AuthRequest, res) => {
@@ -206,7 +236,7 @@ router.get('/templates', (req: AuthRequest, res) => {
       SELECT id, code, name, source, source_file, sort_order, is_enabled
       FROM report_definitions
       WHERE account_set_id = ?
-      ORDER BY sort_order ASC, code ASC
+      ORDER BY code ASC, sort_order ASC
       `
     )
     .all(resolvedAccountSetId) as ReportDefinitionRow[]
@@ -635,28 +665,63 @@ router.post('/templates/:code/rowcol', (req: AuthRequest, res) => {
 })
 
 router.post('/templates/import', excelUpload.single('file'), async (req: AuthRequest, res) => {
-  const db = getDb()
-  const resolvedAccountSetId = resolveAccountSetId(req.accountSetId || '', db)
-  const reportCode = String(req.body?.reportCode || '').trim()
-  const reportName = String(req.body?.reportName || '').trim()
-
-  if (!req.file) {
-    return res.status(400).json({ code: 400, message: '请选择要上传的 Excel 文件' })
-  }
-
-  const filename = req.file.originalname
-  const ext = filename.toLowerCase().split('.').pop()
-  if (ext !== 'xls' && ext !== 'xlsx') {
-    return res.status(400).json({ code: 400, message: `只支持 .xls 或 .xlsx 格式` })
-  }
-
-  if (!reportCode) {
-    return res.status(400).json({ code: 400, message: '请提供报表编码 reportCode' })
-  }
-
   try {
+    const db = getDb()
+    const resolvedAccountSetId = resolveAccountSetId(req.accountSetId || '', db)
+    const reportCode = String(req.body?.reportCode || '').trim()
+    const reportName = String(req.body?.reportName || '').trim()
+
+    console.log('[import] 开始导入报表，reportCode:', reportCode, 'reportName:', reportName)
+
+    if (!req.file) {
+      return res.status(400).json({ code: 400, message: '请选择要上传的 Excel 文件' })
+    }
+
+    const uploadedFile = req.file
+    const filename = uploadedFile.originalname
+    const ext = filename.toLowerCase().split('.').pop()
+    console.log('[import] 文件名:', filename, '扩展名:', ext, '文件大小:', req.file.size)
+
+    if (ext !== 'xls' && ext !== 'xlsx') {
+      return res.status(400).json({ code: 400, message: `只支持 .xls 或 .xlsx 格式` })
+    }
+
+    if (!reportCode) {
+      return res.status(400).json({ code: 400, message: '请提供报表编码 reportCode' })
+    }
+    const persistedSourceFile = persistUploadedReportTemplate({
+      accountSetId: resolvedAccountSetId,
+      reportCode,
+      originalName: filename,
+      buffer: uploadedFile.buffer,
+    })
     const xlsx = await import('xlsx')
-    const workbook = xlsx.read(req.file.buffer, { type: 'buffer', cellStyles: true })
+    const iconv = (await import('iconv-lite')).default
+    const workbook = xlsx.read(uploadedFile.buffer, { type: 'buffer', cellStyles: true, codepage: 936 })
+
+    const sheetsToImportNames = workbook.SheetNames.slice(0, 1)
+    const contentBoundsBySheet = sheetsToImportNames.map(sheetName =>
+      getSheetContentBounds(workbook.Sheets[sheetName])
+    )
+    const styleBundle = await readExcelStyleBundle(uploadedFile.buffer, contentBoundsBySheet)
+
+    const fontMapsBySheet = new Map<number, Map<string, { bold?: boolean; sz?: number; name?: string }>>()
+    for (const [sheetIndex, styleMap] of styleBundle.stylesBySheet.entries()) {
+      const sheetFontMap = new Map<string, { bold?: boolean; sz?: number; name?: string }>()
+      for (const [key, style] of styleMap.entries()) {
+        const f = style.font
+        if (
+          f &&
+          (f.bold || (f.size && f.size !== 11) || (f.name && !/^宋体|Calibri$/i.test(f.name)))
+        ) {
+          sheetFontMap.set(key, { bold: f.bold, sz: f.size, name: f.name })
+        }
+      }
+      fontMapsBySheet.set(sheetIndex, sheetFontMap)
+    }
+    const excelStyleMergeMaps = new Map<number, Map<string, { colSpan: number; rowSpan: number }>>(
+      styleBundle.mergesBySheet
+    )
 
     // Derive report name: explicit param > first sheet name > reportCode
     const effectiveName = reportName || workbook.SheetNames[0]?.replace(/\(定义\)$/g, '').trim() || reportCode
@@ -670,7 +735,7 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
         definitionId = definition.id
         db.prepare(
           `UPDATE report_definitions SET name = ?, source = 'xls', source_file = ?, updated_at = datetime('now') WHERE id = ?`
-        ).run(effectiveName, filename, definitionId)
+        ).run(effectiveName, persistedSourceFile, definitionId)
         db.prepare(
           `DELETE FROM report_cells WHERE report_sheet_id IN (SELECT id FROM report_sheets WHERE report_definition_id = ?)`
         ).run(definitionId)
@@ -687,10 +752,14 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
         db.prepare(
           `INSERT INTO report_definitions (id, account_set_id, code, name, source, source_file, sort_order, is_enabled, created_at, updated_at)
            VALUES (?, ?, ?, ?, 'xls', ?, ?, 1, datetime('now'), datetime('now'))`
-        ).run(definitionId, resolvedAccountSetId, reportCode, effectiveName, filename, sortOrder)
+        ).run(definitionId, resolvedAccountSetId, reportCode, effectiveName, persistedSourceFile, sortOrder)
       }
 
-      workbook.SheetNames.forEach((sheetName, sheetIndex) => {
+      saveReportTemplateExcelSource(db, definitionId, persistedSourceFile, uploadedFile.buffer)
+
+      const sheetsToImport = sheetsToImportNames
+      sheetsToImport.forEach((sheetName, sheetIndex) => {
+        const fontMap = fontMapsBySheet.get(sheetIndex) || new Map()
         const sheetId = uuidv4()
         const cleanSheetName = sheetName.replace(/\(定义\)$/g, '').trim()
 
@@ -702,11 +771,13 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
         const sheetCols = (sheet['!cols'] || []) as Array<{ wpx?: number; wch?: number; width?: number; hidden?: number }>
         const sheetRows = (sheet['!rows'] || []) as Array<{ hpx?: number; hpt?: number; hidden?: number }>
         for (const col of sheetCols) {
+          if (!col) { colWidths.push(64); continue }
           if (col.hidden) { colWidths.push(-1); continue }
           // wpx = pixel width, wch = character width (approx 8px per char)
           colWidths.push(col.wpx || Math.round((col.wch || col.width || 8) * 8))
         }
         for (const row of sheetRows) {
+          if (!row) { rowHeights.push(20); continue }
           if (row.hidden) { rowHeights.push(-1); continue }
           rowHeights.push(row.hpx || Math.round((row.hpt || 15) * 1.33))
         }
@@ -721,13 +792,17 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
         // --- Build merge map ---
         const mergeMap = new Map<string, { colSpan: number; rowSpan: number }>()
         const explicitMerges = (sheet['!merges'] || []) as Array<{ s: { r: number; c: number }; e: { r: number; c: number } }>
+        const excelMergeMap = excelStyleMergeMaps.get(sheetIndex) || new Map<string, { colSpan: number; rowSpan: number }>()
 
-        if (explicitMerges.length > 0) {
+        if (explicitMerges.length > 0 || excelMergeMap.size > 0) {
           // .xlsx format: use explicit merge info
           for (const m of explicitMerges) {
             const colSpan = m.e.c - m.s.c + 1
             const rowSpan = m.e.r - m.s.r + 1
             mergeMap.set(`${m.s.r}:${m.s.c}`, { colSpan, rowSpan })
+          }
+          for (const [key, merge] of excelMergeMap.entries()) {
+            if (!mergeMap.has(key)) mergeMap.set(key, merge)
           }
         } else {
           // .xls format: infer merges from data distribution patterns
@@ -802,6 +877,7 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
             for (const c of sortedCols) visited.add(`${r}:${c}`)
           }
         }
+        const coveredMergeKeys = buildCoveredMergeKeys(mergeMap)
 
         // --- Read with formula support ---
         // Determine effective range: for .xls files, !ref may extend far beyond actual data
@@ -838,6 +914,7 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
 
         for (let r = range.s.r; r <= effectiveMaxR; r++) {
           for (let c = range.s.c; c <= effectiveMaxC; c++) {
+            if (coveredMergeKeys.has(`${r}:${c}`)) continue
             const addr = xlsx.utils.encode_cell({ r, c })
             const rawCell = sheet[addr] as any
             if (!rawCell) continue
@@ -859,11 +936,52 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
             const styleParts: string[] = []
             const alignment = rawCell.s?.alignment
             if (alignment) {
-              if (alignment.horizontal === 'center') styleParts.push('align-center')
+              if (alignment.horizontal === 'center' || alignment.horizontal === 'centerContinuous') styleParts.push('align-center')
               else if (alignment.horizontal === 'right') styleParts.push('align-right')
               else if (alignment.horizontal === 'left') styleParts.push('align-left')
               if (alignment.vertical === 'center') styleParts.push('valign-middle')
               else if (alignment.vertical === 'bottom') styleParts.push('valign-bottom')
+            }
+
+            // --- Extract font properties (from ExcelJS) ---
+            const ejFont = fontMap.get(`${r}:${c}`)
+            if (ejFont) {
+              if (ejFont.bold) styleParts.push('font-bold')
+              if (ejFont.sz && ejFont.sz !== 11 && ejFont.sz !== 12) {
+                styleParts.push(`font-size-${ejFont.sz}`)
+              }
+              if (ejFont.name && !/^宋体|Calibri$/i.test(ejFont.name)) {
+                const fontMapNames: Record<string, string> = {
+                  '楷体': 'KaiTi', '楷体_GB2312': 'KaiTi',
+                  '黑体': 'SimHei', '仿宋': 'FangSong', '仿宋_GB2312': 'FangSong',
+                  '微软雅黑': 'Microsoft YaHei',
+                }
+                const mapped = fontMapNames[ejFont.name] || ejFont.name
+                styleParts.push(`font-family-${mapped}`)
+              }
+            }
+
+            // --- Fix mojibake: some .XLS files decode GBK text as Latin-1 ---
+            if (cellStr && typeof cellStr === 'string') {
+              let needsFix = false
+              for (let i = 0; i < cellStr.length; i++) {
+                const code = cellStr.charCodeAt(i)
+                if (code > 0x7F && code <= 0xFF) { needsFix = true; break }
+              }
+              if (needsFix) {
+                try {
+                  const raw = Buffer.alloc(cellStr.length)
+                  for (let i = 0; i < cellStr.length; i++) raw[i] = cellStr.charCodeAt(i) & 0xFF
+                  const fixed = iconv.decode(raw, 'gbk')
+                  // Only apply fix if result contains CJK characters
+                  for (let i = 0; i < fixed.length; i++) {
+                    if (fixed.charCodeAt(i) >= 0x4E00 && fixed.charCodeAt(i) <= 0x9FFF) {
+                      cellStr = fixed
+                      break
+                    }
+                  }
+                } catch (_) { /* ignore encoding fix errors */ }
+              }
             }
 
             // --- Merge info: auto-apply center alignment for horizontally merged cells ---
@@ -896,7 +1014,7 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
 
             // Extract @ function names
             if (isFormula && cellStr.startsWith('@')) {
-              const matches = cellStr.matchAll(/@([a-zA-Z_][\w]*)/g)
+              const matches = cellStr.matchAll(/(?:^|[^\w])@?([a-zA-Z_][\w]*)\s*\(/g)
               for (const m of matches) formulaFunctions.add(m[1].toLowerCase())
             }
           }
@@ -917,12 +1035,14 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
     applyImport()
 
     const definition = getDefinitionByCode(db, resolvedAccountSetId, reportCode)
+    console.log('[import] 导入成功，definitionId:', definition?.id)
     res.json({ code: 0, message: '导入成功', data: { definitionId: definition?.id, name: effectiveName, code: reportCode } })
   } catch (error) {
-    console.error('[import] error:', error)
+    console.error('[import] 导入失败，详细错误:', error)
+    console.error('[import] 错误堆栈:', error instanceof Error ? error.stack : '无堆栈信息')
     return res
-      .status(400)
-      .json({ code: 400, message: error instanceof Error ? error.message : '导入失败' })
+      .status(500)
+      .json({ code: 500, message: error instanceof Error ? error.message : '导入失败' })
   }
 })
 
@@ -1074,6 +1194,222 @@ router.post('/templates/:code/execute', (req: AuthRequest, res) => {
       pollUrl: `/api/report/tasks/${taskId}`,
     },
   })
+})
+
+// 导出 Excel：基于原始模板回填取数结果（保留格式）
+router.get('/templates/:code/export', async (req: AuthRequest, res) => {
+  const reportCode = String(req.params.code || '').trim()
+  const db = getDb()
+  const resolvedAccountSetId = resolveAccountSetId(req.accountSetId || '', db)
+  const year = Number(req.query.year) || new Date().getFullYear()
+  const period = Number(req.query.period) || new Date().getMonth() + 1
+
+  if (!reportCode) {
+    return res.status(400).json({ code: 400, message: '报表编码不能为空' })
+  }
+  if (!Number.isInteger(year) || year < 2000 || year > 2100) {
+    return res.status(400).json({ code: 400, message: 'year 必须为 2000-2100 的整数' })
+  }
+  if (!Number.isInteger(period) || period < 1 || period > 12) {
+    return res.status(400).json({ code: 400, message: 'period 必须为 1-12 的整数' })
+  }
+
+  try {
+    const { buffer, fileName } = await exportReportTemplateToBuffer({
+      db,
+      accountSetId: resolvedAccountSetId,
+      reportCode,
+      year,
+      period,
+    })
+
+    const encodedName = encodeURIComponent(fileName)
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodedName}`)
+    res.send(buffer)
+  } catch (error: any) {
+    const message = error?.message || '导出失败'
+    const status = message.includes('未找到') ? 404 : 500
+    res.status(status).json({ code: status, message })
+  }
+})
+
+/**
+ * 更新报表模板的元数据（code / name / is_enabled）。
+ * - 导航栏按 code ASC 排序，修改 code 即改变报表在导航栏的顺序。
+ * - 若新 code 已被同账套的另一个报表占用，则**互换**两个报表的 code（用临时值中转，避免 UNIQUE 冲突）。
+ * - is_enabled = 0 的报表不会出现在导航栏。
+ */
+router.patch('/templates/:code/meta', (req: AuthRequest, res) => {
+  const currentCode = String(req.params.code || '').trim()
+  const db = getDb()
+  const accountSetId = resolveAccountSetId(req.accountSetId || '', db)
+
+  if (!currentCode) {
+    return res.status(400).json({ code: 400, message: '报表编码不能为空' })
+  }
+
+  const current = db
+    .prepare(
+      'SELECT id, code, name, is_enabled FROM report_definitions WHERE account_set_id = ? AND code = ?'
+    )
+    .get(accountSetId, currentCode) as
+    | { id: string; code: string; name: string; is_enabled: number }
+    | undefined
+
+  if (!current) {
+    return res.status(404).json({ code: 404, message: '未找到对应的报表模板' })
+  }
+
+  const body = (req.body || {}) as {
+    code?: unknown
+    name?: unknown
+    is_enabled?: unknown
+  }
+
+  let nextCode: string | null = null
+  if (typeof body.code === 'string') {
+    const trimmed = body.code.trim()
+    if (!trimmed) {
+      return res.status(400).json({ code: 400, message: '新编码不能为空' })
+    }
+    if (!/^[a-zA-Z0-9_]+$/.test(trimmed)) {
+      return res
+        .status(400)
+        .json({ code: 400, message: '编码只能包含字母、数字、下划线' })
+    }
+    if (trimmed !== current.code) nextCode = trimmed
+  }
+
+  let nextName: string | null = null
+  if (typeof body.name === 'string') {
+    const trimmed = body.name.trim()
+    if (trimmed && trimmed !== current.name) nextName = trimmed
+  }
+
+  let nextIsEnabled: number | null = null
+  if (body.is_enabled !== undefined) {
+    const flag = body.is_enabled === true || body.is_enabled === 1 ? 1 : 0
+    if (flag !== current.is_enabled) nextIsEnabled = flag
+  }
+
+  if (!nextCode && !nextName && nextIsEnabled === null) {
+    return res.json({
+      code: 0,
+      message: '无变化',
+      data: {
+        code: current.code,
+        name: current.name,
+        is_enabled: Boolean(current.is_enabled),
+        swapped: false,
+      },
+    })
+  }
+
+  // 检测 code 冲突 → 互换
+  let swapTarget: { id: string; code: string; name: string } | null = null
+  if (nextCode) {
+    const conflict = db
+      .prepare(
+        'SELECT id, code, name FROM report_definitions WHERE account_set_id = ? AND code = ? AND id != ?'
+      )
+      .get(accountSetId, nextCode, current.id) as
+      | { id: string; code: string; name: string }
+      | undefined
+    if (conflict) swapTarget = conflict
+  }
+
+  try {
+    db.transaction(() => {
+      if (nextCode && swapTarget) {
+        // 互换：current 拿 nextCode，swapTarget 拿 current 原 code（用临时值中转）
+        const tempCode = `__SWAP_${current.id}`
+        db.prepare(
+          `UPDATE report_definitions SET code = ?, updated_at = datetime('now') WHERE id = ?`
+        ).run(tempCode, current.id)
+        db.prepare(
+          `UPDATE report_definitions SET code = ?, updated_at = datetime('now') WHERE id = ?`
+        ).run(current.code, swapTarget.id)
+        db.prepare(
+          `UPDATE report_definitions SET code = ?, updated_at = datetime('now') WHERE id = ?`
+        ).run(nextCode, current.id)
+      } else if (nextCode) {
+        db.prepare(
+          `UPDATE report_definitions SET code = ?, updated_at = datetime('now') WHERE id = ?`
+        ).run(nextCode, current.id)
+      }
+
+      if (nextName) {
+        db.prepare(
+          `UPDATE report_definitions SET name = ?, updated_at = datetime('now') WHERE id = ?`
+        ).run(nextName, current.id)
+      }
+
+      if (nextIsEnabled !== null) {
+        db.prepare(
+          `UPDATE report_definitions SET is_enabled = ?, updated_at = datetime('now') WHERE id = ?`
+        ).run(nextIsEnabled, current.id)
+      }
+    })()
+  } catch (error: any) {
+    return res.status(500).json({
+      code: 500,
+      message: error?.message || '更新报表模板失败',
+    })
+  }
+
+  res.json({
+    code: 0,
+    message: swapTarget ? `编码已与「${swapTarget.name}」互换` : '更新成功',
+    data: {
+      code: nextCode || current.code,
+      name: nextName || current.name,
+      is_enabled: Boolean(nextIsEnabled !== null ? nextIsEnabled : current.is_enabled),
+      swapped: Boolean(swapTarget),
+      swapWith: swapTarget
+        ? {
+            code: current.code, // swapTarget 拿到的新 code
+            name: swapTarget.name,
+            originalCode: swapTarget.code,
+          }
+        : null,
+    },
+  })
+})
+
+// 删除报表模板
+router.delete('/templates/:code', (req: AuthRequest, res) => {
+  const reportCode = String(req.params.code || '').trim()
+  const db = getDb()
+  const resolvedAccountSetId = resolveAccountSetId(req.accountSetId || '', db)
+
+  if (!reportCode) {
+    return res.status(400).json({ code: 400, message: '报表编码不能为空' })
+  }
+
+  const definition = getDefinitionByCode(db, resolvedAccountSetId, reportCode)
+  if (!definition) {
+    return res.status(404).json({ code: 404, message: '未找到对应的报表模板' })
+  }
+
+  // Only admin can delete
+  if (!req.permissions?.includes('*')) {
+    return res.status(403).json({ code: 403, message: '无权删除报表模板' })
+  }
+
+  db.transaction(() => {
+    db.prepare(
+      `DELETE FROM report_cells WHERE report_sheet_id IN (SELECT id FROM report_sheets WHERE report_definition_id = ?)`
+    ).run(definition.id)
+    db.prepare(`DELETE FROM report_sheets WHERE report_definition_id = ?`).run(definition.id)
+    db.prepare(`DELETE FROM report_template_sources WHERE report_definition_id = ?`).run(definition.id)
+    db.prepare(`DELETE FROM report_definitions WHERE id = ?`).run(definition.id)
+  })()
+
+  res.json({ code: 0, message: '报表模板已删除' })
 })
 
 export default router

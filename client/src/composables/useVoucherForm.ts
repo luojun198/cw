@@ -1,13 +1,14 @@
 import { ref, computed } from 'vue'
 import type { Ref } from 'vue'
 import { useUserStore } from '@/stores/user'
+import type { Voucher, VoucherEntry as ServerVoucherEntry } from '@/types/voucher'
 
 export interface VoucherEntry {
   account_id: string
   account_code: string
   account_name: string
-  debit_amount: number
-  credit_amount: number
+  debit_amount: number | null
+  credit_amount: number | null
   summary: string
   [key: string]: any
 }
@@ -50,9 +51,11 @@ export function useVoucherForm(auxCategories: Ref<any[]>) {
       account_id: '',
       account_code: '',
       account_name: '',
-      debit_amount: 0,
-      credit_amount: 0,
+      debit_amount: null,
+      credit_amount: null,
       summary: '',
+      cash_flow_code: '',
+      cash_flow_name: '',
     }
     for (const cat of auxCategories.value) {
       entry[`_${cat.code}_id`] = ''
@@ -60,7 +63,7 @@ export function useVoucherForm(auxCategories: Ref<any[]>) {
     return entry
   }
 
-  function normalizeEntryForForm(entry: any): VoucherEntry {
+  function normalizeEntryForForm(entry: ServerVoucherEntry): VoucherEntry {
     const next = createEntry()
     // 保留 entry 的 id（编辑时需要）
     if (entry.id) {
@@ -70,8 +73,10 @@ export function useVoucherForm(auxCategories: Ref<any[]>) {
     next.account_code = entry.account_code || ''
     next.account_name = entry.account_name || ''
     next.summary = entry.summary || ''
-    next.debit_amount = entry.direction === 'debit' ? entry.amount || 0 : 0
-    next.credit_amount = entry.direction === 'credit' ? entry.amount || 0 : 0
+    next.debit_amount = entry.direction === 'debit' ? entry.amount || 0 : null
+    next.credit_amount = entry.direction === 'credit' ? entry.amount || 0 : null
+    next.cash_flow_code = entry.cash_flow_code || ''
+    next.cash_flow_name = entry.cash_flow_name || ''
 
     // 从 aux_data JSON 字段恢复辅助核算数据
     if (entry.aux_data) {
@@ -163,8 +168,8 @@ export function useVoucherForm(auxCategories: Ref<any[]>) {
     }
   }
 
-  function loadVoucher(voucher: any) {
-    const entries = (voucher.entries || []).map((entry: any) => normalizeEntryForForm(entry))
+  function loadVoucher(voucher: Voucher) {
+    const entries = (voucher.entries || []).map((entry) => normalizeEntryForForm(entry))
     while (entries.length < 6) {
       entries.push(createEntry())
     }

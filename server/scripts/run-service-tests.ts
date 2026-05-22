@@ -116,8 +116,8 @@ function testVoucherPostingValidation() {
   assert.equal(getRequireAuditEnabled({ param_value: 'false' }), false)
   assert.equal(getRequireAuditEnabled(undefined), false)
   assert.equal(validateVoucherForUnpost({ id: '1', year: 2026, period: 4, status: 'posted' }), null)
-  assert.equal(validateVoucherForUnpost({ id: '1', year: 2026, period: 4, status: 'audited' }), '只有已过账的凭证可以反过账')
-  assert.equal(validateVoucherForUnpost(undefined), '只有已过账的凭证可以反过账')
+  assert.equal(validateVoucherForUnpost({ id: '1', year: 2026, period: 4, status: 'audited' }), '只有已记账的凭证可以反记账')
+  assert.equal(validateVoucherForUnpost(undefined), '只有已记账的凭证可以反记账')
 
   const entryLoadDb = {
     prepare(sql: string) {
@@ -130,9 +130,9 @@ function testVoucherPostingValidation() {
     { sql: 'SELECT * FROM voucher_entries WHERE voucher_id=?', args: ['voucher-1'], id: 'entry-1' },
   ])
 
-  assert.equal(validateVoucherCanPost({ id: '1', year: 2026, period: 4, status: 'draft' }, true, false), '该凭证尚未审核，不能过账')
+  assert.equal(validateVoucherCanPost({ id: '1', year: 2026, period: 4, status: 'draft' }, true, false), '该凭证尚未审核，不能记账')
   assert.equal(validateVoucherCanPost({ id: '1', year: 2026, period: 4, status: 'draft' }, true, true), null)
-  assert.equal(validateVoucherCanPost({ id: '1', year: 2026, period: 4, status: 'posted' }, false, false), '该凭证已过账')
+  assert.equal(validateVoucherCanPost({ id: '1', year: 2026, period: 4, status: 'posted' }, false, false), '该凭证已记账')
   assert.equal(validateVoucherCanPost({ id: '1', year: 2026, period: 4, status: 'audited' }, true, false), null)
   assert.equal(getVoucherStatusAfterUnpost(true), 'audited')
   assert.equal(getVoucherStatusAfterUnpost(false), 'draft')
@@ -270,7 +270,16 @@ function testQueryBuilders() {
   assert.match(ledgerDetailQuery.initBalanceSql, /FROM init_balances ib/)
   assert.match(ledgerDetailQuery.listSql, /ve\.project_id = \?/)
   assert.match(ledgerDetailQuery.listSql, /LIMIT \? OFFSET \?/)
-  assert.deepEqual(ledgerDetailQuery.initBalanceParams, ['set-1', 'acc-1', 2026, 4])
+  assert.deepEqual(ledgerDetailQuery.initBalanceParams, [
+    'set-1',
+    'acc-1',
+    2026,
+    'set-1',
+    'set-1',
+    '2026-01-01',
+    '2026-04-01',
+    'acc-1',
+  ])
   assert.deepEqual(ledgerDetailQuery.listParams, ['set-1', 'acc-1', '2026-04-01', '2026-04-30', 'proj-9', 50, 100])
 
   const chronologicalQuery = buildChronologicalQuery({
@@ -490,14 +499,14 @@ function testVoucherEntryHelpers() {
 
   assert.equal(calculateNewBalance({ currentBalance: 100, amount: 30, accountDirection: 'debit' }), 70)
   assert.equal(calculateNewBalance({ currentBalance: 100, amount: 30, accountDirection: 'credit' }), 130)
-  assert.equal(
+  assert.match(
     validateVoucherEntriesNoNegativeBalance({
       entries: [{ account_id: 'a1', account_code: '1001', account_name: '库存现金', direction: 'credit', amount: 120 }],
       getAccountById: accountId =>
         accountId === 'a1' ? { no_negative: 1, direction: 'debit' } : null,
       getBalanceByAccountId: accountId => (accountId === 'a1' ? 100 : 0),
-    }),
-    '科目【库存现金】余额不允许为负数'
+    })?.message || '',
+    /库存现金/
   )
   assert.equal(
     validateVoucherEntriesNoNegativeBalance({
@@ -546,7 +555,7 @@ function testVoucherEntryHelpers() {
   assert.match(singleAuditDb.runs[0]?.sql, /UPDATE vouchers SET status=\?, auditor_id=\?, auditor_name=\?, updated_at=datetime\('now'\) WHERE id=\?/)
   assert.deepEqual(singleAuditDb.runs[0]?.args, ['audited', 'u1', '审核员A', 'voucher-10'])
 
-  assert.equal(validateVoucherForUnAudit({ status: 'posted' }), '已过账凭证无法反审核')
+  assert.equal(validateVoucherForUnAudit({ status: 'posted' }), '已记账凭证无法反审核')
   assert.equal(validateVoucherForUnAudit({ status: 'audited' }), null)
   assert.equal(validateVoucherForUnAudit(undefined), null)
 

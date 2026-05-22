@@ -48,6 +48,13 @@ export function formatDate(date: string | Date | null | undefined, format = 'YYY
     .replace('ss', seconds)
 }
 
+/** 账套启用日期默认值：当月 1 日 */
+export function getAccountSetDefaultStartDate(date = new Date()): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  return `${year}-${month}-01`
+}
+
 /**
  * 格式化凭证号
  */

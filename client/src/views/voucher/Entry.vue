@@ -1,34 +1,72 @@
 <template>
-  <div class="page" v-loading="pageLoading" element-loading-text="加载凭证类型、科目等数据中...">
+  <div v-loading="pageLoading" class="page voucher-list-page" element-loading-text="加载凭证类型、科目等数据中...">
     <div class="page-header">
       <h3>凭证录入</h3>
-      <div class="page-header-actions">
-        <el-button type="success" plain :disabled="!selectedDraftId" @click="handleInsertDraft">插行</el-button>
-        <el-button type="primary" plain :disabled="!selectedDraftId" @click="handleCopyDraft">复制新增</el-button>
-        <el-button type="primary" plain :disabled="!selectedDraftId" @click="handleImportDraft">引入新增</el-button>
-        <el-button type="warning" plain :disabled="!selectedDraftId" @click="handleTurnTemplate">转模版</el-button>
-        <el-button type="warning" plain :disabled="!selectedDraftId" @click="handleImportTemplate">引模版</el-button>
-        <el-divider direction="vertical" />
-        <el-button type="primary" plain :disabled="!selectedDraftId" @click="handleEditDraft">编辑</el-button>
-        <el-button type="danger" plain :disabled="!selectedDraftId" @click="handleDeleteDraftSelected">删除</el-button>
-        <el-button type="info" plain :disabled="!selectedDraftId" @click="handlePrint">
-          <el-icon><Printer /></el-icon>
-          打印
-        </el-button>
-        <el-button type="info" plain @click="batchPrintVisible = true">
-          <el-icon><Printer /></el-icon>
-          批量打印
-        </el-button>
-        <el-button type="primary" @click="openVoucherDialog()">新增凭证</el-button>
+      <div class="voucher-toolbar">
+        <div class="voucher-toolbar-group voucher-toolbar-group--primary">
+          <el-button type="primary" class="voucher-toolbar-btn voucher-toolbar-btn--hero" @click="openVoucherDialog()">
+            <el-icon><Plus /></el-icon>
+            新增凭证
+          </el-button>
+        </div>
+
+        <div class="voucher-toolbar-group voucher-toolbar-group--create">
+          <span class="voucher-toolbar-group-label">录入</span>
+          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handleCopyDraft">
+            <el-icon><DocumentCopy /></el-icon>复制
+          </el-button>
+          <el-button class="voucher-toolbar-btn" plain @click="handleImportDraft">
+            <el-icon><Upload /></el-icon>引入
+          </el-button>
+          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handleInsertDraft">
+            <el-icon><Bottom /></el-icon>插行
+          </el-button>
+        </div>
+
+        <div class="voucher-toolbar-group voucher-toolbar-group--template">
+          <span class="voucher-toolbar-group-label">模版</span>
+          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handleTurnTemplate">
+            <el-icon><Collection /></el-icon>转模版
+          </el-button>
+          <el-button class="voucher-toolbar-btn" plain @click="handleImportTemplate">
+            <el-icon><Document /></el-icon>引模版
+          </el-button>
+        </div>
+
+        <div class="voucher-toolbar-group voucher-toolbar-group--edit">
+          <span class="voucher-toolbar-group-label">维护</span>
+          <el-button class="voucher-toolbar-btn" type="warning" plain :disabled="!selectedDraftId" @click="handleEditDraft">
+            <el-icon><Edit /></el-icon>编辑
+          </el-button>
+          <el-button class="voucher-toolbar-btn" type="danger" plain :disabled="!selectedDraftId" @click="handleDeleteDraftSelected">
+            <el-icon><Delete /></el-icon>删除
+          </el-button>
+        </div>
+
+        <div class="voucher-toolbar-group voucher-toolbar-group--print">
+          <span class="voucher-toolbar-group-label">输出</span>
+          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handlePrint">
+            <el-icon><Printer /></el-icon>打印
+          </el-button>
+          <el-button class="voucher-toolbar-btn" plain @click="handleBatchPrint">
+            <el-icon><Printer /></el-icon>批量打印
+          </el-button>
+          <el-button class="voucher-toolbar-btn" type="success" plain :loading="exporting" @click="exportDraftData">
+            <el-icon><Download /></el-icon>导出
+          </el-button>
+        </div>
       </div>
     </div>
 
     <VoucherDraftList
+      class="voucher-list-main"
       ref="draftListRef"
       :vouchers="sortedVouchers"
       :loading="draftLoading"
       :sort-config="sortConfig"
       :aux-categories="auxCategories"
+      :pagination="draftPagination"
+      :selected-voucher-id="selectedDraftId"
       @refresh="fetchDraftVouchers"
       @edit="handleEdit"
       @delete="handleDeleteDraft"
@@ -37,6 +75,7 @@
       @row-dblclick="handleDraftDblclick"
       @renumber="renumberDialogVisible = true"
       @batch-delete="batchDeleteVisible = true"
+      @page-change="handlePageChange"
     />
 
     <VoucherBatchDelete
@@ -49,16 +88,17 @@
       v-model="printDialogVisible"
       :voucher-ids="printVoucherIds"
       mode="single"
+      :auto-print="directPrint"
     />
 
-    <BatchPrintDialog v-model="batchPrintVisible" />
+    <BatchPrintDialog
+      v-model="batchPrintVisible"
+      :default-date-range="batchPrintDateRange"
+      :default-voucher-type-ids="batchPrintVoucherTypeIds"
+    />
 
     <!-- 重新排号对话框 -->
-    <el-dialog
-      v-model="renumberDialogVisible"
-      title="重新排号"
-      width="500px"
-    >
+    <el-dialog v-model="renumberDialogVisible" title="重新排号" width="500px">
       <el-form label-width="100px">
         <el-form-item label="年份">
           <el-input-number v-model="renumberForm.year" :min="2000" :max="2100" />
@@ -67,7 +107,12 @@
           <el-input-number v-model="renumberForm.period" :min="1" :max="12" />
         </el-form-item>
         <el-form-item label="凭证类型">
-          <el-select v-model="renumberForm.voucher_type_id" clearable placeholder="全部类型" style="width: 100%">
+          <el-select
+            v-model="renumberForm.voucher_type_id"
+            clearable
+            placeholder="全部类型"
+            style="width: 100%"
+          >
             <el-option
               v-for="type in voucherTypes"
               :key="type.id"
@@ -79,13 +124,7 @@
         <el-form-item label="起始编号">
           <el-input-number v-model="renumberForm.start_no" :min="1" />
         </el-form-item>
-        <el-alert
-          title="提示"
-          type="warning"
-          :closable="false"
-          show-icon
-          style="margin-top: 12px"
-        >
+        <el-alert title="提示" type="warning" :closable="false" show-icon style="margin-top: 12px">
           <template #default>
             <div style="font-size: 13px; line-height: 1.6">
               <p style="margin: 0 0 8px 0">重新排号将按日期和创建时间顺序重新分配凭证编号</p>
@@ -98,6 +137,96 @@
       <template #footer>
         <el-button @click="renumberDialogVisible = false">取消</el-button>
         <el-button type="primary" @click="handleRenumber">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 引入新增对话框 -->
+    <el-dialog v-model="importDialogVisible" title="引入新增" width="500px">
+      <el-form label-width="100px">
+        <el-form-item label="凭证类型" required>
+          <el-select
+            v-model="importForm.voucher_type_id"
+            placeholder="请选择凭证类型"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="type in voucherTypes"
+              :key="type.id"
+              :label="type.name"
+              :value="type.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="年份" required>
+          <el-input-number v-model="importForm.year" :min="2000" :max="2100" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="期间" required>
+          <el-input-number v-model="importForm.period" :min="1" :max="12" style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="凭证号" required>
+          <el-input v-model="importForm.voucher_no" placeholder="请输入凭证号" />
+        </el-form-item>
+        <el-alert title="提示" type="info" :closable="false" show-icon style="margin-top: 12px">
+          <div style="font-size: 13px; line-height: 1.6">
+            <p style="margin: 0">根据凭证类型、年月、凭证号定位历史凭证，复制其内容作为新凭证</p>
+          </div>
+        </el-alert>
+      </el-form>
+      <template #footer>
+        <el-button @click="importDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleImportConfirm">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 引模版对话框 -->
+    <el-dialog v-model="selectTemplateDialogVisible" title="选择凭证模版" width="900px">
+      <div style="margin-bottom: 12px">
+        <el-input
+          v-model="templateSearchKeyword"
+          placeholder="搜索模版编号、说明..."
+          clearable
+          style="width: 300px"
+          prefix-icon="Search"
+        />
+      </div>
+      <el-table
+        v-loading="templateListLoading"
+        :data="filteredTemplateList"
+        border
+        size="small"
+        class="compact-data-table"
+        empty-text="暂无凭证模版"
+        highlight-current-row
+        @row-dblclick="handleSelectTemplate"
+      >
+        <el-table-column prop="template_no" label="模版编号" width="120" />
+        <el-table-column prop="template_name" label="模版说明" min-width="200" />
+        <el-table-column prop="voucher_type_name" label="凭证类型" width="120" />
+        <el-table-column prop="entries_count" label="分录数量" width="100" align="center" />
+        <el-table-column prop="created_at" label="创建时间" width="180">
+          <template #default="{ row }">
+            {{ formatDateTime(row.created_at) }}
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="selectTemplateDialogVisible = false">取消</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 转模版对话框 -->
+    <el-dialog v-model="templateDialogVisible" title="保存为模版" width="500px">
+      <el-form :model="templateForm" label-width="100px">
+        <el-form-item label="模版编号" required>
+          <el-input v-model="templateForm.template_no" placeholder="如：MB001" />
+        </el-form-item>
+        <el-form-item label="模版说明" required>
+          <el-input v-model="templateForm.template_name" placeholder="如：差旅费报销" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleTemplateConfirm">确定</el-button>
       </template>
     </el-dialog>
 
@@ -115,6 +244,8 @@
       :aux-items-by-category="auxItemsByCategory"
       :current-entry-aux-categories="currentEntryAuxCategories"
       :is-parent-account="isParentAccount"
+      :enable-cash-flow="enableCashFlow"
+      :cash-flow-items="cashFlowItems"
       :get-aux-item-names="getAuxItemNames"
       :on-account-change="onAccountChange"
       :on-amount-change="onAmountChange"
@@ -135,6 +266,8 @@
       @add-aux-item="handleAddAuxItem"
       @quick-create-account="handleQuickCreateAccount"
       @print="handlePrintCurrent"
+      @turn-template="handleTurnTemplateInDialog"
+      @import-template="handleImportTemplateInDialog"
     />
 
     <AccountDialog
@@ -157,11 +290,24 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onActivated, watch, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessageBox } from 'element-plus'
-import { Printer } from '@element-plus/icons-vue'
+import {
+  Printer,
+  Plus,
+  Edit,
+  Delete,
+  Download,
+  DocumentCopy,
+  Upload,
+  Bottom,
+  Collection,
+  Document,
+} from '@element-plus/icons-vue'
+import dayjs from 'dayjs'
 import request from '@/api/request'
+import { getCashFlowItems } from '@/api/cashFlow'
 import VoucherDraftList from '@/components/voucher/VoucherDraftList.vue'
 import VoucherBatchDelete from '@/components/voucher/VoucherBatchDelete.vue'
 import VoucherEntryForm from '@/components/voucher/VoucherEntryForm.vue'
@@ -172,26 +318,102 @@ import { useVoucherForm } from '@/composables/useVoucherForm'
 import { useAuxiliaryAccounting } from '@/composables/useAuxiliaryAccounting'
 import { useAccountForm } from '@/composables/useAccountForm'
 import { useAccountTree } from '@/composables/useAccountTree'
-import { showSuccess, showError, showWarning, showOperationError } from '@/composables/useMessage'
+import {
+  showSuccess,
+  showError,
+  showWarning,
+  showOperationError,
+  extractErrorMessage,
+  isNoNegativeBalanceMessage,
+  showNoNegativeBalanceAlert,
+} from '@/composables/useMessage'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { useKeyboardShortcuts, commonShortcuts } from '@/composables/useKeyboardShortcuts'
 import { useOperationHistory } from '@/composables/useOperationHistory'
 import { performanceMonitor } from '@/utils/performanceMonitor'
+import { exportVouchersToExcel, fetchAllVouchers } from '@/utils/voucherExport'
+import { useSystemParamsStore } from '@/stores/systemParams'
+import { useUserStore } from '@/stores/user'
+import { accountNeedsCashFlowItem } from '@/utils/accountCashFlow'
+import { useBaseDataStore } from '@/stores/baseData'
 
-const voucherTypes = ref<any[]>([])
-const accounts = ref<any[]>([])
-const auxCategories = ref<any[]>([])
-const auxItems = ref<any[]>([])
+const baseDataStore = useBaseDataStore()
+const voucherTypes = computed(() => baseDataStore.voucherTypes)
+const accounts = computed(() => baseDataStore.accounts)
+const auxCategories = computed(() => baseDataStore.auxCategories)
+const auxItems = computed(() => baseDataStore.auxItems)
 const attachments = ref<any[]>([])
 const queuedUploads = ref<Record<string, File>>({})
 const draftVouchers = ref<any[]>([])
 const draftLoading = ref(false)
+const draftPagination = ref({
+  page: 1,
+  pageSize: 50,
+  total: 0,
+})
 const pageLoading = ref(false)
 const submitLoading = ref(false)
 const batchDeleteVisible = ref(false)
 const printDialogVisible = ref(false)
 const printVoucherIds = ref<number[]>([])
+const systemParamsStore = useSystemParamsStore()
+const userStore = useUserStore()
+const directPrint = computed(() => systemParamsStore.directPrint)
+const enableCashFlow = computed(() => systemParamsStore.enableCashFlow)
+const cashFlowItems = ref<Array<{ code: string; name: string }>>([])
 const batchPrintVisible = ref(false)
+const batchPrintDateRange = ref<string[]>([])
+const batchPrintVoucherTypeIds = ref<string[]>([])
+const exporting = ref(false)
+
+function handleBatchPrint() {
+  // 从当前页面显示的凭证中提取日期范围和凭证类型
+  const vouchers = sortedVouchers.value
+  if (vouchers.length > 0) {
+    // 提取日期范围：取所有凭证的最小/最大日期
+    const dates = vouchers
+      .map((v: any) => v.voucher_date || v.date)
+      .filter(Boolean)
+      .sort()
+    if (dates.length >= 2) {
+      batchPrintDateRange.value = [dates[0], dates[dates.length - 1]]
+    } else if (dates.length === 1) {
+      batchPrintDateRange.value = [dates[0], dates[0]]
+    } else {
+      batchPrintDateRange.value = []
+    }
+    // 提取凭证类型ID：取页面上所有出现的凭证类型
+    const typeIds = new Set<string>()
+    vouchers.forEach((v: any) => {
+      if (v.voucher_type_id) typeIds.add(v.voucher_type_id)
+    })
+    batchPrintVoucherTypeIds.value = Array.from(typeIds)
+  } else {
+    batchPrintDateRange.value = []
+    batchPrintVoucherTypeIds.value = []
+  }
+  batchPrintVisible.value = true
+}
+
+async function exportDraftData() {
+  exporting.value = true
+  try {
+    const vouchers = await fetchAllVouchers({
+      status: 'draft',
+      sortField: sortConfig.value.field,
+      sortOrder: sortConfig.value.order,
+    })
+    await exportVouchersToExcel(vouchers, {
+      sheetName: '凭证录入',
+      filePrefix: '凭证录入_未审核凭证',
+    })
+    showSuccess(`已导出 ${vouchers.length} 张未审核凭证`)
+  } catch (error) {
+    showOperationError('导出', error)
+  } finally {
+    exporting.value = false
+  }
+}
 const draftListRef = ref<any>(null)
 const selectedDraftId = ref<string>('')
 
@@ -231,10 +453,11 @@ function handlePrint() {
   }
 }
 
+
 // 在编辑对话框内打印当前凭证
 function handlePrintCurrent() {
   if (form.value.id) {
-    printVoucherIds.value = [form.value.id]
+    printVoucherIds.value = [Number(form.value.id)]
     printDialogVisible.value = true
   }
 }
@@ -259,20 +482,321 @@ async function handleInsertDraft() {
 }
 
 function handleCopyDraft() {
-  // TODO: 复制新增功能
+  if (!selectedDraftId.value) return
+
+  // 1. 找到选中的凭证
+  const sourceVoucher = sortedVouchers.value.find((v: any) => v.id === selectedDraftId.value)
+  if (!sourceVoucher) {
+    ElMessage.warning('未找到选中的凭证')
+    return
+  }
+
+  // 2. 加载凭证数据到表单（包含所有分录和辅助核算）
+  loadVoucherData(sourceVoucher)
+
+  // 3. 清除 ID，表示这是新增凭证
+  form.value.id = ''
+
+  // 4. 保持原凭证的类型和日期
+  form.value.voucher_type_id = sourceVoucher.voucher_type_id || ''
+  form.value.voucher_date = sourceVoucher.voucher_date || sourceVoucher.date
+
+  // 5. 智能编号：取同类型草稿凭证的最大号+1
+  const typeId = form.value.voucher_type_id
+  const sameTypeDrafts = sortedVouchers.value.filter(
+    (v: any) => v.voucher_type_id === typeId && v.status === 'draft'
+  )
+
+  if (sameTypeDrafts.length > 0) {
+    const maxNo = Math.max(
+      ...sameTypeDrafts.map((v: any) => {
+        const no = parseInt(v.voucher_no || '0')
+        return isNaN(no) ? 0 : no
+      })
+    )
+    form.value.voucher_no = String(maxNo + 1)
+  } else {
+    form.value.voucher_no = '1'
+  }
+
+  // 6. 清空附件（复制凭证不复制附件）
+  attachments.value = []
+  queuedUploads.value = {}
+
+  // 7. 设置对话框模式为新增
+  dialogMode.value = 'add'
+  currentVoucherIndex.value = -1
+
+  // 8. 打开对话框
+  dialogVisible.value = true
+
+  ElMessage.success('已复制凭证，请修改后保存')
 }
 
 function handleImportDraft() {
-  // TODO: 引入新增功能
+  // 打开引入新增对话框
+  importForm.value = {
+    voucher_type_id: '',
+    year: new Date().getFullYear(),
+    period: new Date().getMonth() + 1,
+    voucher_no: '',
+  }
+  importDialogVisible.value = true
+}
+
+async function handleImportConfirm() {
+  // 验证表单
+  if (!importForm.value.voucher_type_id) {
+    ElMessage.warning('请选择凭证类型')
+    return
+  }
+  if (!importForm.value.year || !importForm.value.period) {
+    ElMessage.warning('请选择年份和期间')
+    return
+  }
+  if (!importForm.value.voucher_no) {
+    ElMessage.warning('请输入凭证号')
+    return
+  }
+
+  try {
+    // 根据条件查询凭证
+    const res = await request.get<any[]>('/voucher/vouchers', {
+      params: {
+        voucher_type_id: importForm.value.voucher_type_id,
+        year: importForm.value.year,
+        period: importForm.value.period,
+        voucher_no: importForm.value.voucher_no,
+        status: 'all', // 查询所有状态的凭证
+      },
+    })
+
+    if (!res.data || res.data.length === 0) {
+      ElMessage.warning('未找到符合条件的凭证')
+      return
+    }
+
+    // 找到第一个匹配的凭证
+    const sourceVoucher = res.data[0]
+
+    // 关闭引入对话框
+    importDialogVisible.value = false
+
+    // 加载凭证数据到表单（包含所有分录和辅助核算）
+    loadVoucherData(sourceVoucher)
+
+    // 清除 ID，表示这是新增凭证
+    form.value.id = ''
+
+    // 保持原凭证的类型，但使用当前日期
+    form.value.voucher_type_id = sourceVoucher.voucher_type_id || ''
+    form.value.voucher_date = dayjs().format('YYYY-MM-DD') // 使用当前日期
+
+    // 智能编号：取同类型草稿凭证的最大号+1
+    const typeId = form.value.voucher_type_id
+    const sameTypeDrafts = sortedVouchers.value.filter(
+      (v: any) => v.voucher_type_id === typeId && v.status === 'draft'
+    )
+
+    if (sameTypeDrafts.length > 0) {
+      const maxNo = Math.max(
+        ...sameTypeDrafts.map((v: any) => {
+          const no = parseInt(v.voucher_no || '0')
+          return isNaN(no) ? 0 : no
+        })
+      )
+      form.value.voucher_no = String(maxNo + 1)
+    } else {
+      form.value.voucher_no = '1'
+    }
+
+    // 清空附件（引入凭证不复制附件）
+    attachments.value = []
+    queuedUploads.value = {}
+
+    // 设置对话框模式为新增
+    dialogMode.value = 'add'
+    currentVoucherIndex.value = -1
+
+    // 打开对话框
+    dialogVisible.value = true
+
+    ElMessage.success('已引入凭证，请修改后保存')
+  } catch (error: any) {
+    ElMessage.error(error.message || '查询凭证失败')
+  }
 }
 
 function handleTurnTemplate() {
-  // TODO: 转模版功能
+  if (!selectedDraftId.value) return
+
+  const sourceVoucher = sortedVouchers.value.find((v: any) => v.id === selectedDraftId.value)
+  if (!sourceVoucher) {
+    showWarning('未找到选中的凭证')
+    return
+  }
+
+  // 重置表单
+  templateForm.value = {
+    template_no: '',
+    template_name: '',
+  }
+
+  // 打开对话框
+  templateDialogVisible.value = true
 }
 
-function handleImportTemplate() {
-  // TODO: 引模版功能
+async function handleTemplateConfirm() {
+  // 验证表单
+  if (!templateForm.value.template_no || !templateForm.value.template_name) {
+    showWarning('请填写模版编号和模版说明')
+    return
+  }
+
+  try {
+    if (isConvertingFromDialog.value) {
+      // 从对话框内转模版（未保存的凭证）
+      // 过滤有效分录
+      const validEntries = form.value.entries.filter(
+        (e: any) => e.account_id && (e.debit_amount > 0 || e.credit_amount > 0)
+      )
+
+      // 转换分录格式
+      const entries = validEntries.map((e: any) => {
+        const direction = e.debit_amount > 0 ? 'debit' : 'credit'
+        const amount = e.debit_amount > 0 ? e.debit_amount : e.credit_amount
+
+        // 构建辅助核算数据
+        const auxData: Record<string, any> = {}
+        for (const cat of auxCategories.value) {
+          const itemId = e[`_${cat.code}_id`]
+          if (itemId) {
+            const item = auxItems.value.find((i: any) => i.id === itemId)
+            if (item) {
+              auxData[cat.code] = {
+                id: item.id,
+                name: item.name,
+              }
+            }
+          }
+        }
+
+        return {
+          account_id: e.account_id,
+          account_code: e.account_code,
+          account_name: e.account_name,
+          direction,
+          amount,
+          summary: e.summary,
+          dept_id: e.dept_id,
+          dept_name: e.dept_name,
+          project_id: e.project_id,
+          project_name: e.project_name,
+          supplier_id: e.supplier_id,
+          supplier_name: e.supplier_name,
+          person_id: e.person_id,
+          person_name: e.person_name,
+          func_class_id: e.func_class_id,
+          func_class_name: e.func_class_name,
+          aux_data: Object.keys(auxData).length > 0 ? auxData : null,
+        }
+      })
+
+      // 调用 API 创建模版（传递 entries 数据）
+      await request.post('/voucher-templates', {
+        template_no: templateForm.value.template_no,
+        template_name: templateForm.value.template_name,
+        voucher_type_id: form.value.voucher_type_id || null,
+        remark: form.value.remark || '',
+        entries,
+      })
+    } else {
+      // 从已保存的凭证转模版
+      await request.post('/voucher-templates', {
+        template_no: templateForm.value.template_no,
+        template_name: templateForm.value.template_name,
+        voucher_id: selectedDraftId.value,
+      })
+    }
+
+    showSuccess('模版保存成功')
+    templateDialogVisible.value = false
+    isConvertingFromDialog.value = false // 重置标志
+  } catch (error: any) {
+    showOperationError(error, '保存失败')
+  }
 }
+
+async function handleImportTemplate() {
+  // 加载模版列表
+  await loadTemplateList()
+  // 打开模版选择对话框
+  selectTemplateDialogVisible.value = true
+}
+
+async function loadTemplateList() {
+  templateListLoading.value = true
+  try {
+    const res = await request.get<any[]>('/voucher-templates')
+    templateList.value = res.data
+  } catch (error: any) {
+    showOperationError(error, '加载模版列表失败')
+  } finally {
+    templateListLoading.value = false
+  }
+}
+
+function handleSelectTemplate(row: any) {
+  // 关闭对话框
+  selectTemplateDialogVisible.value = false
+  // 加载模版并创建凭证
+  loadTemplateAndCreate(row.id)
+}
+
+function formatDateTime(dateStr: string) {
+  if (!dateStr) return ''
+  return dayjs(dateStr).format('YYYY-MM-DD HH:mm:ss')
+}
+
+// 在对话框内点击"转模版"
+function handleTurnTemplateInDialog() {
+  // 验证当前表单数据
+  const validEntries = form.value.entries.filter(
+    (e: any) => e.account_id && (e.debit_amount > 0 || e.credit_amount > 0)
+  )
+
+  if (validEntries.length === 0) {
+    showWarning('请至少填写一条有效分录')
+    return
+  }
+
+  // 检查借贷是否平衡
+  if (!isBalanced.value) {
+    showWarning('借贷不平衡，无法转为模版')
+    return
+  }
+
+  // 重置表单
+  templateForm.value = {
+    template_no: '',
+    template_name: '',
+  }
+
+  // 标记为从对话框内转模版
+  isConvertingFromDialog.value = true
+
+  // 打开转模版对话框
+  templateDialogVisible.value = true
+}
+
+// 在对话框内点击"引模版"
+async function handleImportTemplateInDialog() {
+  // 加载模版列表
+  await loadTemplateList()
+  // 打开模版选择对话框
+  selectTemplateDialogVisible.value = true
+}
+
 const dialogVisible = ref(false)
 const dialogMode = ref<'add' | 'edit' | 'insert'>('add')
 const renumberDialogVisible = ref(false)
@@ -281,6 +805,39 @@ const renumberForm = ref({
   period: new Date().getMonth() + 1,
   start_no: 1,
   voucher_type_id: null as string | null,
+})
+
+// 引入新增对话框
+const importDialogVisible = ref(false)
+const importForm = ref({
+  voucher_type_id: '',
+  year: new Date().getFullYear(),
+  period: new Date().getMonth() + 1,
+  voucher_no: '',
+})
+
+// 转模版对话框
+const templateDialogVisible = ref(false)
+const templateForm = ref({
+  template_no: '',
+  template_name: '',
+})
+const isConvertingFromDialog = ref(false) // 标记是否从对话框内转模版（未保存的凭证）
+
+// 引模版对话框
+const selectTemplateDialogVisible = ref(false)
+const templateList = ref<any[]>([])
+const templateListLoading = ref(false)
+const templateSearchKeyword = ref('')
+
+const filteredTemplateList = computed(() => {
+  if (!templateSearchKeyword.value) return templateList.value
+  const keyword = templateSearchKeyword.value.toLowerCase()
+  return templateList.value.filter(
+    t =>
+      t.template_no.toLowerCase().includes(keyword) ||
+      t.template_name.toLowerCase().includes(keyword)
+  )
 })
 
 // ========== 导航相关状态 ==========
@@ -307,7 +864,14 @@ const sortedVouchers = computed(() => {
   const list = [...draftVouchers.value]
   const { field, order } = sortConfig.value
 
+  // 创建凭证类型编码映射表（用于快速查找）
+  const voucherTypeCodeMap = new Map<string, string>()
+  voucherTypes.value.forEach(type => {
+    voucherTypeCodeMap.set(type.id, type.code || '')
+  })
+
   list.sort((a, b) => {
+    // 1. 主排序：用户选择的字段
     let aVal = a[field]
     let bVal = b[field]
 
@@ -319,6 +883,22 @@ const sortedVouchers = computed(() => {
 
     if (aVal < bVal) return order === 'asc' ? -1 : 1
     if (aVal > bVal) return order === 'asc' ? 1 : -1
+
+    // 2. 次要排序：凭证类型编码（主排序相同时）
+    const aTypeCode = voucherTypeCodeMap.get(a.voucher_type_id) || ''
+    const bTypeCode = voucherTypeCodeMap.get(b.voucher_type_id) || ''
+
+    if (aTypeCode < bTypeCode) return -1
+    if (aTypeCode > bTypeCode) return 1
+
+    // 3. 第三排序：凭证号（如果主排序不是凭证号）
+    if (field !== 'voucher_no') {
+      const aSeq = extractVoucherSeq(a.voucher_no)
+      const bSeq = extractVoucherSeq(b.voucher_no)
+      if (aSeq < bSeq) return -1
+      if (aSeq > bSeq) return 1
+    }
+
     return 0
   })
 
@@ -327,7 +907,19 @@ const sortedVouchers = computed(() => {
 
 // 导航信息
 const navigationInfo = computed(() => {
-  if (currentVoucherIndex.value < 0 || sortedVouchers.value.length === 0) return null
+  if (sortedVouchers.value.length === 0) return null
+
+  // 新增模式（currentVoucherIndex < 0）
+  if (currentVoucherIndex.value < 0) {
+    return {
+      current: 0,
+      total: sortedVouchers.value.length,
+      isFirst: false, // 允许点击"上一张"跳转到最后一张
+      isLast: true, // 禁用"下一张"
+    }
+  }
+
+  // 编辑模式
   return {
     current: currentVoucherIndex.value + 1,
     total: sortedVouchers.value.length,
@@ -374,7 +966,11 @@ const {
   createAddForm,
   buildSavePayload,
 } = useAccountForm(auxCategories, auxItems)
-const { treeData, getTreeSelectData, flattenRows: treeFlattenRows } = useAccountTree(accounts, tableRefForTree)
+const {
+  treeData,
+  getTreeSelectData,
+  flattenRows: treeFlattenRows,
+} = useAccountTree(accounts, tableRefForTree)
 const treeSelectData = computed(() => getTreeSelectData(accountForm.value.id))
 const quickAddAccountVisible = ref(false)
 const quickAddRow = ref<any>(null)
@@ -461,63 +1057,47 @@ async function uploadQueuedAttachments(voucherId: string) {
   }
 }
 
-function openVoucherDialog(mode: 'add' | 'edit' | 'insert' = 'add', voucher?: any, index?: number) {
+async function prepareNewVoucherForm(preserve?: { voucher_date?: string; voucher_type_id?: string }) {
+  const preservedDate = preserve?.voucher_date ?? form.value.voucher_date
+  const preservedTypeId = preserve?.voucher_type_id ?? form.value.voucher_type_id
+  dialogMode.value = 'add'
+  resetForm()
+  attachments.value = []
+  queuedUploads.value = {}
+  currentVoucherIndex.value = -1
+  insertTargetId.value = ''
+  form.value.voucher_date = preservedDate
+  form.value.voucher_type_id = preservedTypeId
+  const { effectiveTypeId, voucherNo } = await getNextVoucherNo(preservedTypeId, preservedDate)
+  form.value.voucher_type_id = effectiveTypeId
+  form.value.voucher_no = voucherNo
+}
+
+async function openVoucherDialog(mode: 'add' | 'edit' | 'insert' = 'add', voucher?: any, index?: number) {
   dialogMode.value = mode
   if (mode === 'add' || mode === 'insert' || !voucher) {
-    resetForm()
-    attachments.value = []
-    queuedUploads.value = {}
-    currentVoucherIndex.value = -1
-    if (mode === 'insert') insertTargetId.value = ''
-
-    // 新增凭证时预填：取上一张凭证的类型，凭证号预览为同类型草稿最大号+1
     if (mode === 'add') {
-      // 默认凭证类型：取上一张凭证（列表最后一个）的类型
-      if (sortedVouchers.value.length > 0) {
-        const lastVoucher = sortedVouchers.value[sortedVouchers.value.length - 1]
-        form.value.voucher_type_id = lastVoucher.voucher_type_id || ''
-      } else if (voucherTypes.value.length > 0) {
-        form.value.voucher_type_id = voucherTypes.value[voucherTypes.value.length - 1].id
-      }
-      // 预览凭证号：取同凭证类型的草稿凭证最大号+1
-      const typeId = form.value.voucher_type_id
-      const sameTypeDrafts = sortedVouchers.value.filter((v: any) =>
-        v.voucher_type_id === typeId && v.status === 'draft'
-      )
-      if (sameTypeDrafts.length > 0) {
-        // 取最大序号
-        let maxSeq = 0
-        let prefix = ''
-        let seqLen = 3
-        for (const v of sameTypeDrafts) {
-          const no = v.voucher_no || ''
-          const dashIdx = no.indexOf('-')
-          const seqStr = dashIdx >= 0 ? no.substring(dashIdx + 1) : no
-          const seq = parseInt(seqStr, 10)
-          if (!isNaN(seq) && seq > maxSeq) {
-            maxSeq = seq
-            prefix = dashIdx >= 0 ? no.substring(0, dashIdx + 1) : ''
-            seqLen = seqStr.length
-          }
-        }
-        if (maxSeq > 0) {
-          form.value.voucher_no = `${prefix}${String(maxSeq + 1).padStart(seqLen, '0')}`
-        }
-      }
+      await prepareNewVoucherForm()
+    } else {
+      resetForm()
+      attachments.value = []
+      queuedUploads.value = {}
+      currentVoucherIndex.value = -1
+      if (mode === 'insert') insertTargetId.value = ''
     }
   } else {
     queuedUploads.value = {}
 
     // 编辑场景优先使用草稿列表中的完整凭证对象（而不是列表展平后的行数据）
-    const sourceVoucher = mode === 'edit'
-      ? sortedVouchers.value.find(v => v.id === voucher.id) || voucher
-      : voucher
+    const sourceVoucher =
+      mode === 'edit' ? sortedVouchers.value.find(v => v.id === voucher.id) || voucher : voucher
 
     loadVoucherData(sourceVoucher)
 
-    const resolvedIndex = typeof index === 'number'
-      ? index
-      : sortedVouchers.value.findIndex(v => v.id === sourceVoucher.id)
+    const resolvedIndex =
+      typeof index === 'number'
+        ? index
+        : sortedVouchers.value.findIndex(v => v.id === sourceVoucher.id)
 
     currentVoucherIndex.value = resolvedIndex
   }
@@ -555,6 +1135,15 @@ function goToFirst() {
 
 // 上一张
 function goToPrevious() {
+  // 如果在新增模式，跳转到最后一张凭证
+  if (currentVoucherIndex.value < 0) {
+    if (sortedVouchers.value.length > 0) {
+      navigateToVoucher(sortedVouchers.value.length - 1)
+    }
+    return
+  }
+
+  // 编辑模式，跳转到上一张
   if (currentVoucherIndex.value > 0) {
     navigateToVoucher(currentVoucherIndex.value - 1)
   }
@@ -590,14 +1179,13 @@ function handleNavigate(direction: 'first' | 'previous' | 'next' | 'last') {
   }
 }
 
-// 切换排序方向
-function toggleSortOrder() {
-  sortConfig.value.order = sortConfig.value.order === 'asc' ? 'desc' : 'asc'
-}
-
 // 处理排序变化
 function handleSortChange(config: { field: string; order: string }) {
-  sortConfig.value.field = config.field as 'voucher_no' | 'voucher_date' | 'created_at' | 'updated_at'
+  sortConfig.value.field = config.field as
+    | 'voucher_no'
+    | 'voucher_date'
+    | 'created_at'
+    | 'updated_at'
   sortConfig.value.order = config.order as 'asc' | 'desc'
 }
 
@@ -607,9 +1195,8 @@ function handleClearCurrentEntry() {
 }
 
 async function handleAddAuxItem(item: { id: string; name: string; type: string }, catCode: string) {
-  // 刷新辅助项目列表
-  const res = await request.get<any[]>('/base/aux-items')
-  auxItems.value = res.data
+  // 刷新辅助项目缓存
+  await baseDataStore.loadAuxItems(true)
   // 自动选中新建的项目
   if (currentEntry.value) {
     currentEntry.value[`_${catCode}_id`] = item.id
@@ -661,7 +1248,7 @@ async function handleAiSummary() {
   }
 }
 
-async function handleSubmit() {
+async function handleSubmit(options?: { keepOpen?: boolean }) {
   if (!form.value.voucher_date) {
     showWarning('请选择凭证日期')
     return
@@ -682,7 +1269,18 @@ async function handleSubmit() {
 
   for (const entry of validEntries) {
     const acc = accounts.value.find(a => a.id === entry.account_id)
-    if (!acc?.is_aux) {
+    if (!acc) continue
+
+    if (enableCashFlow.value) {
+      const needCashFlow = accountNeedsCashFlowItem(acc)
+      if (needCashFlow && !String(entry.cash_flow_code || '').trim()) {
+        showError(`科目「${entry.account_name}」须选择现金流量项目`)
+        setCurrentEntry(entry)
+        return
+      }
+    }
+
+    if (!acc.is_aux) {
       continue
     }
 
@@ -709,7 +1307,9 @@ async function handleSubmit() {
     for (const categoryId of requiredCategoryIds) {
       const category = auxCategories.value.find(cat => cat.id === categoryId)
       if (!category || !entry[`_${category.code}_id`]) continue
-      const requiredFields = (category.fields || []).filter((f: any) => f.is_enabled !== 0 && f.required_in_voucher)
+      const requiredFields = (category.fields || []).filter(
+        (f: any) => f.is_enabled !== 0 && f.required_in_voucher
+      )
       for (const field of requiredFields) {
         const fvKey = `_${category.code}_fv_${field.field_key}`
         if (!entry[fvKey] || String(entry[fvKey]).trim() === '') {
@@ -734,6 +1334,8 @@ async function handleSubmit() {
     }),
   }
 
+  const saveRequestConfig = { skipErrorToast: true }
+
   submitLoading.value = true
   try {
     if (dialogMode.value === 'insert' && insertTargetId.value) {
@@ -743,7 +1345,8 @@ async function handleSubmit() {
         {
           target_voucher_id: insertTargetId.value,
           voucher: payload,
-        }
+        },
+        saveRequestConfig
       )
       const createdVoucherId = res.data?.id
       showSuccess(`插入成功，已更新 ${res.data?.updated_count || 0} 张凭证的编号`)
@@ -753,12 +1356,16 @@ async function handleSubmit() {
       }
     } else if (dialogMode.value === 'edit' && form.value.id) {
       // 编辑模式
-      await request.put(`/voucher/vouchers/${form.value.id}`, payload)
+      await request.put(`/voucher/vouchers/${form.value.id}`, payload, saveRequestConfig)
       showSuccess('凭证修改成功')
       addRecord('update', '凭证录入', `修改凭证：${form.value.voucher_date}`)
     } else {
       // 新增模式
-      const created = await request.post<{ id: string; voucherNo: string }>('/voucher/vouchers', payload)
+      const created = await request.post<{ id: string; voucherNo: string }>(
+        '/voucher/vouchers',
+        payload,
+        saveRequestConfig
+      )
       const createdVoucherId = created.data?.id
       showSuccess('凭证保存成功')
       addRecord('create', '凭证录入', `新增凭证：${form.value.voucher_date}`)
@@ -767,45 +1374,79 @@ async function handleSubmit() {
       }
     }
 
-    dialogVisible.value = false
-    resetForm()
-    attachments.value = []
-    queuedUploads.value = {}
-    currentVoucherIndex.value = -1
-    insertTargetId.value = ''
     await fetchDraftVouchers()
-  } catch (error) {
-    showOperationError(dialogMode.value === 'edit' ? '修改凭证' : '保存凭证', error)
+
+    if (options?.keepOpen) {
+      await prepareNewVoucherForm({
+        voucher_date: form.value.voucher_date,
+        voucher_type_id: form.value.voucher_type_id,
+      })
+    } else {
+      dialogVisible.value = false
+      resetForm()
+      attachments.value = []
+      queuedUploads.value = {}
+      currentVoucherIndex.value = -1
+      insertTargetId.value = ''
+    }
+  } catch (error: any) {
+    const message = extractErrorMessage(error)
+    // 特殊处理凭证时序错误
+    if (error.response?.data?.code === 'VOUCHER_DATE_OUT_OF_ORDER') {
+      const { maxDate, currentDate } = error.response.data
+      ElMessageBox.alert(
+        `系统已开启凭证时序控制，不允许录入早于已有凭证的日期。\n\n` +
+          `最新凭证日期：${maxDate}\n` +
+          `当前凭证日期：${currentDate}\n\n` +
+          `建议：请修改凭证日期为 ${maxDate} 或之后的日期，或联系管理员关闭时序控制。`,
+        '凭证日期不符合时序要求',
+        {
+          type: 'warning',
+          confirmButtonText: '我知道了',
+          closeOnClickModal: false,
+          closeOnPressEscape: false,
+        }
+      )
+    } else if (
+      isNoNegativeBalanceMessage(message, error.response?.data?.codeType) ||
+      error.response?.data?.violations?.length
+    ) {
+      await showNoNegativeBalanceAlert(error.response?.data?.violations, message)
+    } else {
+      showOperationError(dialogMode.value === 'edit' ? '修改凭证' : '保存凭证', error)
+    }
   } finally {
     submitLoading.value = false
   }
 }
 
 async function handleSubmitAndAdd() {
-  await handleSubmit()
-  // handleSubmit 成功后 dialogVisible 会变为 false，再重新打开新增
-  if (!dialogVisible.value) {
-    await nextTick()
-    openVoucherDialog('add')
-  }
+  await handleSubmit({ keepOpen: true })
 }
 
 async function fetchDraftVouchers() {
   draftLoading.value = true
   try {
     await performanceMonitor.measure('fetchDraftVouchers', async () => {
-      const res = await request.get<any[]>('/voucher/vouchers', {
+      const res = await request.get<any>('/voucher/vouchers', {
         params: {
           status: 'draft',
-          page: 1,
-          pageSize: 100,
+          page: draftPagination.value.page,
+          pageSize: draftPagination.value.pageSize,
         },
       })
-      draftVouchers.value = res.data || []
+      draftVouchers.value = res.data?.list || res.data || []
+      draftPagination.value.total = res.data?.total || 0
     })
   } finally {
     draftLoading.value = false
   }
+}
+
+function handlePageChange(page: number, pageSize: number) {
+  draftPagination.value.page = page
+  draftPagination.value.pageSize = pageSize
+  fetchDraftVouchers()
 }
 
 async function handleDeleteDraft(row: any) {
@@ -824,29 +1465,70 @@ async function handleDeleteDraft(row: any) {
 
 async function handleRenumber() {
   try {
-    const res = await request.post<{ updated: number }>('/voucher/vouchers/renumber', renumberForm.value)
+    const res = await request.post<{ updated: number }>(
+      '/voucher/vouchers/renumber',
+      renumberForm.value
+    )
     showSuccess(res.data ? `已完成 ${res.data.updated} 张凭证的重新排号` : '重新排号成功')
     renumberDialogVisible.value = false
     await fetchDraftVouchers()
-    addRecord('update', '凭证录入', `重新排号：${renumberForm.value.year}年${renumberForm.value.period}期`)
+    addRecord(
+      'update',
+      '凭证录入',
+      `重新排号：${renumberForm.value.year}年${renumberForm.value.period}期`
+    )
   } catch (error) {
     showOperationError('重新排号', error)
   }
 }
 
-async function fetchOptions() {
-  await performanceMonitor.measure('fetchOptions', async () => {
-    const [typeRes, accRes, catRes, auxRes] = await Promise.all([
-      request.get<any[]>('/base/voucher-types'),
-      request.get<any[]>('/base/accounts', { params: { is_enabled: 1 } }),
-      request.get<any[]>('/base/aux-categories'),
-      request.get<any[]>('/base/aux-items'),
-    ])
-    voucherTypes.value = typeRes.data
-    accounts.value = accRes.data
-    auxCategories.value = catRes.data
-    auxItems.value = auxRes.data
+function cashFlowItemsFromAux(): Array<{ code: string; name: string }> {
+  const cat = auxCategories.value.find(c => c.code === 'cash_flow')
+  if (!cat) return []
+  const catId = String(cat.id)
+  return auxItems.value
+    .filter(i => String(i.type) === catId && i.status === 'active')
+    .map(i => ({ code: i.code, name: i.name }))
+}
 
+async function loadCashFlowItems() {
+  if (!enableCashFlow.value) {
+    cashFlowItems.value = []
+    return
+  }
+  try {
+    const res = await getCashFlowItems(userStore.accountSetId)
+    let items = (res.data || []).map(item => ({
+      code: item.code,
+      name: item.name,
+    }))
+    if (items.length === 0) {
+      items = cashFlowItemsFromAux()
+    }
+    cashFlowItems.value = items
+  } catch {
+    cashFlowItems.value = cashFlowItemsFromAux()
+  }
+}
+
+watch(enableCashFlow, enabled => {
+  if (enabled) {
+    void loadCashFlowItems()
+  } else {
+    cashFlowItems.value = []
+  }
+})
+
+async function fetchOptions(force = false) {
+  await performanceMonitor.measure('fetchOptions', async () => {
+    await systemParamsStore.load(force)
+    await Promise.all([
+      baseDataStore.loadVoucherTypes(force),
+      baseDataStore.loadAccounts(force),
+      baseDataStore.loadAuxCategories(force),
+      baseDataStore.loadAuxItems(force),
+    ])
+    await loadCashFlowItems()
     // 加载完辅助核算类别后，为现有分录补充动态字段
     ensureAuxFields()
   })
@@ -861,45 +1543,154 @@ function handleActionQuery() {
     nextTick(() => {
       openVoucherDialog('add')
     })
+  } else if (route.query.templateId) {
+    // 从模版创建凭证
+    const templateId = route.query.templateId as string
+    router.replace({ query: {} })
+    nextTick(() => {
+      loadTemplateAndCreate(templateId)
+    })
   }
 }
 
-onMounted(async () => {
-  pageLoading.value = true
+let openingEditFromRoute = false
+
+/** 账簿等页面带 editVoucherId 跳转：直接打开编辑模态框 */
+async function openEditVoucherFromRoute(voucherId: string) {
+  if (openingEditFromRoute) return
+  openingEditFromRoute = true
   try {
-    await Promise.all([fetchOptions(), fetchDraftVouchers()])
+    if (route.query.editVoucherId) {
+      router.replace({ query: {} })
+    }
+    await loadVoucherForEditFromRoute(voucherId)
+  } finally {
+    openingEditFromRoute = false
+  }
+}
+
+async function loadVoucherForEditFromRoute(voucherId: string) {
+  try {
+    const res = await request.get<any>(`/voucher/vouchers/${voucherId}`)
+    const voucher = res.data
+    if (!voucher) {
+      showWarning('凭证不存在')
+      return
+    }
+    if (voucher.status !== 'draft') {
+      showWarning('仅草稿凭证可编辑')
+      return
+    }
+    await openVoucherDialog('edit', voucher)
+    if (!sortedVouchers.value.some(v => v.id === voucher.id)) {
+      void fetchDraftVouchers()
+    }
+  } catch (error: any) {
+    showOperationError(error, '加载凭证失败')
+  }
+}
+
+async function bootstrapEntryPage(forceOptions = false) {
+  const editId = route.query.editVoucherId as string | undefined
+  pageLoading.value = !editId
+  try {
+    await fetchOptions(forceOptions)
+    if (editId) {
+      await openEditVoucherFromRoute(editId)
+    }
+    await fetchDraftVouchers()
   } finally {
     pageLoading.value = false
   }
   handleActionQuery()
+}
+
+async function loadTemplateAndCreate(templateId: string) {
+  try {
+    // 加载模版详情
+    const res = await request.get<any>(`/voucher-templates/${templateId}`)
+    const template = res.data
+
+    // 构造凭证数据格式
+    const voucherData = {
+      id: '',
+      voucher_type_id: template.voucher_type_id || '',
+      voucher_no: '',
+      voucher_date: new Date().toISOString().split('T')[0],
+      remark: template.remark || '',
+      entries: template.entries || [],
+    }
+
+    // 加载到表单
+    loadVoucher(voucherData)
+
+    // 清除 ID（表示新增）
+    form.value.id = ''
+
+    // 智能生成凭证号
+    const { effectiveTypeId, voucherNo } = await getNextVoucherNo(
+      form.value.voucher_type_id,
+      form.value.voucher_date
+    )
+    form.value.voucher_type_id = effectiveTypeId
+    form.value.voucher_no = voucherNo
+
+    // 清空附件
+    attachments.value = []
+    queuedUploads.value = {}
+
+    // 设置对话框模式为新增
+    dialogMode.value = 'add'
+    currentVoucherIndex.value = -1
+
+    // 打开对话框
+    dialogVisible.value = true
+
+    showSuccess('已加载模版，请修改后保存')
+  } catch (error: any) {
+    showOperationError(error, '加载模版失败')
+  }
+}
+
+async function getNextVoucherNo(voucherTypeId: string, voucherDate: string) {
+  try {
+    const res = await request.get<any>('/voucher/next-voucher-no', {
+      params: {
+        voucher_type_id: voucherTypeId || null,
+        voucher_date: voucherDate,
+      },
+    })
+    return {
+      effectiveTypeId: res.data.effective_type_id,
+      voucherNo: res.data.voucher_no,
+    }
+  } catch {
+    return {
+      effectiveTypeId: voucherTypeId,
+      voucherNo: '1',
+    }
+  }
+}
+
+watch(
+  () => route.query.editVoucherId,
+  editId => {
+    if (editId && typeof editId === 'string') {
+      void openEditVoucherFromRoute(editId)
+    }
+  }
+)
+
+onMounted(() => {
+  void bootstrapEntryPage(true)
 })
 
 onActivated(() => {
-  fetchOptions()
-  fetchDraftVouchers()
-  handleActionQuery()
+  void bootstrapEntryPage(false)
 })
 
-// 键盘快捷键
-useKeyboardShortcuts([
-  commonShortcuts.add(() => openVoucherDialog('add')),
-  commonShortcuts.refresh(() => fetchDraftVouchers()),
-])
+// 键盘快捷键（凭证表单内：Ctrl+S 保存、Ctrl+Enter 保存并新增，见 VoucherEntryForm）
+useKeyboardShortcuts([commonShortcuts.refresh(() => fetchDraftVouchers())])
 </script>
 
-<style scoped>
-.page {
-  padding: 16px;
-}
-
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-
-.page-header h3 {
-  margin: 0;
-}
-</style>
+<style src="./voucher.styles.css"></style>

@@ -1,6 +1,6 @@
 import { Router } from 'express'
-import { authMiddleware, AuthRequest } from '../middleware/index.ts'
-import { getDb } from '../db/index.ts'
+import { authMiddleware, AuthRequest } from '../middleware/index.js'
+import { getDb } from '../db/index.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -312,22 +312,22 @@ router.get('/diagnostics/posting-status', (req: AuthRequest, res) => {
 
   const hints: string[] = []
   if (postedVoucherCount.total > 0 && activeBalanceRowsCount.total === 0) {
-    hints.push('当期存在已过账凭证，但 account_balances 当期无发生额，需检查过账写入逻辑或 account_set_id 是否一致。')
+    hints.push('当期存在已记账凭证，但 account_balances 当期无发生额，需检查记账写入逻辑或 account_set_id 是否一致。')
   }
   if (allVoucherCount.total > 0 && postedVoucherCount.total === 0) {
-    hints.push('当期有凭证但没有已过账凭证，辅助余额表会返回空数据（该表强依赖 status=posted）。')
+    hints.push('当期有凭证但没有已记账凭证，辅助余额表会返回空数据（该表强依赖 status=posted）。')
   }
   if (latestPostedVoucher) {
     if (latestPostedVoucher.year !== resolvedYear || latestPostedVoucher.period !== resolvedPeriod) {
       hints.push(
-        `最近过账期间是 ${latestPostedVoucher.year}年${latestPostedVoucher.period}月，当前查询期间是 ${resolvedYear}年${resolvedPeriod}月，可能存在期间不一致。`
+        `最近记账期间是 ${latestPostedVoucher.year}年${latestPostedVoucher.period}月，当前查询期间是 ${resolvedYear}年${resolvedPeriod}月，可能存在期间不一致。`
       )
     }
   } else {
-    hints.push('当前账套没有任何已过账凭证。')
+    hints.push('当前账套没有任何已记账凭证。')
   }
   if (entryOnlyCodes.length > 0) {
-    hints.push('存在已过账分录科目未出现在 account_balances 当期发生额中，需核对过账聚合口径。')
+    hints.push('存在已记账分录科目未出现在 account_balances 当期发生额中，需核对记账聚合口径。')
   }
 
   res.json({

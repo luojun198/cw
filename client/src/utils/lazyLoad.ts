@@ -1,5 +1,4 @@
 import { defineAsyncComponent, Component } from 'vue'
-import EmptyState from '@/components/EmptyState.vue'
 
 /**
  * 懒加载组件配置

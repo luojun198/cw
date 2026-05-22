@@ -1,3 +1,9 @@
+// 获取当前文件目录
+import { fileURLToPath } from 'url'
+import * as path from 'path'
+const __filename = fileURLToPath(import.meta.url)
+const __dirname = import.meta.dirname || path.dirname(__filename)
+
 async function testXlsxModule() {
   try {
     const xlsx = await import('xlsx')
@@ -43,10 +49,5 @@ async function testXlsxModule() {
     console.error('测试失败:', error)
   }
 }
-
-// 获取当前文件目录
-import { fileURLToPath } from 'url'
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = import.meta.dirname || path.dirname(__filename)
 
 testXlsxModule()

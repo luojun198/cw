@@ -1,180 +1,259 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h3>结转类型维护</h3>
+  <div class="page transfer-page">
+    <div class="page-header transfer-header">
+      <div class="header-title-block">
+        <h3>结转维护</h3>
+        <span class="header-summary">
+          <span>{{ transferTypes.length }} 类型</span>
+          <span>·</span>
+          <span>{{ transferItems.length }} 规则</span>
+          <template v-if="selectedType"><span>·</span><span>当前：{{ selectedType.name }}</span></template>
+        </span>
+      </div>
       <div class="page-header-toolbar">
-        <span class="toolbar-label">快捷检索</span>
         <el-input
           v-model="searchKeyword"
-          placeholder="搜索关键字、科目..."
+          placeholder="搜索类型、科目、摘要"
           clearable
-          style="width: 200px"
+          size="small"
+          style="width: 220px"
           prefix-icon="Search"
         />
+        <el-button size="small" @click="addTransferType">
+          <el-icon><Plus /></el-icon>新增类型
+        </el-button>
+        <el-button size="small" type="primary" @click="handleSave">保存配置</el-button>
       </div>
-      <el-button type="primary" @click="handleSave">确定</el-button>
     </div>
 
-    <el-card>
-      <!-- 结转类型列表 -->
-      <div class="transfer-type-section">
-        <div class="section-header">
-          <span class="section-title">结转类型</span>
-          <el-button size="small" @click="addTransferType">增加类型</el-button>
+    <div class="transfer-workspace">
+      <aside class="type-sidebar">
+        <div class="sidebar-header">
+          <span>结转类型</span>
+          <el-tag size="small" effect="plain">{{ filteredTypes.length }}</el-tag>
         </div>
-        <el-table
-          :data="filteredTypes"
-          border
-          style="width: 100%; margin-bottom: 16px;"
-          :highlight-current-row="true"
-          @row-click="handleTypeClick"
-          max-height="200"
-        >
-          <el-table-column type="index" label="序号" width="50" />
-          <el-table-column prop="code" label="代码" width="80">
-            <template #default="{ row }">
-              <span v-html="highlightTypeText(row.code)"></span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="name" label="结转说明">
-            <template #default="{ row }">
-              <span v-html="highlightTypeText(row.name)"></span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="voucherType" label="凭证类型" width="100" />
-          <el-table-column prop="periodType" label="结转周期" width="100">
-            <template #default="{ row }">
-              <el-select v-model="row.periodType" size="small" style="width: 80px">
-                <el-option label="月度" value="monthly" />
-                <el-option label="年末" value="yearly" />
-              </el-select>
-            </template>
-          </el-table-column>
-          <el-table-column width="80">
-            <template #default="scope">
-              <el-button size="small" @click.stop="deleteTransferType(scope.row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
 
-        <!-- 结转内容配置 -->
-        <div class="transfer-content-section">
-          <div class="section-header">
-            <span class="section-title">内容</span>
-          </div>
-          <el-table
-            :data="selectedTypeItems"
-            border
-            style="width: 100%; margin-bottom: 16px;"
-            :row-style="{ height: '48px' }"
-            :cell-style="{ padding: '8px 0' }"
-            :header-cell-style="{ padding: '10px 0' }"
-            :row-class-name="getItemRowClass"
+        <el-scrollbar class="type-scroll">
+          <button
+            v-for="type in filteredTypes"
+            :key="type.id"
+            type="button"
+            class="type-list-item"
+            :class="{ active: selectedType?.id === type.id }"
+            @click="handleTypeClick(type)"
           >
-            <el-table-column type="index" label="序号" width="60" />
-            <el-table-column prop="summary" label="摘要" width="140" />
-            <el-table-column prop="fromCode" label="转出科目" width="180">
-              <template #default="scope">
-                <el-select
-                  v-model="scope.row.fromCode"
-                  filterable
-                  clearable
-                  placeholder="选择"
-                  class="account-select"
-                  @change="updateFromName(scope.row)"
-                >
-                  <el-option
-                    v-for="acc in allAccounts"
-                    :key="acc.code"
-                    :label="`${acc.code} ${accountFullPathMap[acc.code] || acc.name}`"
-                    :value="acc.code"
-                  />
-                  <template #tag="{ option }">
-                    <span v-html="highlightItemText(scope.row.fromCode)"></span>
-                  </template>
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column prop="fromName" label="转出科目名称" min-width="180">
-              <template #default="{ row }">
-                <span v-html="highlightItemText(row.fromName)"></span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="toCode" label="转入科目" width="180">
-              <template #default="scope">
-                <el-select
-                  v-model="scope.row.toCode"
-                  filterable
-                  clearable
-                  placeholder="选择明细科目"
-                  class="account-select"
-                  @change="updateToName(scope.row)"
-                >
-                  <el-option
-                    v-for="acc in detailAccounts"
-                    :key="acc.code"
-                    :label="`${acc.code} ${accountFullPathMap[acc.code] || acc.name}`"
-                    :value="acc.code"
-                  />
-                  <template #tag="{ option }">
-                    <span v-html="highlightItemText(scope.row.toCode)"></span>
-                  </template>
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column prop="toName" label="转入科目名称" min-width="160">
-              <template #default="{ row }">
-                <span v-html="highlightItemText(row.toName)"></span>
-              </template>
-            </el-table-column>
-            <el-table-column prop="transferType" label="转出类型" width="120">
-              <template #default="scope">
-                <el-select v-model="scope.row.transferType" class="transfer-type-select">
-                  <el-option label="全部转出" value="all" />
-                  <el-option label="部分转出" value="partial" />
-                </el-select>
-              </template>
-            </el-table-column>
-            <el-table-column prop="ratio" label="转出比例" width="130">
-              <template #default="scope">
-                <span v-if="scope.row.transferType === 'all'">全部转出</span>
-                <el-input-number
-                  v-else
-                  v-model="scope.row.ratio"
-                  :min="0"
-                  :max="100"
-                  :precision="2"
-                  style="width: 100px;"
-                />%
-              </template>
-            </el-table-column>
-            <el-table-column width="80">
-              <template #default="scope">
-                <el-button size="small" type="danger" @click="deleteItem(scope.row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+            <span class="type-code">{{ type.code }}</span>
+            <span class="type-main">
+              <span class="type-name-row">
+                <span class="type-name" v-html="highlightTypeText(type.name)"></span>
+                <span class="type-meta">
+                  <span>{{ type.periodType === 'monthly' ? '月' : '年' }}</span>
+                  <span>·</span>
+                  <span>{{ getTypeItemCount(type.code) }}条</span>
+                </span>
+              </span>
+              <span class="type-flow">
+                {{ getTypeSourcePreview(type.code) }}
+                <span class="flow-arrow">→</span>
+                {{ getTypeTargetText(type.code) }}
+              </span>
+            </span>
+            <el-button
+              class="type-delete"
+              size="small"
+              type="danger"
+              link
+              @click.stop="deleteTransferType(type)"
+            >
+              <el-icon><Delete /></el-icon>
+            </el-button>
+          </button>
 
-          <!-- 操作按钮 -->
-          <div class="content-actions">
-            <el-button size="small" @click="addItem">增加</el-button>
-            <el-button size="small" @click="deleteSelectedItems">删除</el-button>
+          <div v-if="filteredTypes.length === 0" class="sidebar-empty">
+            没有匹配的结转类型
+          </div>
+        </el-scrollbar>
+      </aside>
+
+      <main class="content-section transfer-detail">
+        <template v-if="selectedType">
+          <div class="detail-toolbar">
+            <span class="type-badge">{{ selectedType.code || '--' }}</span>
+            <div class="editor-row">
+              <label class="editor-field editor-field--code">
+                <span>代码</span>
+                <el-input v-model="selectedTypeCodeModel" size="small" />
+              </label>
+              <label class="editor-field editor-field--name">
+                <span>名称</span>
+                <el-input v-model="selectedType.name" size="small" />
+              </label>
+              <label class="editor-field editor-field--voucher">
+                <span>凭证字</span>
+                <el-input v-model="selectedType.voucherType" size="small" />
+              </label>
+              <label class="editor-field editor-field--period">
+                <span>周期</span>
+                <el-select v-model="selectedType.periodType" size="small">
+                  <el-option label="月度" value="monthly" />
+                  <el-option label="年末" value="yearly" />
+                </el-select>
+              </label>
+            </div>
+            <div class="section-actions">
+              <el-button size="small" @click="addItem">
+                <el-icon><Plus /></el-icon>新增规则
+              </el-button>
+              <el-button size="small" @click="deleteSelectedItems" :disabled="selectedTypeItems.length === 0">
+                <el-icon><Delete /></el-icon>清空规则
+              </el-button>
+            </div>
+          </div>
+
+          <div class="relation-chips">
+            <span class="chip"><em>规则</em>{{ selectedTypeItems.length }}</span>
+            <span class="chip"><em>转出</em>{{ selectedTypeSourceCount }} 科目</span>
+            <span class="chip chip--target" :title="selectedTypeTargetText"><em>转入</em>{{ selectedTypeTargetText }}</span>
+            <span class="chip"><em>方式</em>{{ selectedTypeTransferMode }}</span>
+          </div>
+
+          <div class="content-table-wrapper">
+            <el-table
+              ref="contentTableRef"
+              :data="selectedTypeItems"
+              border
+              style="width: 100%"
+              height="100%"
+              :row-class-name="getItemRowClass"
+              @header-dragend="handleContentHeaderDragend"
+              class="compact-table content-table"
+            >
+              <el-table-column
+                type="index"
+                column-key="index"
+                label="序"
+                :width="getContentColumnWidth('index', 44)"
+              />
+              <el-table-column prop="summary" label="摘要" :width="getContentColumnWidth('summary', 130)">
+                <template #default="{ row }">
+                  <el-input v-model="row.summary" size="small" />
+                </template>
+              </el-table-column>
+              <el-table-column prop="fromCode" label="转出科目" :min-width="getContentColumnWidth('fromCode', 240)">
+                <template #default="scope">
+                  <el-select
+                    v-model="scope.row.fromCode"
+                    filterable
+                    clearable
+                    placeholder="选择转出科目"
+                    size="small"
+                    class="account-select"
+                    @change="updateFromName(scope.row)"
+                  >
+                    <el-option
+                      v-for="acc in allAccounts"
+                      :key="acc.code"
+                      :label="`${acc.code} ${accountFullPathMap[acc.code] || acc.name}`"
+                      :value="acc.code"
+                    />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column prop="toCode" label="转入科目" :min-width="getContentColumnWidth('toCode', 240)">
+                <template #default="scope">
+                  <el-select
+                    v-model="scope.row.toCode"
+                    filterable
+                    clearable
+                    placeholder="选择明细科目"
+                    size="small"
+                    class="account-select"
+                    @change="updateToName(scope.row)"
+                  >
+                    <el-option
+                      v-for="acc in detailAccounts"
+                      :key="acc.code"
+                      :label="`${acc.code} ${accountFullPathMap[acc.code] || acc.name}`"
+                      :value="acc.code"
+                    />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column prop="transferType" label="转出方式" :width="getContentColumnWidth('transferType', 90)">
+                <template #default="scope">
+                  <el-select v-model="scope.row.transferType" size="small">
+                    <el-option label="全部" value="all" />
+                    <el-option label="部分" value="partial" />
+                  </el-select>
+                </template>
+              </el-table-column>
+              <el-table-column prop="ratio" label="比例" :width="getContentColumnWidth('ratio', 112)">
+                <template #default="scope">
+                  <span v-if="scope.row.transferType === 'all'" class="ratio-text">全部余额</span>
+                  <div v-else class="ratio-input">
+                    <el-input-number
+                      v-model="scope.row.ratio"
+                      :min="0"
+                      :max="100"
+                      :precision="2"
+                      size="small"
+                      style="width: 76px"
+                      controls-position="right"
+                    />
+                    <span>%</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column
+                column-key="action"
+                label="操作"
+                :width="getContentColumnWidth('action', 54)"
+                fixed="right"
+              >
+                <template #default="scope">
+                  <el-button size="small" type="danger" link @click="deleteItem(scope.row)">
+                    <el-icon><Delete /></el-icon>
+                  </el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+
+          <div class="content-footer">
             <span class="warning-tip">
-              <span class="warning-icon">⚠</span>
-              温馨提示: 转出科目允许多个，转入科目只能是一个明细科目
+              <el-icon color="#e6a23c"><Warning /></el-icon>
+              一个结转类型可以配置多个转出科目，但只能对应一个转入明细科目。
             </span>
           </div>
+        </template>
+
+        <div v-else class="empty-tip">
+          <el-icon :size="24" color="#ccc"><InfoFilled /></el-icon>
+          <span>请选择左侧结转类型，或新增一个类型</span>
         </div>
-      </div>
-    </el-card>
+      </main>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, onActivated, watch } from 'vue'
+import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { Plus, Delete, InfoFilled, Warning } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { showSuccess, showWarning, showOperationError } from '@/composables/useMessage'
-import { useDeleteConfirm, useConfirm } from '@/composables/useConfirm'
+import { useConfirm } from '@/composables/useConfirm'
+
+const contentTableRef = ref()
+const {
+  colWidth: getContentColumnWidth,
+  onDragEnd: handleContentHeaderDragend,
+  load: reloadContentColumnWidths,
+  bindTable: bindContentTableLayout,
+} = useColumnWidthMemory('transfer_content', {
+  storageKey: 'transfer_content_column_widths',
+})
+bindContentTableLayout(contentTableRef)
 
 interface AccountOption {
   id: string
@@ -203,33 +282,61 @@ interface TransferItem {
 }
 
 const allAccounts = ref<AccountOption[]>([])
-const allAccountsWithChildren = ref<any[]>([]) // 包含 children 信息的完整科目数据
-const accountFullPathMap = ref<Record<string, string>>({}) // code -> 完整路径（如"资产/流动资产/现金"）
+const allAccountsWithChildren = ref<any[]>([])
+const accountFullPathMap = ref<Record<string, string>>({})
 const transferTypes = ref<TransferType[]>([])
 const transferItems = ref<TransferItem[]>([])
 const selectedType = ref<TransferType | null>(null)
 
-// 当前选中类型的配置项
 const selectedTypeItems = computed(() => {
   if (!selectedType.value) return []
   return transferItems.value.filter(item => item.typeCode === selectedType.value?.code)
 })
 
-// 搜索功能 - 搜索结转类型和科目
+const selectedTypeCodeModel = computed({
+  get: () => selectedType.value?.code || '',
+  set: (value: string) => {
+    if (!selectedType.value) return
+    const nextCode = value.trim()
+    const oldCode = selectedType.value.code
+    selectedType.value.code = nextCode
+    if (!oldCode || oldCode === nextCode) return
+    for (const item of transferItems.value) {
+      if (item.typeCode === oldCode) {
+        item.typeCode = nextCode
+      }
+    }
+  },
+})
+
+const selectedTypeSourceCount = computed(() => {
+  return new Set(selectedTypeItems.value.map(item => item.fromCode).filter(Boolean)).size
+})
+
+const selectedTypeTargetText = computed(() => {
+  if (!selectedType.value) return '未设置'
+  return getTypeTargetText(selectedType.value.code)
+})
+
+const selectedTypeTransferMode = computed(() => {
+  const items = selectedTypeItems.value
+  if (items.length === 0) return '未设置'
+  const hasPartial = items.some(item => item.transferType === 'partial')
+  const hasAll = items.some(item => item.transferType !== 'partial')
+  if (hasPartial && hasAll) return '全部 + 部分'
+  return hasPartial ? '按比例' : '全部结转'
+})
+
 const searchKeyword = ref('')
 
-// 过滤结转类型：匹配类型本身或其明细项中的科目
 const filteredTypes = computed(() => {
   const keyword = searchKeyword.value.trim().toLowerCase()
   if (!keyword) return transferTypes.value
 
   return transferTypes.value.filter(type => {
-    // 匹配类型代码或名称
     if (type.code.toLowerCase().includes(keyword) || type.name.toLowerCase().includes(keyword)) {
       return true
     }
-
-    // 匹配该类型下的明细项中的科目代码或科目名称
     const items = transferItems.value.filter(item => item.typeCode === type.code)
     return items.some(item => {
       const fromCodeMatch = item.fromCode && item.fromCode.toLowerCase().includes(keyword)
@@ -241,7 +348,6 @@ const filteredTypes = computed(() => {
   })
 })
 
-// 高亮文本函数
 function highlightTypeText(text: string): string {
   const keyword = searchKeyword.value.trim()
   if (!keyword || !text) return text
@@ -249,78 +355,80 @@ function highlightTypeText(text: string): string {
   return text.replace(regex, '<mark style="background-color: #ffeb3b; padding: 0 2px;">$1</mark>')
 }
 
-// 判断明细行是否匹配搜索关键字
 function isItemMatched(item: TransferItem): boolean {
   const keyword = searchKeyword.value.trim().toLowerCase()
   if (!keyword) return false
-
   const fromCodeMatch = item.fromCode && item.fromCode.toLowerCase().includes(keyword)
   const fromNameMatch = item.fromName && item.fromName.toLowerCase().includes(keyword)
   const toCodeMatch = item.toCode && item.toCode.toLowerCase().includes(keyword)
   const toNameMatch = item.toName && item.toName.toLowerCase().includes(keyword)
-  return fromCodeMatch || fromNameMatch || toCodeMatch || toNameMatch
+  return !!(fromCodeMatch || fromNameMatch || toCodeMatch || toNameMatch)
 }
 
-// 高亮明细项文本
-function highlightItemText(text: string): string {
-  const keyword = searchKeyword.value.trim()
-  if (!keyword || !text) return text
-  const regex = new RegExp(`(${keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi')
-  return text.replace(regex, '<mark style="background-color: #ffeb3b; padding: 0 2px;">$1</mark>')
+function getItemRowClass({ row }: { row: TransferItem }): string {
+  return isItemMatched(row) ? 'matched-item-row' : ''
 }
 
-// 监听搜索关键字变化，自动选中匹配的类型
+function getItemsByTypeCode(typeCode: string): TransferItem[] {
+  return transferItems.value.filter(item => item.typeCode === typeCode)
+}
+
+function getTypeItemCount(typeCode: string): number {
+  return getItemsByTypeCode(typeCode).length
+}
+
+function formatAccountText(code: string): string {
+  if (!code) return ''
+  const name = accountFullPathMap.value[code] || getAccountName(code)
+  return name ? `${code} ${name}` : code
+}
+
+function getTypeTargetText(typeCode: string): string {
+  const toCodes = [...new Set(getItemsByTypeCode(typeCode).map(item => item.toCode).filter(Boolean))]
+  if (toCodes.length === 0) return '未设置转入'
+  if (toCodes.length === 1) return formatAccountText(toCodes[0])
+  return `${toCodes.length} 个不同转入`
+}
+
+function getTypeSourcePreview(typeCode: string): string {
+  const fromCodes = [...new Set(getItemsByTypeCode(typeCode).map(item => item.fromCode).filter(Boolean))]
+  if (fromCodes.length === 0) return '未设置转出'
+  if (fromCodes.length === 1) return formatAccountText(fromCodes[0])
+  return `${fromCodes.length} 个转出科目`
+}
+
 watch(searchKeyword, () => {
   const keyword = searchKeyword.value.trim()
-  if (!keyword) {
-    // 清空搜索时不改变选中项
-    return
-  }
-
+  if (!keyword) return
   const filtered = filteredTypes.value
-
-  // 如果只有一个匹配的类型，自动选中
   if (filtered.length === 1) {
     selectedType.value = filtered[0]
     return
   }
-
-  // 如果当前选中的类型不在过滤结果中，选中第一个匹配的类型
   if (selectedType.value && !filtered.find(t => t.id === selectedType.value?.id)) {
     selectedType.value = filtered[0] || null
     return
   }
-
-  // 如果没有选中类型，且有匹配结果，选中第一个
   if (!selectedType.value && filtered.length > 0) {
     selectedType.value = filtered[0]
   }
 })
 
-// 判断科目是否为明细科目（没有子科目）
 function isDetailAccount(code: string): boolean {
   const account = allAccountsWithChildren.value.find(a => a.code === code)
   if (!account) return false
-  // 明细科目：没有 children 或 children 为空数组
   return !account.children || account.children.length === 0
 }
 
-// 获取可选的转入科目列表（只包含明细科目）
 const detailAccounts = computed(() => {
   return allAccounts.value.filter(acc => isDetailAccount(acc.code))
 })
-
-// 获取明细行的样式类名
-function getItemRowClass({ row }: { row: TransferItem }): string {
-  return isItemMatched(row) ? 'matched-item-row' : ''
-}
 
 function getAccountName(code: string): string {
   const acc = allAccounts.value.find(a => a.code === code)
   return acc?.name || ''
 }
 
-// 构建科目的完整路径（如"资产/流动资产/现金"）
 function getAccountFullPath(code: string): string {
   return accountFullPathMap.value[code] || getAccountName(code)
 }
@@ -332,7 +440,6 @@ function updateFromName(row: TransferItem) {
 function updateToName(row: TransferItem) {
   row.toName = getAccountFullPath(row.toCode)
 
-  // 验证转入科目是否为明细科目
   if (row.toCode && !isDetailAccount(row.toCode)) {
     showWarning('转入科目必须是明细科目，不能选择父级科目')
     row.toCode = ''
@@ -340,11 +447,9 @@ function updateToName(row: TransferItem) {
     return
   }
 
-  // 验证是否只有一个转入科目
   if (row.toCode && selectedType.value) {
     const otherItems = selectedTypeItems.value.filter(item => item.id !== row.id)
     const existingToCodes = new Set(otherItems.map(item => item.toCode).filter(Boolean))
-
     if (existingToCodes.size > 0 && !existingToCodes.has(row.toCode)) {
       showWarning('每个结转类型只能有一个转入科目')
       row.toCode = ''
@@ -361,7 +466,7 @@ function handleTypeClick(row: TransferType) {
 function addTransferType() {
   const newType: TransferType = {
     id: Date.now().toString(),
-    code: (transferTypes.value.length + 1).toString().padStart(2, '0'),
+    code: getNextTypeCode(),
     name: '新结转类型',
     voucherType: '结转',
     periodType: 'monthly',
@@ -369,6 +474,14 @@ function addTransferType() {
   transferTypes.value.push(newType)
   selectedType.value = newType
   showSuccess('已添加新的结转类型')
+}
+
+function getNextTypeCode(): string {
+  const maxCode = transferTypes.value.reduce((max, type) => {
+    const numericCode = Number.parseInt(type.code, 10)
+    return Number.isFinite(numericCode) ? Math.max(max, numericCode) : max
+  }, 0)
+  return (maxCode + 1).toString().padStart(2, '0')
 }
 
 async function deleteTransferType(row: TransferType) {
@@ -392,7 +505,6 @@ function addItem() {
     showWarning('请先选择一个结转类型')
     return
   }
-
   const newItem: TransferItem = {
     id: Date.now().toString(),
     typeCode: selectedType.value.code,
@@ -417,14 +529,12 @@ async function deleteSelectedItems() {
     showWarning('请先选择一个结转类型')
     return
   }
-
   const confirmed = await useConfirm({
     message: '确定要删除当前结转类型的所有配置吗？',
     title: '提示',
     type: 'warning',
   })
   if (!confirmed) return
-
   transferItems.value = transferItems.value.filter(i => i.typeCode !== selectedType.value?.code)
   showSuccess('删除成功')
 }
@@ -436,10 +546,8 @@ async function fetchData() {
     request.get<TransferItem[]>('/system/transfer-items'),
   ])
 
-  // 保存完整的科目数据（包含 children 信息）
   allAccountsWithChildren.value = accountRes.data || []
 
-  // 构建树形结构以判断是否有子科目
   const accountMap: Record<string, any> = {}
   for (const acc of allAccountsWithChildren.value) {
     accountMap[acc.id] = { ...acc, children: [] }
@@ -449,29 +557,24 @@ async function fetchData() {
       accountMap[acc.parent_id].children.push(accountMap[acc.id])
     }
   }
-  // 更新 allAccountsWithChildren 为包含 children 的数据
   allAccountsWithChildren.value = Object.values(accountMap)
 
-  // 简化的科目列表（用于显示）
   allAccounts.value = allAccountsWithChildren.value.map(acc => ({
     id: acc.id,
     code: acc.code,
     name: acc.name,
   }))
 
-  // 构建 code -> 完整路径 映射
   const fullPathMap: Record<string, string> = {}
   const originalAccounts = accountRes.data || []
   for (const acc of originalAccounts) {
     const pathParts: string[] = []
     let current: any = acc
-    // 向上遍历收集所有上级科目的名称
     while (current) {
       pathParts.unshift(current.name)
       const parent = originalAccounts.find((a: any) => a.id === current.parent_id)
       current = parent || null
     }
-    // 完整路径格式: "上级1/上级2/当前"（去掉根节点自身，只保留上级路径+当前科目名）
     const fullPath = pathParts.slice(1).join('/')
     fullPathMap[acc.code] = fullPath || acc.name
   }
@@ -485,7 +588,6 @@ async function fetchData() {
 
   if (itemRes.data && itemRes.data.length > 0) {
     transferItems.value = itemRes.data
-    // 补充科目名称（使用完整路径）
     for (const item of transferItems.value) {
       if (item.fromCode) {
         item.fromName = accountFullPathMap.value[item.fromCode] || getAccountName(item.fromCode)
@@ -503,22 +605,35 @@ async function fetchData() {
 
 async function handleSave() {
   try {
-    // 验证每个结转类型的转入科目
+    const codeSet = new Set<string>()
     for (const type of transferTypes.value) {
+      const code = type.code.trim()
+      const name = type.name.trim()
+      if (!code || !name) {
+        showWarning('结转类型的代码和名称不能为空')
+        return
+      }
+      if (codeSet.has(code)) {
+        showWarning(`结转类型代码「${code}」重复，请调整后再保存`)
+        return
+      }
+      codeSet.add(code)
+      type.code = code
+      type.name = name
+      type.voucherType = type.voucherType?.trim() || '结转'
+      type.periodType = type.periodType || 'monthly'
+      if (/年末|年结|年度/.test(type.name) && type.periodType !== 'yearly') {
+        type.periodType = 'yearly'
+      }
+
       const items = transferItems.value.filter(item => item.typeCode === type.code)
       if (items.length === 0) continue
-
-      // 收集所有转入科目
       const toCodes = items.map(item => item.toCode).filter(Boolean)
-
-      // 验证1：检查是否只有一个转入科目
       const uniqueToCodes = new Set(toCodes)
       if (uniqueToCodes.size > 1) {
         showWarning(`结转类型「${type.name}」有多个不同的转入科目，每个结转类型只能有一个转入科目`)
         return
       }
-
-      // 验证2：检查转入科目是否为明细科目
       for (const toCode of uniqueToCodes) {
         if (!isDetailAccount(toCode)) {
           const account = allAccounts.value.find(a => a.code === toCode)
@@ -527,7 +642,6 @@ async function handleSave() {
         }
       }
     }
-
     await request.put('/system/transfer-types', { types: transferTypes.value })
     await request.put('/system/transfer-items', { items: transferItems.value })
     showSuccess('配置已保存')
@@ -545,81 +659,400 @@ onMounted(async () => {
     selectedType.value = null
   }
 })
+
+onActivated(() => reloadContentColumnWidths())
 </script>
 
 <style scoped>
 .page {
-  padding: 16px;
-}
-.page-header {
+  padding: 10px 12px;
+  height: calc(100vh - 60px);
   display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-.page-header h3 {
-  margin: 0;
-}
-.page-header-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-left: auto;
-  margin-right: 16px;
-}
-.toolbar-label {
-  font-weight: 600;
-  color: var(--el-color-primary);
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--el-fill-color-lighter);
 }
 
-.section-header {
+.transfer-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 12px;
+  gap: 12px;
+  margin-bottom: 8px;
+  flex-shrink: 0;
 }
-.section-title {
+
+.header-title-block {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.page-header h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.25;
   font-weight: 600;
   color: var(--el-text-color-primary);
 }
 
-.transfer-type-section {
-  margin-bottom: 24px;
-}
-
-.transfer-content-section {
-  margin-bottom: 24px;
-}
-
-.content-actions {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-.warning-tip {
-  display: flex;
+.header-summary {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: #e6a23c;
+  color: var(--el-text-color-secondary);
   font-size: 12px;
-  margin-left: auto;
 }
-.warning-icon {
-  font-size: 14px;
+
+.page-header-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.transfer-workspace {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(220px, 280px) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.type-sidebar,
+.transfer-detail {
+  min-height: 0;
+  background: #fff;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.type-sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-header {
+  height: 32px;
+  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: var(--el-fill-color-lighter);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.type-scroll {
+  flex: 1;
+  min-height: 0;
+}
+
+.type-list-item {
+  position: relative;
+  width: 100%;
+  padding: 6px 28px 6px 8px;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 6px;
+  border: 0;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.type-list-item:hover {
+  background: var(--el-fill-color-light);
+}
+
+.type-list-item.active {
+  background: var(--el-color-primary-light-9);
+}
+
+.type-list-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--el-color-primary);
+}
+
+.type-code,
+.type-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 20px;
+  min-width: 26px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--el-color-primary);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.type-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.type-name-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.type-name {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.type-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.type-meta span {
+  white-space: nowrap;
+}
+
+.type-flow {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+}
+
+.flow-arrow {
+  color: var(--el-color-primary);
+  padding: 0 3px;
+}
+
+.type-delete {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  opacity: 0;
+}
+
+.type-list-item:hover .type-delete,
+.type-list-item.active .type-delete {
+  opacity: 1;
+}
+
+.sidebar-empty {
+  padding: 20px 12px;
+  color: var(--el-text-color-placeholder);
+  text-align: center;
+  font-size: 12px;
+}
+
+.transfer-detail {
+  display: flex;
+  flex-direction: column;
+  padding: 8px;
+}
+
+.detail-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+  flex-wrap: wrap;
+}
+
+.editor-row {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 70px minmax(140px, 1fr) 80px 80px;
+  gap: 6px;
+  align-items: center;
+}
+
+.editor-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.editor-field > :deep(.el-input),
+.editor-field > :deep(.el-select) {
+  flex: 1;
+  min-width: 0;
+}
+
+.section-actions {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.relation-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 10px;
+  background: var(--el-fill-color-lighter);
+  border: 1px solid var(--el-border-color-lighter);
+  color: var(--el-text-color-primary);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+}
+
+.chip em {
+  font-style: normal;
+  color: var(--el-text-color-secondary);
+  font-size: 11px;
+}
+
+.chip--target {
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.content-table-wrapper {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.empty-tip {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--el-text-color-placeholder);
+  font-size: 13px;
+  background: var(--el-fill-color-lighter);
+  border-radius: 6px;
+}
+
+.content-footer {
+  padding-top: 6px;
+  flex-shrink: 0;
+}
+
+.warning-tip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: #a86b00;
+  font-size: 11px;
+}
+
+.compact-table {
+  font-size: 12px;
+}
+
+.compact-table :deep(.el-table__cell) {
+  padding: 2px 0 !important;
+}
+
+.compact-table :deep(.el-table__row) {
+  height: 28px;
+}
+
+.compact-table :deep(.cell) {
+  padding: 0 6px;
+  line-height: 1.4;
+}
+
+.compact-table :deep(th.el-table__cell .cell) {
+  font-size: 11px;
+}
+
+.compact-table :deep(th.el-table__cell) {
+  background-color: var(--el-fill-color-lighter);
+  font-weight: 600;
+}
+
+.content-table {
+  height: 100%;
 }
 
 .account-select {
   width: 100%;
 }
-.transfer-type-select {
-  width: 110px;
+
+.account-select :deep(.el-input__inner) {
+  font-size: 12px;
 }
 
-/* 匹配的明细行高亮样式 */
+.ratio-text {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+
+.ratio-input {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
 :deep(.matched-item-row) {
   background-color: #e6f7ff !important;
 }
+
 :deep(.matched-item-row:hover) {
   background-color: #bae7ff !important;
 }
+
+@media (max-width: 1100px) {
+  .transfer-workspace {
+    grid-template-columns: 1fr;
+  }
+
+  .type-sidebar {
+    max-height: 220px;
+  }
+
+  .editor-row {
+    grid-template-columns: 1fr 1fr;
+  }
+}
 </style>
+

@@ -4,16 +4,20 @@
   box-sizing: border-box;
 }
 
-html, body, #app {
+html,
+body,
+#app {
   width: 100%;
   height: 100%;
-  font-family: 'PingFang SC', 'Microsoft YaHei', 'Helvetica Neue', Helvetica, Arial, sans-serif;
-  font-size: 14px;
-  color: #2c3e50;
+  font-family: var(--cw-font-body);
+  font-size: var(--cw-text-base);
+  color: var(--cw-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
 body {
-  background-color: #f0f2f5;
+  background-color: var(--cw-bg-base);
 }
 
 a {
@@ -21,34 +25,240 @@ a {
   color: inherit;
 }
 
-/* 滚动条 */
+/* 滚动条 - 苹果风格 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c9d2;
+  background: rgba(0, 0, 0, 0.15);
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #a0a8b4;
+  background: rgba(0, 0, 0, 0.25);
 }
 
-/* 全局Element Plus主题覆盖 - 行政单位风格 */
-:root {
-  --el-color-primary: #1a4b8c;
-  --el-color-primary-light-3: #2e6bc4;
-  --el-color-primary-light-5: #5a8fd8;
-  --el-color-primary-light-7: #8bb3e6;
-  --el-color-primary-light-8: #a8c7ee;
-  --el-color-primary-light-9: #c5daf4;
-  --el-color-primary-dark-2: #143c70;
-  --el-color-success: #2e7d32;
-  --el-color-warning: #c17b1a;
-  --el-color-danger: #c0392b;
-  --el-color-info: #607d8b;
-  --el-border-radius-base: 6px;
-  --el-border-radius-small: 4px;
+/* 全局Element Plus主题覆盖 - 苹果风格 + 中国行政事业元素 */
+::root {
+  /* Element Plus 原有变量 - 苹果风格 */
+  --el-color-primary: #007AFF;
+  --el-color-primary-light-3: #4da3ff;
+  --el-color-primary-light-5: #80c4ff;
+  --el-color-primary-light-7: #b3d8ff;
+  --el-color-primary-light-8: #cce5ff;
+  --el-color-primary-light-9: #e6f2ff;
+  --el-color-primary-dark-2: #0056b3;
+
+  /* 表格选中行底色 */
+  --el-table-current-row-bg-color: rgba(0, 122, 255, 0.12);
+  --el-color-success: #34C759;
+  --el-color-warning: #FF9500;
+  --el-color-danger: #FF3B30;
+  --el-color-info: #8e8e93;
+  --el-border-radius-base: 12px;
+  --el-border-radius-small: 8px;
+
+  /* ========== CW Finance 专用色彩系统 - 苹果风格 ========== */
+
+  /* 财务专用色 */
+  --cw-debit-color: #34C759; /* 借方：苹果绿 */
+  --cw-credit-color: #FF3B30; /* 贷方：苹果红 */
+  --cw-balance-color: #007AFF; /* 余额：苹果蓝 */
+  --cw-gold: #ffd700; /* 金色强调 - 中国行政事业元素 */
+  --cw-red: #c41c1c; /* 中国红 - 行政事业元素 */
+
+  /* 背景层次 - 苹果风格 */
+  --cw-bg-base: #f5f5f7; /* 基础背景 */
+  --cw-bg-elevated: #ffffff; /* 卡片背景 */
+  --cw-bg-subtle: rgba(255, 255, 255, 0.8); /* 毛玻璃背景 */
+  --cw-bg-hover: rgba(0, 0, 0, 0.04); /* 悬停背景 */
+
+  /* 边框层次 */
+  --cw-border-light: rgba(0, 0, 0, 0.06);
+  --cw-border-medium: rgba(0, 0, 0, 0.1);
+  --cw-border-strong: rgba(0, 0, 0, 0.15);
+
+  /* 文本层次 - 苹果风格 */
+  --cw-text-primary: #1d1d1f;
+  --cw-text-secondary: #6e6e73;
+  --cw-text-tertiary: #86868b;
+  --cw-text-disabled: #aeaeb2;
+
+  /* 阴影层次 - 苹果风格 */
+  --cw-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.04);
+  --cw-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
+  --cw-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --cw-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.16);
+
+  /* 字体系统 - 苹果风格 */
+  --cw-font-heading: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'PingFang SC', sans-serif;
+  --cw-font-body: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', sans-serif;
+  --cw-font-number: 'SF Mono', 'Menlo', 'Monaco', 'Courier New', monospace;
+
+  /* 字号系统 */
+  --cw-text-xs: 11px;
+  --cw-text-sm: 12px;
+  --cw-text-base: 13px;
+  --cw-text-lg: 14px;
+  --cw-text-xl: 16px;
+  --cw-text-2xl: 20px;
+  --cw-text-3xl: 24px;
+
+  /* 字重系统 */
+  --cw-font-normal: 400;
+  --cw-font-medium: 500;
+  --cw-font-semibold: 600;
+  --cw-font-bold: 700;
+
+  /* Z-index 层级系统 */
+  --cw-z-table-fixed: 10;
+  --cw-z-sticky: 100;
+  --cw-z-dropdown: 1000;
+  --cw-z-overlay: 1000;
+  --cw-z-modal: 2000;
+  --cw-z-notification: 3000;
+  --cw-z-tooltip: 4000;
+
+  /* 对话框尺寸规范 */
+  --cw-dialog-sm: 380px;
+  --cw-dialog-md: 500px;
+  --cw-dialog-lg: 720px;
+  --cw-dialog-xl: 900px;
+  --cw-dialog-label-sm: 80px;
+  --cw-dialog-label-md: 100px;
+}
+
+/* ========== 暗色模式 ========== */
+[data-theme='dark'] .el-table {
+  --el-table-border-color: rgba(255, 255, 255, 0.22);
+  --el-border-color-lighter: rgba(255, 255, 255, 0.22);
+  --cw-table-grid-color: rgba(255, 255, 255, 0.22);
+}
+
+[data-theme='dark'] .el-table__header th {
+  border-bottom-color: rgba(255, 255, 255, 0.28) !important;
+}
+
+[data-theme='dark'] {
+  --cw-bg-base: #1c1c1e;
+  --cw-bg-elevated: #2c2c2e;
+  --cw-bg-subtle: rgba(44, 44, 46, 0.8);
+  --cw-bg-hover: rgba(255, 255, 255, 0.06);
+
+  --cw-border-light: rgba(255, 255, 255, 0.08);
+  --cw-border-medium: rgba(255, 255, 255, 0.12);
+  --cw-border-strong: rgba(255, 255, 255, 0.18);
+
+  --cw-text-primary: #f5f5f7;
+  --cw-text-secondary: #a1a1a6;
+  --cw-text-tertiary: #8e8e93;
+  --cw-text-disabled: #636366;
+
+  --cw-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+  --cw-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.4);
+  --cw-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.5);
+  --cw-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.6);
+
+  /* Element Plus 暗色适配 */
+  --el-bg-color: #2c2c2e;
+  --el-bg-color-page: #1c1c1e;
+  --el-text-color-primary: #f5f5f7;
+  --el-text-color-regular: #a1a1a6;
+  --el-border-color: rgba(255, 255, 255, 0.08);
+}
+
+/* ========== 页面过渡动画 - 苹果风格 ========== */
+
+/* 路由切换动画 - 苹果风格弹簧效果 */
+.fade-enter-active,
+.fade-leave-active {
+  transition: all 0.35s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.fade-enter-from {
+  opacity: 0;
+  transform: translateY(8px);
+}
+
+.fade-leave-to {
+  opacity: 0;
+  transform: translateY(-8px);
+}
+
+/* 卡片展开动画 */
+.card-expand-enter-active,
+.card-expand-leave-active {
+  transition: all 0.35s cubic-bezier(0.25, 0.1, 0.25, 1);
+  transform-origin: top;
+}
+
+.card-expand-enter-from,
+.card-expand-leave-to {
+  opacity: 0;
+  transform: scaleY(0.96);
+}
+
+/* 数据加载骨架屏 */
+.skeleton {
+  background: linear-gradient(90deg, rgba(0,0,0,0.04) 25%, rgba(0,0,0,0.08) 50%, rgba(0,0,0,0.04) 75%);
+  background-size: 200% 100%;
+  animation: skeleton-loading 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+
+@keyframes skeleton-loading {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}
+
+/* 列表项动画 */
+.list-enter-active,
+.list-leave-active {
+  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.list-enter-from {
+  opacity: 0;
+  transform: translateX(-12px);
+}
+
+.list-leave-to {
+  opacity: 0;
+  transform: translateX(12px);
+}
+
+/* 模态框动画 */
+.modal-enter-active,
+.modal-leave-active {
+  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
+}
+
+.modal-enter-from,
+.modal-leave-to {
+  opacity: 0;
+  transform: scale(0.96);
+}
+
+/* ========== 表格选中行样式统一 ========== */
+.el-table__body tr.current-row > td.el-table__cell {
+  background-color: rgba(0, 122, 255, 0.12) !important;
+  font-weight: 500;
+}
+
+.el-table__body tr.current-row:hover > td.el-table__cell {
+  background-color: rgba(0, 122, 255, 0.18) !important;
+}
+
+[data-theme='dark'] .el-table__body tr.current-row > td.el-table__cell {
+  background-color: rgba(0, 122, 255, 0.2) !important;
+}
+
+[data-theme='dark'] .el-table__body tr.current-row:hover > td.el-table__cell {
+  background-color: rgba(0, 122, 255, 0.28) !important;
 }

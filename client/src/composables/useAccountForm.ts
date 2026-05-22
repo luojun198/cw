@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import type { Ref } from 'vue'
 import request from '@/api/request'
+import { isAuxCategoryExcludedFromAccount } from '@/utils/accountCashFlow'
 
 export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) {
   const form = ref<any>({ is_enabled: 1, no_negative: 0 })
@@ -15,8 +16,14 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
   // 获取可选的类别（排除已选）
   function getAvailableCats(item: any) {
     return auxCategories.value.filter(cat => {
+      if (isAuxCategoryExcludedFromAccount(cat.code)) return false
       return !form.value.aux_list.some((i: any) => i !== item && i.cat_id === cat.id)
     })
+  }
+
+  function isCashFlowAuxCategoryId(catId: string): boolean {
+    const cat = auxCategories.value.find(c => c.id === catId)
+    return isAuxCategoryExcludedFromAccount(cat?.code)
   }
 
   function onAuxCatChange(item: any, val: string) {
@@ -115,6 +122,7 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
       const parsed = typeof row.aux_types === 'string' ? JSON.parse(row.aux_types) : row.aux_types
       if (parsed && typeof parsed === 'object') {
         for (const [catId, itemId] of Object.entries(parsed)) {
+          if (isCashFlowAuxCategoryId(catId)) continue
           aux_list.push({ cat_id: catId, item_id: itemId || null })
         }
       }
@@ -136,7 +144,7 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
   function buildSavePayload() {
     const aux_types: Record<string, any> = {}
     for (const item of form.value.aux_list) {
-      if (item.cat_id) {
+      if (item.cat_id && !isCashFlowAuxCategoryId(item.cat_id)) {
         aux_types[item.cat_id] = item.item_id || null
       }
     }

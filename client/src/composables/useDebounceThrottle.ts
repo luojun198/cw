@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 
 /**
  * 防抖函数
@@ -73,7 +73,6 @@ export function useDebounce<T>(value: T, delay: number = 300) {
 
   // 如果传入的是 ref，监听它的变化
   if (typeof value === 'object' && value !== null && 'value' in value) {
-    const { watch } = require('vue')
     watch(
       () => (value as any).value,
       (newValue: T) => {
@@ -86,13 +85,30 @@ export function useDebounce<T>(value: T, delay: number = 300) {
 }
 
 /**
+ * 防抖请求被新调用 / cancel 打断时抛出的错误。
+ * 调用方可通过 `err instanceof DebouncedAbortError` 或 `err.name === 'DebouncedAbortError'` 识别。
+ */
+export class DebouncedAbortError extends Error {
+  constructor(message = 'Debounced request aborted') {
+    super(message)
+    this.name = 'DebouncedAbortError'
+  }
+}
+
+/**
  * 请求防抖 composable
  * 用于搜索、自动保存等场景
  *
+ * 行为约定：
+ * - 同一 useDebouncedRequest 实例上的新 execute() 会取消上一次 pending 的调用；
+ *   被取消的旧 Promise 会以 `DebouncedAbortError` reject（而不是永远 pending）。
+ * - cancel() 同样会以 `DebouncedAbortError` reject 当前 pending 的 Promise。
+ * - 如果 fn 想感知取消，可以读取 `currentSignal`（AbortSignal）。
+ *
  * @example
- * const { execute, cancel, isPending } = useDebouncedRequest(
+ * const { execute, cancel, isPending, currentSignal } = useDebouncedRequest(
  *   async (keyword: string) => {
- *     return await api.search(keyword)
+ *     return await api.search(keyword, { signal: currentSignal.value })
  *   },
  *   500
  * )
@@ -103,56 +119,76 @@ export function useDebouncedRequest<T extends (...args: any[]) => Promise<any>>(
 ) {
   const isPending = ref(false)
   const isExecuting = ref(false)
+  /** 当前一次 execute 的 AbortSignal，调用方可选地把它转发给底层 fetch/axios */
+  const currentSignal = ref<AbortSignal | null>(null)
+
   let timeoutId: ReturnType<typeof setTimeout> | null = null
   let abortController: AbortController | null = null
+  // 上次 execute 仍未 settle 的 reject 引用，便于新调用/取消时统一拒绝
+  let pendingReject: ((reason: unknown) => void) | null = null
 
-  const execute = (...args: Parameters<T>): Promise<ReturnType<T>> => {
-    return new Promise((resolve, reject) => {
-      // 取消之前的请求
-      if (abortController) {
-        abortController.abort()
-      }
+  function abortPending(reason: unknown) {
+    if (timeoutId) {
+      clearTimeout(timeoutId)
+      timeoutId = null
+    }
+    if (abortController) {
+      try { abortController.abort() } catch { /* ignore */ }
+      abortController = null
+    }
+    if (pendingReject) {
+      const reject = pendingReject
+      pendingReject = null
+      reject(reason)
+    }
+    currentSignal.value = null
+    isPending.value = false
+    isExecuting.value = false
+  }
 
-      // 清除之前的定时器
-      if (timeoutId) {
-        clearTimeout(timeoutId)
-      }
+  const execute = (...args: Parameters<T>): Promise<Awaited<ReturnType<T>>> => {
+    // 先终止上次调用，确保旧 Promise 不会泄漏
+    abortPending(new DebouncedAbortError('Superseded by newer call'))
 
+    return new Promise<Awaited<ReturnType<T>>>((resolve, reject) => {
+      pendingReject = reject
       isPending.value = true
 
+      const localController = new AbortController()
+      abortController = localController
+      currentSignal.value = localController.signal
+
       timeoutId = setTimeout(async () => {
+        timeoutId = null
+        // 防抖期间被 abort 的情况下，setTimeout 已被 clearTimeout，此分支不会进入
         try {
           isExecuting.value = true
-          abortController = new AbortController()
-
-          const result = await fn(...args)
-
-          isPending.value = false
-          isExecuting.value = false
+          const result = (await fn(...args)) as Awaited<ReturnType<T>>
+          // settle 之前再校验：可能在 await 期间被新调用打断
+          if (localController.signal.aborted) {
+            // pendingReject 已在 abortPending 里调用过，这里直接吞掉结果
+            return
+          }
+          pendingReject = null
           resolve(result)
         } catch (error) {
-          isPending.value = false
-          isExecuting.value = false
+          if (localController.signal.aborted) return
+          pendingReject = null
           reject(error)
         } finally {
-          timeoutId = null
-          abortController = null
+          isExecuting.value = false
+          isPending.value = false
+          if (abortController === localController) {
+            abortController = null
+            currentSignal.value = null
+          }
         }
       }, delay)
     })
   }
 
   const cancel = () => {
-    if (timeoutId) {
-      clearTimeout(timeoutId)
-      timeoutId = null
-    }
-    if (abortController) {
-      abortController.abort()
-      abortController = null
-    }
-    isPending.value = false
-    isExecuting.value = false
+    abortPending(new DebouncedAbortError('Cancelled by caller'))
   }
 
   return {
@@ -160,6 +196,7 @@ export function useDebouncedRequest<T extends (...args: any[]) => Promise<any>>(
     cancel,
     isPending,
     isExecuting,
+    currentSignal,
   }
 }
 

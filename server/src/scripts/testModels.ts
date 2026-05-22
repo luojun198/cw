@@ -17,7 +17,7 @@ const modelsToTest = [
   'spark-lite',
 ]
 
-async function testModel(model) {
+async function testModel(model: string) {
   try {
     const response = await fetch(apiUrl, {
       method: 'POST',
@@ -56,7 +56,7 @@ async function testModel(model) {
       }
       return false
     }
-  } catch (error) {
+  } catch (error: any) {
     console.log(`❌ ${model}: 异常 - ${error.message}`)
     return false
   }

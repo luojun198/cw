@@ -7,7 +7,7 @@
  * - 本期盈余为贷方余额科目，用于核算单位本期收入费用相抵后的余额
  */
 
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
 import { v4 as uuidv4 } from 'uuid'
 
 // 默认结转损益配置

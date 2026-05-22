@@ -1,5 +1,16 @@
 <template>
-  <el-dialog v-model="visible" :title="title" width="540px" @close="handleClose">
+  <el-dialog
+    v-model="visible"
+    :title="title"
+    width="540px"
+    draggable
+    append-to-body
+    destroy-on-close
+    :modal="false"
+    :close-on-click-modal="false"
+    class="account-dialog"
+    @close="handleClose"
+  >
     <el-form :model="form" label-width="110px">
       <el-form-item label="上级科目">
         <el-tree-select
@@ -38,9 +49,21 @@
             <el-switch v-model="form.is_bank" :active-value="1" :inactive-value="0" />
           </div>
           <div class="form-switch-item">
-            <span class="form-switch-label">余额不允许负数</span>
+            <el-tooltip
+              effect="dark"
+              placement="top"
+              content="开启后：该科目及其所有下级科目的余额都不能为负数；下级科目若启用辅助核算，每个辅助项目余额也不能为负数。"
+            >
+              <span class="form-switch-label">余额不允许负数</span>
+            </el-tooltip>
             <el-switch v-model="form.no_negative" :active-value="1" :inactive-value="0" />
           </div>
+        </div>
+        <div v-if="form.no_negative === 1" class="form-label-tip">
+          ✓ 对所有下级科目及其辅助项目均生效
+        </div>
+        <div v-if="childrenCount > 0 && mode === 'edit'" class="form-label-tip sync-tip">
+          保存后将同步到 {{ childrenCount }} 个下级科目
         </div>
       </el-form-item>
       <el-form-item label="辅助核算">
@@ -88,6 +111,9 @@
             >+ 添加核算类型</el-button
           >
         </div>
+        <div v-if="childrenCount > 0 && mode === 'edit'" class="form-label-tip sync-tip">
+          保存后将同步到 {{ childrenCount }} 个下级科目
+        </div>
       </el-form-item>
       <el-form-item label="启用状态">
         <el-switch v-model="form.is_enabled" :active-value="1" :inactive-value="0" />
@@ -123,6 +149,11 @@
     </el-form>
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
+      <el-button
+        v-if="mode === 'add'"
+        :loading="saving"
+        @click="emit('save-and-add')"
+      >保存并新增</el-button>
       <el-button type="primary" :loading="saving" @click="emit('save')">保存</el-button>
     </template>
   </el-dialog>
@@ -152,6 +183,7 @@ const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   'parent-change': [parentId: string]
   save: []
+  'save-and-add': []
 }>()
 
 const visible = ref(props.modelValue)
@@ -197,6 +229,13 @@ function handleClose() {
 </script>
 
 <style scoped>
+/* 无遮罩时加强弹窗阴影，便于与后方列表区分 */
+:global(.account-dialog.el-dialog) {
+  box-shadow:
+    0 12px 32px rgba(0, 0, 0, 0.18),
+    0 0 0 1px rgba(0, 0, 0, 0.06) !important;
+}
+
 .aux-list {
   width: 100%;
 }
@@ -223,5 +262,10 @@ function handleClose() {
   display: flex;
   align-items: center;
   margin-bottom: 8px;
+}
+
+.sync-tip {
+  color: var(--el-color-warning);
+  margin-top: 4px;
 }
 </style>

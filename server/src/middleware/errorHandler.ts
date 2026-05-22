@@ -1,5 +1,5 @@
 import { Request, Response, NextFunction } from 'express'
-import { log } from '../utils/logger.ts'
+import { log } from '../utils/logger.js'
 
 /**
  * 自定义业务错误类

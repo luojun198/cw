@@ -1,191 +1,114 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h3>凭证查询</h3>
-      <div style="display: flex; gap: 8px; align-items: center">
-        <el-popover placement="bottom-start" :width="200" trigger="click">
-          <template #reference>
-            <el-button>
-              <el-icon style="margin-right: 4px"><Setting /></el-icon>列设置
-            </el-button>
-          </template>
-          <div style="display: flex; flex-direction: column; gap: 8px">
-            <div
-              v-for="col in visibleCols"
-              :key="col.prop"
-              style="display: flex; align-items: center; gap: 8px"
-            >
-              <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
-              <span>{{ col.label }}</span>
+  <div class="page voucher-list-page">
+    <div class="voucher-page-top">
+      <h3 class="voucher-page-top-title">凭证查询</h3>
+      <VoucherFilterBar
+        layout="grouped"
+        :filters="filters"
+        :aux-categories="auxCategories"
+        :voucher-types="voucherTypes"
+        :accounts="accounts"
+        :aux-items-map="auxItemsMap"
+        enable-status
+        enable-year-period
+        enable-voucher-type
+        enable-account
+        enable-auxiliary
+        enable-sort
+        @search="fetchData"
+        @sort-change="onSortChange"
+        @load-accounts="loadAccounts"
+        @load-aux-items="loadAuxItems"
+      >
+        <template #actions>
+          <el-popover placement="bottom-start" :width="200" trigger="click">
+            <template #reference>
+              <el-button class="voucher-toolbar-btn" plain>
+                <el-icon><Setting /></el-icon>
+                列设置
+              </el-button>
+            </template>
+            <div style="display: flex; flex-direction: column; gap: 8px">
+              <div
+                v-for="col in visibleCols"
+                :key="col.prop"
+                style="display: flex; align-items: center; gap: 8px"
+              >
+                <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
+                <span>{{ col.label }}</span>
+              </div>
             </div>
-          </div>
           </el-popover>
-        <el-button @click="exportData">导出 Excel</el-button>
-        <el-button type="info" plain @click="handleBatchPrint">
-          <el-icon><Printer /></el-icon>
-          批量打印
-        </el-button>
-      </div>
-    </div>
-
-    <el-card style="margin-bottom: 12px">
-      <div class="filter-row">
-        <el-input
-          v-model="filters.keyword"
-          placeholder="凭证号/摘要/金额/制单人/记账人/科目/辅助核算"
-          style="width: 360px"
-          clearable
-          @keyup.enter="fetchData"
-        />
-        <el-select v-model="filters.status" placeholder="状态" style="width: 120px">
-          <el-option label="全部" value="" />
-          <el-option label="只录入" value="draft" />
-          <el-option label="已审核" value="audited" />
-          <el-option label="已记账" value="posted" />
-        </el-select>
-        <el-button @click="showDateDialog = true" :icon="Calendar" circle />
-        <el-select v-model="filters.year" placeholder="年度" style="width: 100px" clearable>
-          <el-option label="全部年份" :value="null" />
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <el-select v-model="filters.period" placeholder="月份" style="width: 100px" clearable>
-          <el-option label="全部月份" :value="null" />
-          <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
-        </el-select>
-        <el-select
-          v-model="filters.voucherTypeIds"
-          placeholder="凭证类型"
-          style="width: 180px"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          clearable
-        >
-          <el-option label="全部类型" value="" />
-          <el-option
-            v-for="vt in voucherTypes"
-            :key="vt.id"
-            :label="vt.name"
-            :value="vt.id"
-          />
-        </el-select>
-        <el-select
-          v-model="filters.accountIds"
-          placeholder="科目"
-          style="width: 180px"
-          multiple
-          collapse-tags
-          collapse-tags-tooltip
-          clearable
-          filterable
-          @focus="loadAccounts"
-        >
-          <el-option
-            v-for="acc in accounts"
-            :key="acc.id"
-            :label="`${acc.code} ${acc.name}`"
-            :value="acc.id"
-          />
-        </el-select>
-        <!-- 动态辅助核算筛选 -->
-        <template v-for="cat in auxCategories" :key="cat.id">
-          <el-select
-            v-model="filters.auxItems[cat.id]"
-            :placeholder="cat.name"
-            style="width: 150px"
-            multiple
-            collapse-tags
-            collapse-tags-tooltip
-            clearable
-            filterable
-            @focus="loadAuxItems(cat.id)"
+          <el-button class="voucher-toolbar-btn" plain :loading="exporting" @click="exportData">
+            <el-icon><Download /></el-icon>
+            导出 Excel
+          </el-button>
+          <el-button class="voucher-toolbar-btn" plain @click="handleBatchPrint">
+            <el-icon><Printer /></el-icon>
+            批量打印
+          </el-button>
+          <el-button
+            class="voucher-toolbar-btn"
+            plain
+            :disabled="!selectedVoucherId"
+            @click="handleTurnTemplate"
           >
-            <el-option
-              v-for="item in auxItemsMap[cat.id] || []"
-              :key="item.id"
-              :label="item.name"
-              :value="item.id"
-            />
-          </el-select>
-          <!-- 该类别的自定义字段筛选 -->
-          <template v-for="field in cat.fields || []" :key="field.id">
-            <el-input
-              v-if="field.field_type === 'text' || field.field_type === 'number'"
-              v-model="filters.auxFields[`${cat.id}_${field.field_key}`]"
-              :placeholder="field.field_name"
-              style="width: 150px"
-              clearable
-            />
-            <el-select
-              v-else-if="field.field_type === 'select'"
-              v-model="filters.auxFields[`${cat.id}_${field.field_key}`]"
-              :placeholder="field.field_name"
-              style="width: 150px"
-              clearable
-            >
-              <el-option
-                v-for="opt in parseFieldOptions(field.options_json)"
-                :key="opt"
-                :label="opt"
-                :value="opt"
-              />
-            </el-select>
-            <el-date-picker
-              v-else-if="field.field_type === 'date'"
-              v-model="filters.auxFields[`${cat.id}_${field.field_key}`]"
-              type="date"
-              :placeholder="field.field_name"
-              value-format="YYYY-MM-DD"
-              style="width: 150px"
-              clearable
-            />
-          </template>
+            转模版
+          </el-button>
         </template>
-        <el-button type="primary" @click="fetchData">查询</el-button>
-      </div>
-    </el-card>
+      </VoucherFilterBar>
+    </div>
 
     <el-table
       ref="tableRef"
       :data="flatList"
       border
+      size="small"
+      class="compact-data-table"
       height="100%"
       :loading="loading"
       :row-class-name="getRowClass"
+      :cell-class-name="getCellClassName"
       :span-method="voucherSpanMethod"
       @header-dragend="onDragEnd"
+      @row-click="handleRowClick"
     >
       <el-table-column
         v-if="getColVisible('voucher_no')"
         label="凭证号"
         prop="voucher_no"
-        :width="widths['voucher_no'] || 80"
+        :width="colWidth('voucher_no', 80)"
         align="center"
       />
       <el-table-column
         v-if="getColVisible('voucher_date')"
         label="日期"
         prop="voucher_date"
-        :width="widths['voucher_date'] || 100"
+        :width="colWidth('voucher_date', 100)"
       />
-      <el-table-column v-if="getColVisible('summary')" label="摘要" prop="summary" :width="widths['summary'] || 150" />
+      <el-table-column
+        v-if="getColVisible('summary')"
+        label="摘要"
+        prop="summary"
+        :width="colWidth('summary', 150)"
+      />
       <el-table-column
         v-if="getColVisible('account_code')"
         prop="account_code"
         label="科目编码"
-        :width="widths['account_code'] || 100"
+        :width="colWidth('account_code', 100)"
       />
       <el-table-column
         v-if="getColVisible('account_name')"
         prop="account_name"
         label="科目名称"
-        :width="widths['account_name'] || 160"
+        :width="colWidth('account_name', 160)"
       />
       <el-table-column
         v-if="getColVisible('debit_amt')"
         label="借方金额"
         prop="debit_amt"
-        :width="widths['debit_amt'] || 130"
+        :width="colWidth('debit_amt', 130)"
         align="right"
         class-name="amount-cell"
       >
@@ -197,12 +120,16 @@
         v-if="getColVisible('credit_amt')"
         label="贷方金额"
         prop="credit_amt"
-        :width="widths['credit_amt'] || 130"
+        :width="colWidth('credit_amt', 130)"
         align="right"
         class-name="amount-cell"
       >
         <template #default="{ row }">
-          <AmountDisplay v-if="row.direction === 'credit'" :value="row.amount" :show-color="false" />
+          <AmountDisplay
+            v-if="row.direction === 'credit'"
+            :value="row.amount"
+            :show-color="false"
+          />
         </template>
       </el-table-column>
       <el-table-column
@@ -210,27 +137,28 @@
         :key="col.prop"
         :prop="col.prop"
         :label="col.name"
-        :width="widths[col.prop] || 100"
+        :width="colWidth(col.prop, 100)"
       />
       <el-table-column
-        v-if="getColVisible('maker_name')"
-        label="制单人"
-        prop="maker_name"
-        :width="widths['maker_name'] || 80"
-      />
+        v-if="getColVisible('operator_info')"
+        label="经办信息"
+        prop="operator_info"
+        :width="colWidth('operator_info', 150)"
+      >
+        <template #default="{ row }">
+          <div class="operator-info">
+            <span>制单 {{ row.maker_name || '-' }}</span>
+            <span>审核 {{ row.auditor_name || '-' }}</span>
+            <span>记账 {{ row.poster_name || '-' }}</span>
+          </div>
+        </template>
+      </el-table-column>
       <el-table-column
-        v-if="getColVisible('auditor_name')"
-        label="审核人"
-        prop="auditor_name"
-        :width="widths['auditor_name'] || 80"
-      />
-      <el-table-column
-        v-if="getColVisible('poster_name')"
-        label="记账人"
-        prop="poster_name"
-        :width="widths['poster_name'] || 80"
-      />
-      <el-table-column v-if="getColVisible('status')" label="状态" prop="status" :width="widths['status'] || 80">
+        v-if="getColVisible('status')"
+        label="状态"
+        prop="status"
+        :width="colWidth('status', 80)"
+      >
         <template #default="{ row }">
           <StatusTag :status="row.status" size="small" />
         </template>
@@ -257,7 +185,6 @@
         <el-option label="20条" :value="20" />
         <el-option label="50条" :value="50" />
         <el-option label="100条" :value="100" />
-        <el-option label="全部" :value="-1" />
       </el-select>
       <el-pagination
         v-model:current-page="pagination.page"
@@ -302,70 +229,94 @@
       v-model="printDialogVisible"
       :voucher-ids="printVoucherIds"
       :mode="printMode"
+      :auto-print="directPrint"
     />
 
     <BatchPrintDialog
       v-model="batchPrintVisible"
-      :default-date-range="filters.dateRange"
-      :default-voucher-type-ids="filters.voucherTypeIds"
+      :default-date-range="batchPrintDateRange"
+      :default-voucher-type-ids="batchPrintVoucherTypeIds"
     />
+
+    <!-- 转模版对话框 -->
+    <el-dialog v-model="templateDialogVisible" title="保存为模版" width="500px">
+      <el-form :model="templateForm" label-width="100px">
+        <el-form-item label="模版编号" required>
+          <el-input v-model="templateForm.template_no" placeholder="如：MB001" />
+        </el-form-item>
+        <el-form-item label="模版说明" required>
+          <el-input v-model="templateForm.template_name" placeholder="如：差旅费报销" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="templateSaving" @click="handleTemplateConfirm"
+          >确定</el-button
+        >
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted, nextTick } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, computed, onMounted, onActivated } from 'vue'
+import { useRoute } from 'vue-router'
 import request from '@/api/request'
-import { Setting, Calendar, Printer } from '@element-plus/icons-vue'
-import printJS from 'print-js'
+import { Setting, Printer, Download } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import StatusTag from '@/components/StatusTag.vue'
 import AmountDisplay from '@/components/AmountDisplay.vue'
 import PrintDialog from '@/components/print/PrintDialog.vue'
 import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
+import VoucherFilterBar from '@/components/voucher/VoucherFilterBar.vue'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
-import { formatAmount } from '@/utils/format'
-import { useSearchMemory } from '@/composables/useSearchMemory'
+import { useVoucherQuery } from '@/composables/useVoucherQuery'
 import { useOperationHistory } from '@/composables/useOperationHistory'
-import { performanceMonitor } from '@/utils/performanceMonitor'
 import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { exportVouchersToExcel, fetchAllVouchers } from '@/utils/voucherExport'
 
 const route = useRoute()
-const router = useRouter()
-const list = ref<any[]>([])
-const loading = ref(false)
-const auxCategories = ref<any[]>([])
-const voucherTypes = ref<any[]>([])
-const accounts = ref<any[]>([])
-const auxItemsMap = ref<Record<string, any[]>>({}) // 存储每个类别的项目列表
 
-// 搜索条件记忆
-const filters = useSearchMemory('voucher-query-filters', {
-  keyword: '',
-  status: '',
-  year: null as number | null,
-  period: null as number | null,
-  dateRange: [],
-  voucherTypeIds: [] as string[],
-  accountIds: [] as number[],
-  auxItems: {} as Record<string, number[]>, // 辅助核算项目筛选 { categoryId: [itemId1, itemId2] }
-  auxFields: {} as Record<string, string>, // 辅助核算自定义字段筛选 { categoryId_fieldKey: value }
+// 使用 useVoucherQuery composable
+const {
+  filters,
+  pagination,
+  list,
+  loading,
+  auxCategories,
+  voucherTypes,
+  accounts,
+  auxItemsMap,
+  flatList,
+  fetchData,
+  buildQueryParams,
+  onPageChange,
+  onPageSizeChange,
+  onSortChange,
+  loadAuxCategories,
+  loadVoucherTypes,
+  loadAccounts,
+  loadAuxItems,
+} = useVoucherQuery({
+  enableStatus: true,
+  enableYearPeriod: true,
+  enableVoucherType: true,
+  enableAccount: true,
+  enableAuxiliary: true,
+  enableSearchMemory: true,
+  searchMemoryKey: 'voucher-query-filters',
 })
-
-const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
-const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
 
 // 操作历史
 const { addRecord } = useOperationHistory()
 
-const statusText: Record<string, string> = { draft: '草稿', audited: '已审核', posted: '已记账' }
 const tableRef = ref()
+const exporting = ref(false)
 const VIS_COL_KEY = 'voucher-query-cols-visible'
-const { widths, onDragEnd } = useColumnWidthMemory('voucher_query')
-
-// 日期对话框
-const showDateDialog = ref(false)
-const tempDateRange = ref<[string, string]>(['', ''])
+const { onDragEnd, load, colWidth, bindTable } = useColumnWidthMemory('voucher_query')
+bindTable(tableRef)
+onActivated(() => load())
 
 // 列可见性配置
 const visibleCols = ref([
@@ -376,9 +327,7 @@ const visibleCols = ref([
   { prop: 'account_name', label: '科目名称', visible: true },
   { prop: 'debit_amt', label: '借方金额', visible: true },
   { prop: 'credit_amt', label: '贷方金额', visible: true },
-  { prop: 'maker_name', label: '制单人', visible: true },
-  { prop: 'auditor_name', label: '审核人', visible: true },
-  { prop: 'poster_name', label: '记账人', visible: true },
+  { prop: 'operator_info', label: '经办信息', visible: true },
   { prop: 'status', label: '状态', visible: true },
 ])
 
@@ -389,6 +338,12 @@ function restoreVisibleCols() {
     for (const s of saved) {
       const col = visibleCols.value.find(c => c.prop === s.prop)
       if (col) col.visible = s.visible
+    }
+    const operatorCol = visibleCols.value.find(c => c.prop === 'operator_info')
+    if (operatorCol && !saved.some((s: any) => s.prop === 'operator_info')) {
+      operatorCol.visible = ['maker_name', 'auditor_name', 'poster_name'].some(
+        prop => saved.find((s: any) => s.prop === prop)?.visible !== false
+      )
     }
   }
 }
@@ -404,80 +359,10 @@ function getColVisible(prop: string) {
   return visibleCols.value.find(c => c.prop === prop)?.visible ?? true
 }
 
-// 凭证类型简称映射
-const typeAbbr: Record<string, string> = {
-  记账凭证: '记',
-  收款凭证: '收',
-  付款凭证: '付',
-  转账凭证: '转',
-}
-
-// 提取凭证号中的序号部分并去掉前导零，如 202604-0001 → 1
-function getVoucherSeq(voucherNo: string) {
-  const idx = voucherNo.indexOf('-')
-  const seq = idx >= 0 ? voucherNo.slice(idx + 1) : voucherNo
-  return String(parseInt(seq, 10))
-}
-
-// 凭证类型简称
-function getTypeAbbr(name: string) {
-  return typeAbbr[name] || name.charAt(0) || '凭'
-}
-
-// 解析 aux_data JSON，提取辅助项目名称和自定义字段值
-function parseAuxData(entry: any): Record<string, string> {
-  const result: Record<string, string> = {}
-  if (!entry.aux_data) return result
-  try {
-    const auxData = typeof entry.aux_data === 'string' ? JSON.parse(entry.aux_data) : entry.aux_data
-    for (const [code, val] of Object.entries(auxData)) {
-      if (val && typeof val === 'object') {
-        // 提取辅助项目名称
-        if ((val as any).name) {
-          result[`_aux_${code}`] = (val as any).name
-        }
-        // 提取自定义字段值
-        if ((val as any).field_values && typeof (val as any).field_values === 'object') {
-          for (const [fieldKey, fieldValue] of Object.entries((val as any).field_values)) {
-            if (fieldValue !== null && fieldValue !== undefined && fieldValue !== '') {
-              result[`_aux_${code}_${fieldKey}`] = String(fieldValue)
-            }
-          }
-        }
-      }
-    }
-  } catch { /* ignore */ }
-  return result
-}
-
-const flatList = computed(() => {
-  const rows: any[] = []
-  for (const [index, v] of list.value.entries()) {
-    const seq = getVoucherSeq(v.voucher_no)
-    const abbr = getTypeAbbr(v.voucher_type_name || '记')
-    const voucherLabel = `${abbr}-${seq}`
-    const entries = (v.entries && v.entries.length) ? v.entries : [null]
-    const entryCount = entries.length
-    for (const [entryIdx, e] of entries.entries()) {
-      rows.push({
-        ...v,
-        ...(e || {}),
-        ...(e ? parseAuxData(e) : {}),
-        voucher_no: voucherLabel,
-        _voucherId: v.id,
-        _stripeGroup: index % 2,
-        _voucherRowIndex: entryIdx,
-        _voucherEntryCount: entryCount,
-      })
-    }
-  }
-  return rows
-})
-
 // 动态辅助列：从 aux_data 中提取出现过的辅助类别和自定义字段
 const auxColumns = computed(() => {
   const colMap = new Map<string, { name: string; order: number }>()
-  
+
   for (const row of flatList.value) {
     for (const key of Object.keys(row)) {
       if (key.startsWith('_aux_') && row[key]) {
@@ -485,27 +370,27 @@ const auxColumns = computed(() => {
           const parts = key.slice(5).split('_') // 去掉 _aux_ 前缀后分割
           const code = parts[0]
           const cat = auxCategories.value.find(c => c.code === code)
-          
+
           if (parts.length === 1) {
             // 辅助项目列：_aux_{code}
-            colMap.set(key, { 
-              name: cat?.name || code, 
-              order: (cat?.id || 0) * 1000 
+            colMap.set(key, {
+              name: cat?.name || code,
+              order: (cat?.id || 0) * 1000,
             })
           } else {
             // 自定义字段列：_aux_{code}_{fieldKey}
             const fieldKey = parts.slice(1).join('_')
             const field = cat?.fields?.find((f: any) => f.field_key === fieldKey)
-            colMap.set(key, { 
-              name: field?.field_name || fieldKey, 
-              order: (cat?.id || 0) * 1000 + (field?.id || 0)
+            colMap.set(key, {
+              name: field?.field_name || fieldKey,
+              order: (cat?.id || 0) * 1000 + (field?.id || 0),
             })
           }
         }
       }
     }
   }
-  
+
   // 按 order 排序，确保同一类别的列聚合在一起
   return Array.from(colMap.entries())
     .map(([prop, { name, order }]) => ({ prop, name, order }))
@@ -513,11 +398,21 @@ const auxColumns = computed(() => {
 })
 
 function getRowClass({ row }: { row: any }) {
-  return row._stripeGroup === 0 ? 'voucher-group-even' : 'voucher-group-odd'
+  const stripeClass = row._stripeGroup === 0 ? 'voucher-group-even' : 'voucher-group-odd'
+  if (selectedVoucherId.value && row._voucherId === selectedVoucherId.value) {
+    return `${stripeClass} voucher-selected`
+  }
+  return stripeClass
+}
+
+function getCellClassName({ row }: { row: any }) {
+  return selectedVoucherId.value && row._voucherId === selectedVoucherId.value
+    ? 'voucher-cell-selected'
+    : ''
 }
 
 function voucherSpanMethod({ row, column }: { row: any; column: any }) {
-  if (column.property === 'voucher_no' || column.property === 'voucher_date') {
+  if (['voucher_no', 'voucher_date', 'operator_info'].includes(column.property)) {
     if (row._voucherRowIndex === 0) {
       return { rowspan: row._voucherEntryCount, colspan: 1 }
     }
@@ -530,59 +425,9 @@ function applyRouteFilters() {
   const period = Number(route.query.period)
   const keyword = typeof route.query.keyword === 'string' ? route.query.keyword : ''
 
-  if (Number.isFinite(year) && year > 0) filters.year = year
-  if (Number.isFinite(period) && period > 0) filters.period = period
-  filters.keyword = keyword
-}
-
-async function fetchData() {
-  loading.value = true
-  try {
-    await performanceMonitor.measure('fetchVoucherQuery', async () => {
-      const params: any = { page: pagination.page, pageSize: pagination.pageSize }
-      if (filters.keyword) params.keyword = filters.keyword
-      if (filters.status) params.status = filters.status
-      if (filters.year) params.year = filters.year
-      if (filters.period) params.period = filters.period
-      if (filters.dateRange?.length) {
-        params.start_date = filters.dateRange[0]
-        params.end_date = filters.dateRange[1]
-      }
-      // 凭证类型筛选：如果选中了"全部类型"(空字符串)，则不传参数；否则传选中的类型ID数组
-      const typeIds = filters.voucherTypeIds.filter((id: string) => id !== '')
-      if (typeIds.length > 0) {
-        params.voucher_type_ids = typeIds.join(',')
-      }
-      // 辅助核算项目筛选
-      for (const [categoryId, itemId] of Object.entries(filters.auxItems)) {
-        if (itemId) {
-          params[`aux_${categoryId}`] = itemId
-        }
-      }
-      // 辅助核算自定义字段筛选
-      for (const [key, value] of Object.entries(filters.auxFields)) {
-        if (value) {
-          params[`aux_field_${key}`] = value
-        }
-      }
-      const res = await request.get<any[]>('/voucher/vouchers', { params })
-      list.value = res.data
-      pagination.total = res.total ?? 0
-    })
-  } finally {
-    loading.value = false
-  }
-}
-
-function onPageChange(page: number) {
-  pagination.page = page
-  fetchData()
-}
-
-function onPageSizeChange(size: number) {
-  pagination.pageSize = size
-  pagination.page = 1
-  fetchData()
+  if (Number.isFinite(year) && year > 0) filters.value.year = year
+  if (Number.isFinite(period) && period > 0) filters.value.period = period
+  filters.value.keyword = keyword
 }
 
 function printVoucher(row: any) {
@@ -596,58 +441,118 @@ function printVoucher(row: any) {
 const printDialogVisible = ref(false)
 const printVoucherIds = ref<number[]>([])
 const printMode = ref<'single' | 'batch'>('batch')
+const directPrint = ref(false)
 const batchPrintVisible = ref(false)
+const batchPrintDateRange = ref<string[]>([])
+const batchPrintVoucherTypeIds = ref<string[]>([])
+
+// 转模版相关
+const selectedVoucherId = ref('')
+const templateDialogVisible = ref(false)
+const templateForm = ref({
+  template_no: '',
+  template_name: '',
+})
+const templateSaving = ref(false)
+
+function handleRowClick(row: any) {
+  if (selectedVoucherId.value === row._voucherId) {
+    selectedVoucherId.value = ''
+  } else {
+    selectedVoucherId.value = row._voucherId
+  }
+}
+
+function handleTurnTemplate() {
+  if (!selectedVoucherId.value) return
+  templateForm.value = {
+    template_no: '',
+    template_name: '',
+  }
+  templateDialogVisible.value = true
+}
+
+async function handleTemplateConfirm() {
+  if (!templateForm.value.template_no || !templateForm.value.template_name) {
+    ElMessage.warning('请填写模版编号和模版说明')
+    return
+  }
+  templateSaving.value = true
+  try {
+    await request.post('/voucher-templates', {
+      template_no: templateForm.value.template_no,
+      template_name: templateForm.value.template_name,
+      voucher_id: selectedVoucherId.value,
+    })
+    showSuccess('模版保存成功')
+    templateDialogVisible.value = false
+  } catch (error: any) {
+    showOperationError(error, '保存失败')
+  } finally {
+    templateSaving.value = false
+  }
+}
+
+// 日期范围对话框相关
+const showDateDialog = ref(false)
+const tempDateRange = ref<string[]>([])
+
+function clearDateRange() {
+  tempDateRange.value = []
+  filters.value.dateRange = []
+  showDateDialog.value = false
+  fetchData()
+}
+
+function confirmDateRange() {
+  filters.value.dateRange = [...tempDateRange.value]
+  showDateDialog.value = false
+  fetchData()
+}
 
 function handleBatchPrint() {
+  // 从当前页面显示的凭证中提取日期范围和凭证类型
+  const vouchers = list.value
+  if (vouchers.length > 0) {
+    // 提取日期范围：取所有凭证的最小/最大日期
+    const dates = vouchers
+      .map((v: any) => v.voucher_date || v.date)
+      .filter(Boolean)
+      .sort()
+    if (dates.length >= 2) {
+      batchPrintDateRange.value = [dates[0], dates[dates.length - 1]]
+    } else if (dates.length === 1) {
+      batchPrintDateRange.value = [dates[0], dates[0]]
+    } else {
+      batchPrintDateRange.value = []
+    }
+    // 提取凭证类型ID：取页面上所有出现的凭证类型
+    const typeIds = new Set<string>()
+    vouchers.forEach((v: any) => {
+      if (v.voucher_type_id) typeIds.add(v.voucher_type_id)
+    })
+    batchPrintVoucherTypeIds.value = Array.from(typeIds)
+  } else {
+    batchPrintDateRange.value = []
+    batchPrintVoucherTypeIds.value = []
+  }
   batchPrintVisible.value = true
 }
 
-
 async function exportData() {
-  const { utils } = await import('xlsx')
-  const rows: any[] = []
-  for (const v of list.value) {
-    if (!v.entries || v.entries.length === 0) {
-      rows.push({
-        凭证号: v.voucher_no,
-        日期: v.voucher_date,
-        类型: v.voucher_type_name,
-        摘要: v.summary,
-        科目: '',
-        方向: '',
-        金额: v.total_amount,
-        部门: '',
-        项目: '',
-        制单人: v.maker_name,
-        审核人: v.auditor_name,
-        记账人: v.poster_name,
-        状态: statusText[v.status] || v.status,
-      })
-    } else {
-      for (const e of v.entries) {
-        rows.push({
-          凭证号: v.voucher_no,
-          日期: v.voucher_date,
-          类型: v.voucher_type_name,
-          摘要: e.summary,
-          科目: `${e.account_code} ${e.account_name}`,
-          方向: e.direction === 'debit' ? '借' : '贷',
-          金额: e.amount,
-          部门: e.dept_name || '',
-          项目: e.project_name || '',
-          制单人: v.maker_name,
-          审核人: v.auditor_name,
-          记账人: v.poster_name,
-          状态: statusText[v.status] || v.status,
-        })
-      }
-    }
+  exporting.value = true
+  try {
+    const vouchers = await fetchAllVouchers(buildQueryParams())
+    await exportVouchersToExcel(vouchers, {
+      sheetName: '凭证查询',
+      filePrefix: '凭证查询',
+    })
+    ElMessage.success(`已导出 ${vouchers.length} 张凭证`)
+  } catch (error) {
+    showOperationError('导出', error)
+  } finally {
+    exporting.value = false
   }
-  const ws = utils.json_to_sheet(rows)
-  const wb = utils.book_new()
-  utils.book_append_sheet(wb, ws, '凭证查询')
-  const { writeFile } = await import('xlsx')
-  writeFile(wb, `凭证查询_${Date.now()}.xlsx`)
 }
 
 async function handleDelete(row: any) {
@@ -667,94 +572,39 @@ async function handleDelete(row: any) {
   }
 }
 
-// 日期范围对话框操作
-function confirmDateRange() {
-  filters.dateRange = tempDateRange.value.filter(d => d) as any
-  showDateDialog.value = false
-}
-
-function clearDateRange() {
-  tempDateRange.value = ['', '']
-  filters.dateRange = []
-  showDateDialog.value = false
-}
-
-// 加载辅助核算项目
-async function loadAuxItems(categoryId: string) {
-  if (auxItemsMap.value[categoryId]) return // 已加载过
-  try {
-    const res = await request.get<any[]>('/base/aux-items', {
-      params: { category_id: categoryId, status: 'active' }
-    })
-    auxItemsMap.value[categoryId] = res.data
-  } catch (error) {
-    console.error('加载辅助核算项目失败', error)
-  }
-}
-
-// 加载科目列表
-async function loadAccounts() {
-  if (accounts.value.length > 0) return // 已加载过
-  try {
-    const res = await request.get<any[]>('/base/accounts', {
-      params: { status: 'active' }
-    })
-    accounts.value = res.data
-  } catch (error) {
-    console.error('加载科目列表失败', error)
-  }
-}
-
-// 解析字段选项
-function parseFieldOptions(optionsJson: string | null): string[] {
-  if (!optionsJson) return []
-  try {
-    return JSON.parse(optionsJson)
-  } catch {
-    return []
-  }
-}
-
 onMounted(async () => {
   applyRouteFilters()
   restoreVisibleCols()
-  const [auxRes, typeRes] = await Promise.all([
-    request.get<any[]>('/base/aux-categories'),
-    request.get<any[]>('/base/voucher-types'),
+  const [, , paramsRes] = await Promise.all([
+    loadAuxCategories(),
+    loadVoucherTypes(),
+    request.get<any[]>('/system/params').catch(() => ({ data: [] })),
   ])
-  auxCategories.value = auxRes.data
-  voucherTypes.value = typeRes.data
+  const params = ((paramsRes as any).data || []) as any[]
+  const dp = params.find((p: any) => p.param_key === 'direct_print')
+  directPrint.value = dp ? dp.param_value === 'true' : false
   fetchData()
 })
 </script>
 
-<style scoped>
-.page {
-  padding: 16px;
-}
-.page-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 16px;
-}
-.page-header h3 {
-  margin: 0;
-}
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-</style>
+<style src="./voucher.styles.css"></style>
 
 <style>
-.voucher-group-even td {
-  background-color: #f0f5ff !important;
+/* 凭证查询表格斑马纹与选中 */
+.voucher-list-page .el-table__body tr.voucher-group-even td.el-table__cell {
+  background-color: #f0f5ff;
 }
-.voucher-group-odd td {
-  background-color: #ffffff !important;
+.voucher-list-page .el-table__body tr.voucher-group-odd td.el-table__cell {
+  background-color: #fff;
+}
+.voucher-list-page .el-table__body tr.voucher-selected td.el-table__cell,
+.voucher-list-page .el-table__body td.voucher-cell-selected {
+  background-color: #b3d8ff !important;
+  font-weight: 500;
+}
+.voucher-list-page .el-table__body tr.voucher-selected:hover td.el-table__cell,
+.voucher-list-page .el-table__body tr:hover td.voucher-cell-selected {
+  background-color: #b3d8ff !important;
 }
 
 /* 缩小日期选择器弹出面板 */

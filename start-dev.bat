@@ -31,7 +31,7 @@ echo.
 :: -------------------------------------------------------
 echo [2/4] Starting backend server on port 3005 ...
 
-start "CW Backend" cmd /c "cd /d "%ROOT%" && npm run dev:server"
+start "CW Backend" cmd /k "cd /d "%ROOT%" && npm run dev:server"
 
 echo       Backend launching ...
 echo.
@@ -41,7 +41,7 @@ echo.
 :: -------------------------------------------------------
 echo [3/4] Starting frontend dev server on port 5175 ...
 
-start "CW Frontend" cmd /c "cd /d "%ROOT%" && npm run dev:client"
+start "CW Frontend" cmd /k "cd /d "%ROOT%" && npm run dev:client"
 
 echo       Frontend launching ...
 echo.

@@ -1,5 +1,5 @@
-import { runMigrations, rollbackMigration, getMigrationStatus } from '../db/migrations.ts'
-import { migrations } from '../db/migrationList.ts'
+import { runMigrations, rollbackMigration, getMigrationStatus } from '../db/migrations.js'
+import { migrations } from '../db/migrationList.js'
 
 /**
  * 数据库迁移 CLI 工具

@@ -13,8 +13,17 @@
         <el-button type="primary" @click="openDialog('add')">新增项目</el-button>
       </div>
     </div>
-    <el-table :data="filteredData" stripe border height="100%">
-      <el-table-column prop="code" label="编码" width="120">
+    <el-table
+      ref="tableRef"
+      :data="filteredData"
+      stripe
+      border
+      size="small"
+      class="compact-data-table"
+      height="100%"
+      @header-dragend="onDragEnd"
+    >
+      <el-table-column prop="code" label="编码" :width="colWidth('code', 120)">
         <template #default="{ row }">
           <span v-html="highlightText(row.code)"></span>
         </template>
@@ -24,7 +33,7 @@
           <span v-html="highlightText(row.name)"></span>
         </template>
       </el-table-column>
-      <el-table-column prop="status" label="状态" width="80">
+      <el-table-column prop="status" label="状态" :width="colWidth('status', 80)">
         <template #default="{ row }"
           ><el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{
             row.status === 'active' ? '进行中' : '已完结'
@@ -32,7 +41,7 @@
         >
       </el-table-column>
       <el-table-column prop="remark" label="备注" />
-      <el-table-column label="操作" width="160">
+      <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 160)">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openDialog('edit', row)"
             >编辑</el-button
@@ -67,7 +76,9 @@ import request from '@/api/request'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { useTableSearch } from '@/composables/useTableSearch'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
+const { tableRef, onDragEnd, colWidth } = useListColumnWidth('aux_project')
 const list = ref<any[]>([])
 const dialogVisible = ref(false)
 const dialogType = ref('add')

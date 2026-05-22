@@ -1,4 +1,8 @@
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  buildNoNegativeBalanceAlertHtml,
+  type NoNegativeBalanceViolation,
+} from '@/utils/noNegativeBalanceAlert'
 
 /**
  * 成功提示
@@ -58,4 +62,50 @@ export function showOperationSuccess(operation: string, details?: string) {
 export function showOperationError(operation: string, error: any) {
   const message = error?.response?.data?.message || error?.message || '操作失败'
   showError(`${operation}失败：${message}`)
+}
+
+/**
+ * 从请求错误对象中提取可读消息
+ */
+export function extractErrorMessage(error: any, fallback = '操作失败'): string {
+  return error?.response?.data?.message || error?.message || fallback
+}
+
+/** 是否为「余额不允许为负数 / 保存后余额试算」类校验错误 */
+export function isNoNegativeBalanceMessage(message: string, codeType?: string): boolean {
+  if (codeType === 'NO_NEGATIVE_BALANCE') return true
+  return message.includes('余额不允许为负数') || message.includes('保存后余额将为')
+}
+
+/** 科目负数试算：弹框提醒，需用户手动关闭 */
+export function showNoNegativeBalanceAlert(
+  violations?: NoNegativeBalanceViolation[],
+  fallbackMessage?: string
+) {
+  const html =
+    violations && violations.length > 0
+      ? buildNoNegativeBalanceAlertHtml(violations)
+      : `<div style="font-size:13px;line-height:1.8;color:#606266;">${escapeAlertFallback(fallbackMessage || '余额不允许为负数，无法保存凭证。')}</div>`
+
+  return ElMessageBox.alert(html, '科目余额负数试算提醒', {
+    type: 'warning',
+    confirmButtonText: '我知道了',
+    closeOnClickModal: false,
+    closeOnPressEscape: false,
+    dangerouslyUseHTMLString: true,
+    customClass: 'no-negative-balance-messagebox',
+  })
+}
+
+function escapeAlertFallback(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/【([^】]+)】/g, '<span style="color:#409eff;font-weight:600;">【$1】</span>')
+    .replace(
+      /(-?\d+\.\d{2})/g,
+      '<span style="color:#f56c6c;font-weight:700;">$1</span>'
+    )
+    .replace(/余额不允许为负数/g, '<span style="color:#e6a23c;font-weight:600;">余额不允许为负数</span>')
 }

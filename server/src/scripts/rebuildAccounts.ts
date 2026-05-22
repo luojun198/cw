@@ -1,7 +1,7 @@
 // 一次性脚本：重建标准化科目数据
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
 import { v4 as uuidv4 } from 'uuid'
-import { rebuildAccounts } from './seedAccounts.ts'
+import { rebuildAccounts } from './seedAccounts.js'
 
 const db = getDb()
 const accountSet = db.prepare('SELECT * FROM account_sets LIMIT 1').get() as any

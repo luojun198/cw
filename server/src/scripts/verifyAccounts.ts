@@ -1,4 +1,4 @@
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
 
 const db = getDb()
 const accountSet = db.prepare('SELECT * FROM account_sets LIMIT 1').get() as any

@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page page-ledger">
     <div class="page-header">
       <h3>明细账</h3>
       <div class="filter-row">
@@ -10,7 +10,12 @@
           style="width: 240px"
           clearable
         >
-          <el-option v-for="a in accounts" :key="a.id" :label="`${a.code} ${a.name}`" :value="a.id" />
+          <el-option
+            v-for="a in accounts"
+            :key="a.id"
+            :label="`${a.code} ${a.name}`"
+            :value="a.id"
+          />
         </el-select>
         <el-date-picker
           v-model="filters.start_date"
@@ -26,14 +31,21 @@
           placeholder="结束日期"
           style="width: 150px"
         />
-        <el-button type="primary" @click="fetchData">查询</el-button>
-        <el-button @click="showAdvancedFilter = !showAdvancedFilter">
-          {{ showAdvancedFilter ? '收起' : '高级筛选' }}
+        <el-button type="primary" @click="handleQuery">
+          <el-icon><Search /></el-icon>
+          查询
         </el-button>
-        <el-checkbox v-model="filters.include_unposted" @change="fetchData" style="margin-left: 12px">
-          统计未记账凭证
-        </el-checkbox>
-        <el-button @click="exportData">导出Excel</el-button>
+
+        <el-divider direction="vertical" />
+
+        <el-button plain @click="exportData">
+          <el-icon><Download /></el-icon>
+          导出 Excel
+        </el-button>
+        <el-button plain @click="printPage">
+          <el-icon><Printer /></el-icon>
+          打印
+        </el-button>
       </div>
       <div v-if="showAdvancedFilter" class="filter-row" style="margin-top: 8px">
         <el-input
@@ -76,62 +88,245 @@
       <span class="value">{{ selectedAccount.code }} {{ selectedAccount.name }}</span>
     </div>
 
+    <div class="print-title-row">
+      <h2 class="print-title">明细账</h2>
+      <p class="print-date-range">{{ printDateLabel }}</p>
+    </div>
+
+    <div v-if="!initialLoaded && loading" class="skeleton-table">
+      <div v-for="i in 8" :key="i" class="skeleton skeleton-row" />
+    </div>
+
+    <div v-else v-loading="loading" class="table-summary-scroll table-summary-scroll--wide">
     <el-table
       ref="tableRef"
       :data="list"
+      :style="{ width: `${ledgerTableWidth}px` }"
+      :fit="false"
       stripe
       border
-      height="calc(100vh - 240px)"
+      size="small"
+      class="compact-data-table"
+      highlight-current-row
       show-summary
       :summary-method="getSummaries"
-      @header-dragend="onDragEnd"
+      @header-dragend="handleHeaderDragEnd"
+      @row-dblclick="handleLedgerRowDblClick"
     >
-      <el-table-column prop="voucher_date" label="日期" :width="widths['voucher_date'] || 100" />
-      <el-table-column prop="voucher_no" label="凭证号" :width="widths['voucher_no'] || 130" />
-      <el-table-column prop="summary" label="摘要" :width="widths['summary'] || 180" />
-      <el-table-column label="借方" :width="widths['借方'] || 140" align="right">
+      <el-table-column column-key="voucher_date" prop="voucher_date" label="日期" :width="colWidth('voucher_date', 100)" />
+      <el-table-column column-key="voucher_no" prop="voucher_no" label="凭证号" :width="colWidth('voucher_no', 130)">
+        <template #default="{ row }">{{ formatVoucherNo(row) }}</template>
+      </el-table-column>
+      <el-table-column column-key="summary" prop="summary" label="摘要" :width="colWidth('summary', 180)" />
+      <el-table-column column-key="opposite_accounts" prop="opposite_accounts" label="对方科目" :width="colWidth('opposite_accounts', 200)" />
+      <el-table-column column-key="借方" label="借方" :width="colWidth('借方', 140)" align="right">
         <template #default="{ row }">{{
           row.direction === 'debit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
-      <el-table-column label="贷方" :width="widths['贷方'] || 140" align="right">
+      <el-table-column column-key="贷方" label="贷方" :width="colWidth('贷方', 140)" align="right">
         <template #default="{ row }">{{
           row.direction === 'credit' ? formatAmount(row.amount) : ''
         }}</template>
       </el-table-column>
-      <el-table-column label="方向" :width="widths['方向'] || 60" align="center">
+      <el-table-column column-key="方向" label="方向" :width="colWidth('方向', 60)" align="center">
         <template #default="{ row }">
-          {{ row.running_balance === 0 ? '平' : (row.running_balance > 0 ? (selectedAccount?.direction === 'debit' ? '借' : '贷') : (selectedAccount?.direction === 'debit' ? '贷' : '借')) }}
+          {{
+            row.running_balance === 0
+              ? '平'
+              : row.running_balance > 0
+                ? selectedAccount?.direction === 'debit'
+                  ? '借'
+                  : '贷'
+                : selectedAccount?.direction === 'debit'
+                  ? '贷'
+                  : '借'
+          }}
         </template>
       </el-table-column>
-      <el-table-column label="余额" :width="widths['余额'] || 140" align="right">
+      <el-table-column column-key="余额" label="余额" :width="colWidth('余额', 140)" align="right">
         <template #default="{ row }">{{ formatAmount(Math.abs(row.running_balance)) }}</template>
       </el-table-column>
+      <template #empty>
+        <EmptyState type="data" description="暂无数据，请选择科目和期间后查询" />
+      </template>
     </el-table>
+    </div>
+
+    <!-- 分页 -->
+    <div style="margin-top: 16px; display: flex; justify-content: flex-end">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[10, 20, 50, 100, 200, 500]"
+        :total="total"
+        layout="total, sizes, prev, pager, next, jumper"
+        @size-change="handleSizeChange"
+        @current-change="handlePageChange"
+      />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, watch, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
+import { Printer, Search, Download } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import type { TableColumnCtx } from 'element-plus'
-import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
+import { useLedgerVoucherNavigate } from '@/composables/useLedgerVoucherNavigate'
 import { formatAmount } from '@/utils/format'
+import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import { formatSignedBalanceAmount } from '@/utils/exportLedgerHelpers'
 
 const route = useRoute()
+const { handleLedgerRowDblClick } = useLedgerVoucherNavigate()
 const initBalance = ref(0)
 const list = ref<any[]>([])
+const loading = ref(false)
+const initialLoaded = ref(false)
 const accounts = ref<any[]>([])
 const showAdvancedFilter = ref(false)
-const tableRef = ref()
 
-const { widths, onDragEnd } = useColumnWidthMemory('ledger_detail')
+const ledgerColumnDefs = computed(() => [
+  { key: 'voucher_date', fallback: 100 },
+  { key: 'voucher_no', fallback: 130 },
+  { key: 'summary', fallback: 180 },
+  { key: 'opposite_accounts', fallback: 200 },
+  { key: '借方', fallback: 140 },
+  { key: '贷方', fallback: 140 },
+  { key: '方向', fallback: 60 },
+  { key: '余额', fallback: 140 },
+])
+
+const { tableRef, colWidth, ledgerTableWidth, handleHeaderDragEnd, afterTableLayout } =
+  useLedgerWideTable('ledger_detail', ledgerColumnDefs)
+
+const total = ref(0)
+const currentPage = ref(1)
+const pageSize = ref(50)
 
 const selectedAccount = computed(() => {
   if (!filters.value.account_id) return null
   return accounts.value.find(a => a.id === filters.value.account_id)
 })
+
+const printDateLabel = computed(() => {
+  const s = filters.value.start_date || ''
+  const e = filters.value.end_date || ''
+  if (s && e) return `日期：${s} 至 ${e}`
+  return ''
+})
+
+let printTimer: ReturnType<typeof setTimeout> | null = null
+
+onBeforeUnmount(() => {
+  if (printTimer) clearTimeout(printTimer)
+})
+
+function printPage() {
+  // 展开表格解除高度限制，确保打印全部内容
+  const tableWrapper = document.querySelector('.el-table__body-wrapper') as HTMLElement
+  const table = document.querySelector('.el-table') as HTMLElement
+  if (tableWrapper) {
+    tableWrapper.style.setProperty('height', 'auto', 'important')
+    tableWrapper.style.setProperty('overflow', 'visible', 'important')
+    tableWrapper.style.setProperty('max-height', 'none', 'important')
+  }
+  if (table) {
+    table.style.setProperty('height', 'auto', 'important')
+    table.style.setProperty('max-height', 'none', 'important')
+  }
+
+  // 强制重排后打印
+  void document.body.offsetHeight
+  window.print()
+
+  // 打印后恢复
+  const restore = () => {
+    if (tableWrapper) { tableWrapper.style.cssText = '' }
+    if (table) { table.style.cssText = '' }
+  }
+  if ('onafterprint' in window) {
+    window.addEventListener('afterprint', restore, { once: true })
+    printTimer = setTimeout(restore, 2000)
+  } else {
+    printTimer = setTimeout(restore, 2000)
+  }
+}
+
+// 凭证类型简称映射
+const typeAbbr: Record<string, string> = {
+  记账凭证: '记',
+  收款凭证: '收',
+  付款凭证: '付',
+  转账凭证: '转',
+}
+
+// 提取凭证号中的序号部分
+function getVoucherSeq(voucherNo: string) {
+  const idx = voucherNo.indexOf('-')
+  const seq = idx >= 0 ? voucherNo.slice(idx + 1) : voucherNo
+  return String(parseInt(seq, 10))
+}
+
+// 凭证类型简称
+function getTypeAbbr(name: string) {
+  return typeAbbr[name] || name.charAt(0) || '凭'
+}
+
+// 格式化凭证号显示
+function formatVoucherNo(row: any) {
+  if (!row.voucher_no || !row.voucher_type_name) return row.voucher_no || ''
+  const seq = getVoucherSeq(row.voucher_no)
+  const abbr = getTypeAbbr(row.voucher_type_name)
+  return `${abbr}-${seq}`
+}
+
+function getLedgerYear() {
+  const date = filters.value.start_date || filters.value.end_date
+  if (date) {
+    const year = new Date(date).getFullYear()
+    if (Number.isFinite(year)) return year
+  }
+  return new Date().getFullYear()
+}
+
+function isYearStartDate(date: string) {
+  return /^\d{4}-01-01$/.test(date)
+}
+
+function getPreviousDate(date: string) {
+  const d = new Date(`${date}T00:00:00`)
+  if (Number.isNaN(d.getTime())) return ''
+  d.setDate(d.getDate() - 1)
+  const year = d.getFullYear()
+  const month = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function getOpeningBalanceLabel() {
+  return '期初余额'
+}
+
+function buildCarryForwardRow(balance: number) {
+  const startDate = filters.value.start_date || `${getLedgerYear()}-01-01`
+  const balanceDate = isYearStartDate(startDate) ? startDate : getPreviousDate(startDate)
+  return {
+    id: '__carry_forward__',
+    voucher_date: balanceDate || startDate,
+    voucher_no: '',
+    voucher_type_name: '',
+    summary: getOpeningBalanceLabel(),
+    opposite_accounts: '',
+    direction: '',
+    amount: 0,
+    running_balance: balance,
+    is_carry_forward: true,
+  }
+}
 
 const filters = ref<any>({
   account_id: '',
@@ -145,47 +340,64 @@ const filters = ref<any>({
   include_unposted: true,
 })
 
-// 监听科目选择变化，自动触发查询
-watch(() => filters.value.account_id, (newVal) => {
-  if (newVal) {
+/** 首次 onMounted 赋值科目后再允许 watch 触发查询，避免重复请求 */
+const accountQueryReady = ref(false)
+
+watch(
+  () => filters.value.account_id,
+  (newVal, oldVal) => {
+    if (!accountQueryReady.value || !newVal || newVal === oldVal) return
+    currentPage.value = 1
     fetchData()
   }
-})
+)
 
 function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
   const { columns, data } = param
   const sums: string[] = []
 
-  columns.forEach((column, index) => {
+  columns.forEach((_column, index) => {
     if (index === 0) {
       sums[index] = '合计'
       return
     }
-    if (index === 1 || index === 2) {
+    if (index === 1 || index === 2 || index === 3) {
       sums[index] = ''
       return
     }
 
     // 借方
-    if (index === 3) {
+    if (index === 4) {
       const total = data.reduce((sum, row) => sum + (row.direction === 'debit' ? row.amount : 0), 0)
       sums[index] = formatAmount(total)
     }
     // 贷方
-    else if (index === 4) {
-      const total = data.reduce((sum, row) => sum + (row.direction === 'credit' ? row.amount : 0), 0)
+    else if (index === 5) {
+      const total = data.reduce(
+        (sum, row) => sum + (row.direction === 'credit' ? row.amount : 0),
+        0
+      )
       sums[index] = formatAmount(total)
     }
     // 方向
-    else if (index === 5) {
+    else if (index === 6) {
       const lastRow = data[data.length - 1]
       if (lastRow) {
         const balance = lastRow.running_balance
-        sums[index] = balance === 0 ? '平' : (balance > 0 ? (selectedAccount.value?.direction === 'debit' ? '借' : '贷') : (selectedAccount.value?.direction === 'debit' ? '贷' : '借'))
+        sums[index] =
+          balance === 0
+            ? '平'
+            : balance > 0
+              ? selectedAccount.value?.direction === 'debit'
+                ? '借'
+                : '贷'
+              : selectedAccount.value?.direction === 'debit'
+                ? '贷'
+                : '借'
       }
     }
     // 余额
-    else if (index === 6) {
+    else if (index === 7) {
       const lastRow = data[data.length - 1]
       if (lastRow) {
         sums[index] = formatAmount(Math.abs(lastRow.running_balance))
@@ -202,32 +414,28 @@ async function fetchData() {
     return
   }
 
-  // 获取选中的科目信息
   const account = selectedAccount.value
-  console.log('选中的科目:', account)
   if (!account) {
     list.value = []
     return
   }
 
+  loading.value = true
+  try {
+
   const params: any = {}
 
   // 判断是否有子科目：检查是否有其他科目的编码以当前科目编码开头且长度更长
-  const hasChildren = accounts.value.some((a: any) =>
-    a.id !== account.id && a.code.startsWith(account.code) && a.code.length > account.code.length
+  const hasChildren = accounts.value.some(
+    (a: any) =>
+      a.id !== account.id && a.code.startsWith(account.code) && a.code.length > account.code.length
   )
-  console.log('是否有子科目:', hasChildren)
-  console.log('科目编码:', account.code)
-
   if (hasChildren) {
     // 如果有子科目，使用科目编码范围查询
     params.account_code_start = account.code
     params.account_code_end = account.code + '9999'
-    console.log('使用范围查询:', params.account_code_start, params.account_code_end)
   } else {
-    // 如果没有子科目，使用科目ID查询
     params.account_id = filters.value.account_id
-    console.log('使用ID查询:', params.account_id)
   }
 
   if (filters.value.start_date) params.start_date = filters.value.start_date
@@ -238,14 +446,16 @@ async function fetchData() {
   if (filters.value.maker_name) params.maker_name = filters.value.maker_name
   if (filters.value.auditor_name) params.auditor_name = filters.value.auditor_name
   if (filters.value.include_unposted) params.include_unposted = 'true'
+  params.year = getLedgerYear()
 
-  console.log('明细账查询参数:', params)
+  // 添加分页参数
+  params.page = currentPage.value
+  params.pageSize = pageSize.value
+
   const res = await request.get<any>('/ledger/detail', { params })
-  console.log('明细账查询结果:', res)
   initBalance.value = (res as any).initBalance || 0
+  total.value = (res as any).total || 0
   const entries = res.data || []
-  console.log('明细账数据条数:', entries.length)
-  console.log('明细账第一条数据:', entries[0])
 
   // 计算余额 - 根据科目方向
   let balance = initBalance.value
@@ -267,8 +477,30 @@ async function fetchData() {
     }
     entry.running_balance = balance
   }
-  list.value = entries
-  console.log('处理后的list.value:', list.value)
+  list.value = currentPage.value === 1 ? [buildCarryForwardRow(initBalance.value), ...entries] : entries
+  initialLoaded.value = true
+  await afterTableLayout()
+
+  } finally {
+    loading.value = false
+  }
+}
+
+// 分页事件处理
+function handleQuery() {
+  currentPage.value = 1  // 查询时重置到第一页
+  fetchData()
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1  // 切换每页数量时重置到第一页
+  fetchData()
+}
+
+function handlePageChange(page: number) {
+  currentPage.value = page
+  fetchData()
 }
 
 async function fetchAccounts() {
@@ -277,26 +509,143 @@ async function fetchAccounts() {
 }
 
 async function exportData() {
-  const { utils, writeFile } = await import('xlsx')
+  if (!filters.value.account_id) {
+    return
+  }
+
+  // 获取选中的科目信息
   const account = selectedAccount.value
-  const ws = utils.json_to_sheet(
-    list.value.map((v: any) => ({
-      日期: v.voucher_date,
-      凭证号: v.voucher_no,
-      摘要: v.summary,
-      借方: v.direction === 'debit' ? v.amount : '',
-      贷方: v.direction === 'credit' ? v.amount : '',
-      方向: v.running_balance === 0 ? '平' : (v.running_balance > 0 ? (account?.direction === 'debit' ? '借' : '贷') : (account?.direction === 'debit' ? '贷' : '借')),
-      余额: Math.abs(v.running_balance),
-    }))
+  if (!account) {
+    return
+  }
+
+  // 导出全部数据
+  const params: any = {
+    page: 1,
+    pageSize: 10000,
+  }
+
+  // 判断是否有子科目
+  const hasChildren = accounts.value.some(
+    (a: any) =>
+      a.id !== account.id && a.code.startsWith(account.code) && a.code.length > account.code.length
   )
-  const wb = utils.book_new()
-  utils.book_append_sheet(wb, ws, '明细账')
+
+  if (hasChildren) {
+    params.account_code_start = account.code
+    params.account_code_end = account.code + '9999'
+  } else {
+    params.account_id = filters.value.account_id
+  }
+
+  if (filters.value.start_date) params.start_date = filters.value.start_date
+  if (filters.value.end_date) params.end_date = filters.value.end_date
+  if (filters.value.summary_keyword) params.summary_keyword = filters.value.summary_keyword
+  if (filters.value.min_amount) params.min_amount = filters.value.min_amount
+  if (filters.value.max_amount) params.max_amount = filters.value.max_amount
+  if (filters.value.maker_name) params.maker_name = filters.value.maker_name
+  if (filters.value.auditor_name) params.auditor_name = filters.value.auditor_name
+  if (filters.value.include_unposted) params.include_unposted = 'true'
+  params.year = getLedgerYear()
+
+  const res = await request.get<any>('/ledger/detail', { params })
+  const exportInitBalance = (res as any).initBalance || 0
+  const entries = res.data || []
+
+  // 计算余额
+  let balance = exportInitBalance
+  for (const entry of entries) {
+    if (account?.direction === 'debit') {
+      if (entry.direction === 'debit') {
+        balance += entry.amount
+      } else {
+        balance -= entry.amount
+      }
+    } else {
+      if (entry.direction === 'credit') {
+        balance += entry.amount
+      } else {
+        balance -= entry.amount
+      }
+    }
+    entry.running_balance = balance
+  }
+  const exportRows = [buildCarryForwardRow(exportInitBalance), ...entries]
   const accountName = account ? `${account.code}_${account.name}` : '明细账'
-  const dateRange = filters.value.start_date && filters.value.end_date
-    ? `${filters.value.start_date}_${filters.value.end_date}`
-    : new Date().toISOString().split('T')[0]
-  writeFile(wb, `${accountName}_${dateRange}.xlsx`)
+  const dateRange =
+    filters.value.start_date && filters.value.end_date
+      ? `${filters.value.start_date}_${filters.value.end_date}`
+      : new Date().toISOString().split('T')[0]
+
+  const subtitleParts = [
+    account ? `${account.code} ${account.name}` : '',
+    printDateLabel.value,
+  ].filter(Boolean)
+
+  const columns: ExportColumnDef[] = [
+    {
+      label: '日期',
+      width: colWidth('voucher_date', 100),
+      value: row => row.voucher_date,
+    },
+    {
+      label: '凭证号',
+      width: colWidth('voucher_no', 130),
+      value: row => row.voucher_no,
+    },
+    {
+      label: '摘要',
+      width: colWidth('summary', 180),
+      value: row => row.summary,
+    },
+    {
+      label: '对方科目',
+      width: colWidth('opposite_accounts', 200),
+      value: row => row.opposite_accounts || '',
+    },
+    {
+      label: '借方',
+      width: colWidth('借方', 140),
+      align: 'right',
+      type: 'amount',
+      value: row => (row.direction === 'debit' && !row.is_carry_forward ? row.amount : ''),
+    },
+    {
+      label: '贷方',
+      width: colWidth('贷方', 140),
+      align: 'right',
+      type: 'amount',
+      value: row => (row.direction === 'credit' && !row.is_carry_forward ? row.amount : ''),
+    },
+    {
+      label: '方向',
+      width: colWidth('方向', 60),
+      align: 'center',
+      value: row => {
+        if (row.running_balance === 0) return '平'
+        if (row.running_balance > 0) {
+          return account?.direction === 'debit' ? '借' : '贷'
+        }
+        return account?.direction === 'debit' ? '贷' : '借'
+      },
+    },
+    {
+      label: '余额',
+      width: colWidth('余额', 140),
+      align: 'right',
+      type: 'amount',
+      value: row => formatSignedBalanceAmount(row.running_balance, false),
+    },
+  ]
+
+  await exportStyledTable({
+    fileName: `${accountName}_${dateRange}.xlsx`,
+    sheetName: '明细账',
+    title: '明细账',
+    subtitle: subtitleParts.join('  '),
+    columns,
+    rows: exportRows,
+  })
 }
 
 onMounted(async () => {
@@ -327,6 +676,7 @@ onMounted(async () => {
   if (filters.value.account_id) {
     await fetchData()
   }
+  accountQueryReady.value = true
 })
 </script>
 
@@ -361,5 +711,78 @@ onMounted(async () => {
 .account-info .value {
   color: #409eff;
   font-size: 16px;
+}
+
+.print-title-row {
+  display: none;
+}
+.skeleton-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+.skeleton-row {
+  height: 36px;
+  border-radius: 4px;
+}
+</style>
+<style>
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  body {
+    padding: 15mm 10mm !important;
+  }
+
+  /* 隐藏筛选栏、按钮、分页等非打印元素 */
+  .page-header,
+  .filter-row,
+  .pagination,
+  .el-button,
+  .el-divider,
+  .balance-tag {
+    display: none !important;
+  }
+
+  /* 显示打印标题 */
+  .print-title-row {
+    display: block !important;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .print-title {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 8px;
+  }
+  .print-date-range {
+    font-size: 11pt;
+    color: #333;
+    margin: 0 0 12px;
+  }
+
+  /* 表格占满页面 */
+  .el-table {
+    height: auto !important;
+    max-height: none !important;
+  }
+  .el-table__body-wrapper {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* 页面主体 */
+  .page {
+    padding: 0 !important;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
 </style>

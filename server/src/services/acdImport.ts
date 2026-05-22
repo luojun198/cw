@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '../db/index.ts'
-import { importAcdToAccountSet, type ImportStats } from '../scripts/importAcdToCurrentAccountSet.ts'
+import { getDb, ensureAccountSetSecurityBootstrap } from '../db/index.js'
+import { importAcdToAccountSet, type ImportStats } from '../scripts/importAcdToCurrentAccountSet.js'
 
 export interface AcdImportParams {
   acdBuffer: Buffer
@@ -34,19 +34,8 @@ export function acdImportService(params: AcdImportParams): AcdImportResult {
     VALUES (?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
   `).run(accountSetId, params.name, params.code, params.fiscalYear, params.startDate)
 
-  // Create default admin user for the new account set
-  const userId = uuidv4()
-  const adminRoleId = (db.prepare("SELECT id FROM roles WHERE code = 'admin' LIMIT 1").get() as any)?.id
-  db.prepare(`
-    INSERT INTO users (id, account_set_id, username, password, nickname, role_id, status, created_at, updated_at)
-    VALUES (?, ?, 'admin', ?, '管理员', ?, 'active', datetime('now'), datetime('now'))
-  `).run(
-    userId,
-    accountSetId,
-    // Default password: admin123 (bcrypt hash)
-    '$2a$10$Dj9DCcIGNtjYZmfcub6td.wly0mkJT.bLPc.yeFAStW77WqkQu5ie',
-    adminRoleId || null,
-  )
+  // Create default roles and admin user for the new account set
+  ensureAccountSetSecurityBootstrap(accountSetId)
 
   // Execute ACD import into the new account set
   const stats = importAcdToAccountSet(accountSetId, params.acdBuffer)

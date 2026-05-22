@@ -107,12 +107,12 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch } from 'vue'
+import { ref, computed, watch, nextTick } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Loading, WarningFilled } from '@element-plus/icons-vue'
 import PrintPreview from './PrintPreview.vue'
 import type { PrintTemplate, VoucherPrintData } from '@/types/print'
-import { triggerPrint } from '@/utils/printTemplate'
+import { getDataRowsPerPage, normalizePrintTemplate, openPrintWindow } from '@/utils/printTemplate'
 import request from '@/api/request'
 import { useUserStore } from '@/stores/user'
 
@@ -156,21 +156,16 @@ const selectedTemplateId = ref<string>()
 const voucherDataList = ref<VoucherPrintData[]>([])
 
 const currentTemplate = computed(() => {
-  return templates.value.find((t) => t.id === selectedTemplateId.value)
+  const tpl = templates.value.find((t) => t.id === selectedTemplateId.value)
+  return tpl ? normalizePrintTemplate(tpl) : undefined
 })
-
-// 获取模版中表格元素的 printRows（每页总行数，含合计行）
-function getRowsPerPage(template: PrintTemplate): number {
-  const tableEl = template.elements.find(el => el.type === 'table')
-  return (tableEl?.printRows || 6) - 1
-}
 
 // 分页展开
 const paginatedDataList = computed<VoucherPrintData[]>(() => {
   const tpl = currentTemplate.value
   if (!tpl || voucherDataList.value.length === 0) return []
 
-  const rowsPerPage = getRowsPerPage(tpl)
+  const rowsPerPage = getDataRowsPerPage(tpl)
   const result: VoucherPrintData[] = []
 
   for (const voucher of voucherDataList.value) {
@@ -222,7 +217,7 @@ async function loadTemplates() {
     const res = await request.get('/base/print-templates', {
       params: { account_set_id: userStore.accountSetId },
     })
-    templates.value = res.data || []
+    templates.value = ((res.data as PrintTemplate[]) || []).map(normalizePrintTemplate)
     const defaultTpl = templates.value.find((t) => t.is_default)
     if (defaultTpl) {
       selectedTemplateId.value = defaultTpl.id
@@ -294,7 +289,7 @@ async function handleQuery() {
 }
 
 // 打印
-function handlePrint() {
+async function handlePrint() {
   if (!currentTemplate.value) {
     ElMessage.warning('请选择打印模版')
     return
@@ -303,7 +298,17 @@ function handlePrint() {
     ElMessage.warning('没有可打印的凭证')
     return
   }
-  triggerPrint()
+
+  await nextTick()
+  try {
+    openPrintWindow({
+      itemSelector: '.preview-item',
+      title: '批量打印凭证',
+      expandSelector: '.preview-area',
+    })
+  } catch {
+    ElMessage.warning('未找到可打印的内容，请稍后重试')
+  }
 }
 
 // 关闭
@@ -335,9 +340,14 @@ watch(
       filterForm.value.voucherTypeIds = props.defaultVoucherTypeIds?.length
         ? [...props.defaultVoucherTypeIds]
         : []
-      // 凭证号范围默认 1~999
-      filterForm.value.voucherNoStart = '1'
-      filterForm.value.voucherNoEnd = '999'
+      // 凭证号范围：单类型时设默认 1~999，多类型时不设（避免中文前缀凭证号被排除）
+      if (filterForm.value.voucherTypeIds.length <= 1) {
+        filterForm.value.voucherNoStart = '1'
+        filterForm.value.voucherNoEnd = '999'
+      } else {
+        filterForm.value.voucherNoStart = ''
+        filterForm.value.voucherNoEnd = ''
+      }
       queried.value = false
       voucherDataList.value = []
       error.value = ''
@@ -425,13 +435,45 @@ watch(
 @media print {
   .filter-section,
   .toolbar {
-    display: none;
+    display: none !important;
+  }
+
+  /* 隐藏对话框背景遮罩 */
+  :deep(.el-overlay) {
+    background: transparent !important;
+  }
+
+  /* 隐藏对话框装饰元素 */
+  :deep(.el-dialog__header),
+  :deep(.el-dialog__headerbtn),
+  :deep(.el-dialog__footer),
+  :deep(.el-dialog__close) {
+    display: none !important;
+  }
+
+  /* 对话框本身去掉边距 */
+  :deep(.el-dialog) {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  /* 对话框内容 */
+  :deep(.el-dialog__body) {
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
   .preview-area {
-    height: auto;
-    overflow: visible;
-    background-color: #fff;
+    height: auto !important;
+    overflow: visible !important;
+    background-color: #fff !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
   .preview-item {
@@ -440,6 +482,38 @@ watch(
 
   .preview-item:last-child {
     page-break-after: auto;
+  }
+}
+</style>
+
+<!-- 全局打印样式：确保 Element Plus teleport 元素也能匹配 -->
+<style>
+@media print {
+  .el-overlay,
+  .el-dialog__wrapper {
+    background: transparent !important;
+  }
+
+  .el-dialog__header,
+  .el-dialog__headerbtn,
+  .el-dialog__footer,
+  .el-dialog__close {
+    display: none !important;
+  }
+
+  .el-dialog {
+    margin: 0 !important;
+    padding: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-shadow: none !important;
+    border: none !important;
+    border-radius: 0 !important;
+  }
+
+  .el-dialog__body {
+    padding: 0 !important;
+    margin: 0 !important;
   }
 }
 </style>

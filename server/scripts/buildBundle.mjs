@@ -9,6 +9,8 @@ const ABS_DIR = resolve(dirname(__filename), '..')
 // 便携部署：CJS 格式；native 模块和 path/filepath 相关 external
 const externals = [
   'better-sqlite3',
+  'iconv-lite',
+  'exceljs',
   ...builtinModules,
   ...builtinModules.map(m => 'node:' + m),
   'path', 'path/posix', 'path/win32',

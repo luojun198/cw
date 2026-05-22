@@ -4,7 +4,7 @@
  * 使用方法: npm run test:ai
  */
 
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
 
 async function testAi() {
   try {

@@ -1,5 +1,6 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { ref } from 'vue'
+import { setActivePinia, createPinia } from 'pinia'
 import { useVoucherForm } from '@/composables/useVoucherForm'
 
 describe('useVoucherForm', () => {
@@ -11,7 +12,18 @@ describe('useVoucherForm', () => {
   let composable: ReturnType<typeof useVoucherForm>
 
   beforeEach(() => {
+    vi.stubGlobal('localStorage', {
+      getItem: vi.fn(() => ''),
+      setItem: vi.fn(),
+      removeItem: vi.fn(),
+      clear: vi.fn(),
+    })
+    setActivePinia(createPinia())
     composable = useVoucherForm(auxCategories)
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
   })
 
   it('should initialize with default form', () => {
@@ -67,8 +79,8 @@ describe('useVoucherForm', () => {
   it('should create entry with default values', () => {
     const entry = composable.createEntry()
     expect(entry.account_id).toBe('')
-    expect(entry.debit_amount).toBe(0)
-    expect(entry.credit_amount).toBe(0)
+    expect(entry.debit_amount).toBeNull()
+    expect(entry.credit_amount).toBeNull()
     expect(entry.summary).toBe('')
   })
 })

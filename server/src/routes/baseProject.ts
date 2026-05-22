@@ -1,8 +1,8 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '../db/index.ts'
-import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.ts'
-import { buildWhereClause, normalizePunctuation, SqlParam } from '../services/baseValidation.ts'
+import { getDb } from '../db/index.js'
+import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
+import { buildWhereClause, normalizePunctuation, SqlParam } from '../services/baseValidation.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -157,10 +157,45 @@ router.delete(
   (req: AuthRequest, res) => {
     const { id } = req.params
     const db = getDb()
-    const used = db.prepare('SELECT COUNT(*) as count FROM aux_items WHERE type=?').get(id) as any
-    if (used?.count > 0) {
-      return res.status(400).json({ code: 400, message: '该类别下已有核算项目，无法删除' })
+    
+    // 检查是否有项目
+    const items = db.prepare('SELECT id, code, name FROM aux_items WHERE type=?').all(id) as any[]
+    if (items.length > 0) {
+      // 检查这些项目是否被凭证使用
+      const itemIds = items.map(item => item.id)
+      const usedInVoucher = db.prepare(`
+        SELECT COUNT(*) as count FROM voucher_entries
+        WHERE account_set_id=? AND (
+          dept_id IN (${itemIds.map(() => '?').join(',')}) OR
+          project_id IN (${itemIds.map(() => '?').join(',')}) OR
+          supplier_id IN (${itemIds.map(() => '?').join(',')}) OR
+          person_id IN (${itemIds.map(() => '?').join(',')}) OR
+          func_class_id IN (${itemIds.map(() => '?').join(',')})
+        )
+      `).get(req.accountSetId, ...itemIds, ...itemIds, ...itemIds, ...itemIds, ...itemIds) as any
+      
+      if (usedInVoucher?.count > 0) {
+        return res.status(400).json({
+          code: 400,
+          message: `该类别下有 ${items.length} 个核算项目，其中部分已被 ${usedInVoucher.count} 条凭证分录使用，无法删除`,
+          data: {
+            itemCount: items.length,
+            usedCount: usedInVoucher.count,
+            solution: '请先删除或修改相关凭证，再删除核算项目，最后删除类别'
+          }
+        })
+      }
+      
+      return res.status(400).json({
+        code: 400,
+        message: `该类别下有 ${items.length} 个核算项目，请先删除这些项目`,
+        data: {
+          items: items.map(item => ({ code: item.code, name: item.name })),
+          solution: '请先在"核算项目"页面删除这些项目，然后再删除类别'
+        }
+      })
     }
+    
     // ON DELETE CASCADE 会自动删除 aux_category_fields
     db.prepare('DELETE FROM aux_categories WHERE id=?').run(id)
     res.json({ code: 0, message: '删除成功' })

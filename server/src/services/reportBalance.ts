@@ -1,86 +1,113 @@
+import type { Database } from 'better-sqlite3'
+
 export interface BalanceQueryDb {
   prepare: (sql: string) => {
     get: (...params: Array<string | number>) => any
+    all: (...params: Array<string | number>) => any[]
   }
 }
 
+/** 四舍五入到2位小数，避免浮点误差产生科学计数法字符串 */
+function round2(v: number): number {
+  return Math.round(v * 100) / 100
+}
+
+/**
+ * 期初余额按科目汇总：直接取科目汇总行（aux_item_id = ''），不累加辅助明细。
+ *
+ * 设计依据：保存辅助期初时，initBalanceAux.recalcInitBalanceAuxSummary 会同步维护
+ * 一条 aux_item_id='' 的科目汇总行（值 = 该科目任一类目的合计，因为多类目必须相等）。
+ *
+ * 老逻辑（"有辅助时 SUM aux_item_id != '' 的所有行"）在多辅助类目场景下会重复累加：
+ * 例如 dept 类目合计 91 + person 类目合计 91 = 182，但科目实际期初只有 91。
+ */
+const INIT_BALANCE_BY_ACCOUNT_SQL = `
+  SELECT account_id, SUM(init_balance) AS init_balance
+  FROM init_balances
+  WHERE account_set_id = ?
+    AND account_id IN ({placeholders})
+    AND year = ?
+    AND COALESCE(aux_item_id, '') = ''
+  GROUP BY account_id
+`
+
+/**
+ * 把每个 top_code 展开为其子树叶子科目集合（含 top_code 自身若它本身就是叶子）。
+ * 用于报表查询：避免 IN(code) 漏掉子科目数据，也避免父+子期初重复累加。
+ */
+function expandTopCodesToLeafIds(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  topCodes: string[]
+): Map<string, { ids: string[]; direction: string }> {
+  const meta = new Map<string, { ids: string[]; direction: string }>()
+  if (topCodes.length === 0) return meta
+
+  const expandStmt = db.prepare(
+    `SELECT a.id, a.code, a.direction
+     FROM accounts a
+     WHERE a.account_set_id = ?
+       AND (a.code = ? OR a.code LIKE ?)
+       AND NOT EXISTS (
+         SELECT 1 FROM accounts c
+         WHERE c.parent_id = a.id
+           AND c.account_set_id = a.account_set_id
+           AND c.is_enabled = 1
+       )`
+  )
+  const topDirectionStmt = db.prepare(
+    'SELECT direction FROM accounts WHERE account_set_id = ? AND code = ? LIMIT 1'
+  )
+
+  for (const code of topCodes) {
+    const leaves = expandStmt.all(accountSetId, code, `${code}%`) as Array<{
+      id: string
+      code: string
+      direction: string
+    }>
+    if (leaves.length === 0) continue
+    const topDirRow = topDirectionStmt.get(accountSetId, code) as { direction: string } | undefined
+    const direction = topDirRow?.direction || leaves[0].direction || 'debit'
+    meta.set(code, { ids: leaves.map(l => l.id), direction })
+  }
+  return meta
+}
+
 export function getBalance(
-  db: BalanceQueryDb,
+  db: BalanceQueryDb | Database,
   accountSetId: string,
   accountCode: string,
   year: number,
   period: number
 ): number {
   try {
-    const init = db
-      .prepare(
-        `
-      SELECT SUM(ib.init_balance) as init_balance, a.direction FROM init_balances ib
-      JOIN accounts a ON a.id = ib.account_id
-      WHERE ib.account_set_id=? AND (a.code=? OR a.code LIKE ?) AND ib.year=?
-      GROUP BY a.direction
-    `
-      )
-      .get(accountSetId, accountCode, `${accountCode}%`, year) as any
-
-    const periodBal = db
-      .prepare(
-        `
-      SELECT SUM(ab.current_debit) as current_debit, SUM(ab.current_credit) as current_credit, a.direction FROM account_balances ab
-      JOIN accounts a ON a.id = ab.account_id
-      WHERE ab.account_set_id=? AND (a.code=? OR a.code LIKE ?) AND ab.year=? AND ab.period<=?
-      GROUP BY a.direction
-    `
-      )
-      .get(accountSetId, accountCode, `${accountCode}%`, year, period) as any
-
-    if (!init && !periodBal) return 0
-
-    const initBal = init?.init_balance || 0
-    const dir = init?.direction || periodBal?.direction || 'debit'
-
-    if (dir === 'debit') {
-      return initBal + (periodBal?.current_debit || 0) - (periodBal?.current_credit || 0)
-    }
-
-    return initBal + (periodBal?.current_credit || 0) - (periodBal?.current_debit || 0)
+    return getBatchBalances(db, accountSetId, [accountCode], year, period).get(accountCode) ?? 0
   } catch {
     return 0
   }
 }
 
 export function getPeriodSum(
-  db: BalanceQueryDb,
+  db: BalanceQueryDb | Database,
   accountSetId: string,
   accountCode: string,
   year: number,
   period: number
 ): { debit: number; credit: number } {
   try {
-    const row = db
-      .prepare(
-        `
-      SELECT
-        SUM(ab.current_debit) as total_debit,
-        SUM(ab.current_credit) as total_credit
-      FROM account_balances ab
-      JOIN accounts a ON a.id = ab.account_id
-      WHERE ab.account_set_id=? AND a.code LIKE ? AND ab.year=? AND ab.period<=?
-    `
-      )
-      .get(accountSetId, `${accountCode}%`, year, period) as any
-
-    return {
-      debit: row?.total_debit || 0,
-      credit: row?.total_credit || 0,
-    }
+    const safePeriod = Math.min(12, Math.max(0, Math.trunc(period)))
+    return (
+      getBatchPeriodRangeSums(db, accountSetId, [accountCode], year, safePeriod, safePeriod).get(
+        accountCode
+      ) || { debit: 0, credit: 0 }
+    )
   } catch {
     return { debit: 0, credit: 0 }
   }
 }
 
 export function getPeriodRangeSum(
-  db: BalanceQueryDb,
+  db: BalanceQueryDb | Database,
   accountSetId: string,
   accountCode: string,
   year: number,
@@ -88,18 +115,161 @@ export function getPeriodRangeSum(
   toPeriod: number
 ): { debit: number; credit: number } {
   try {
+    const from = Math.min(12, Math.max(1, Math.trunc(fromPeriod)))
+    const to = Math.min(12, Math.max(from, Math.trunc(toPeriod)))
+    return (
+      getBatchPeriodRangeSums(db, accountSetId, [accountCode], year, from, to).get(accountCode) || {
+        debit: 0,
+        credit: 0,
+      }
+    )
+  } catch {
+    return { debit: 0, credit: 0 }
+  }
+}
+
+/**
+ * 批量查询多个科目的余额（优化版，消除 N+1 查询）
+ * - 报表配置里的 codes 是父级编码（如 1001），实际数据通常录在叶子子科目（如 100101）；
+ *   此函数会把每个 top_code 展开为其子树（仅保留叶子科目），再汇总余额。
+ * - 期初采用叶子科目，避免父子期初重复累加；方向沿用 top_code 自身。
+ * @param db 数据库连接
+ * @param accountSetId 账套 ID
+ * @param accountCodes 科目编码数组（顶级编码）
+ * @param year 年度
+ * @param period 期间
+ * @returns 科目编码到余额的映射
+ */
+export function getBatchBalances(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  accountCodes: string[],
+  year: number,
+  period: number
+): Map<string, number> {
+  const result = new Map<string, number>()
+
+  if (accountCodes.length === 0) return result
+
+  try {
+    // 1) 展开每个 top_code 的叶子科目集合（含 top_code 自身若为叶子）
+    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, accountCodes)
+    const allIds: string[] = []
+    for (const info of codeMeta.values()) allIds.push(...info.ids)
+
+    if (allIds.length === 0) {
+      for (const code of accountCodes) {
+        if (!result.has(code)) result.set(code, 0)
+      }
+      return result
+    }
+
+    // 2) 一次性查询全部叶子科目的期初 / 期间余额
+    const idPlaceholders = allIds.map(() => '?').join(',')
+
+    const initRows = db
+      .prepare(INIT_BALANCE_BY_ACCOUNT_SQL.replace('{placeholders}', idPlaceholders))
+      .all(accountSetId, ...allIds, year) as Array<{
+      account_id: string
+      init_balance: number | null
+    }>
+
+    const periodRows = db
+      .prepare(
+        `SELECT account_id,
+                SUM(current_debit) AS d,
+                SUM(current_credit) AS c
+         FROM account_balances
+         WHERE account_set_id = ?
+           AND account_id IN (${idPlaceholders})
+           AND year = ?
+           AND period <= ?
+         GROUP BY account_id`
+      )
+      .all(accountSetId, ...allIds, year, period) as Array<{
+      account_id: string
+      d: number | null
+      c: number | null
+    }>
+
+    const initById = new Map<string, number>()
+    for (const r of initRows) initById.set(r.account_id, Number(r.init_balance) || 0)
+    const periodById = new Map<string, { d: number; c: number }>()
+    for (const r of periodRows) periodById.set(r.account_id, { d: Number(r.d) || 0, c: Number(r.c) || 0 })
+
+    // 3) 按 top_code 汇总
+    for (const [code, info] of codeMeta) {
+      let initSum = 0
+      let debitSum = 0
+      let creditSum = 0
+      for (const id of info.ids) {
+        initSum += initById.get(id) || 0
+        const p = periodById.get(id)
+        if (p) {
+          debitSum += p.d
+          creditSum += p.c
+        }
+      }
+      const balance =
+        info.direction === 'debit'
+          ? round2(initSum + debitSum - creditSum)
+          : round2(initSum + creditSum - debitSum)
+      result.set(code, balance)
+    }
+
+    // 未被处理的 code（无对应科目）显式置 0
+    for (const code of accountCodes) {
+      if (!result.has(code)) result.set(code, 0)
+    }
+
+    return result
+  } catch (err) {
+    console.error('批量查询余额失败:', err)
+    return result
+  }
+}
+
+/**
+ * 从凭证分录直接汇总区间发生额，排除结转凭证（voucher_types.name = '结转'）
+ * 用于 @jqy 函数，取结转前的净发生额
+ */
+export function getPeriodRangeSumExcludeTransfer(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  accountCode: string,
+  year: number,
+  fromPeriod: number,
+  toPeriod: number
+): { debit: number; credit: number } {
+  try {
+    const from = Math.min(12, Math.max(1, Math.trunc(fromPeriod)))
+    const to = Math.min(12, Math.max(from, Math.trunc(toPeriod)))
+    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, [accountCode])
+    const leafIds = codeMeta.get(accountCode)?.ids ?? []
+    if (leafIds.length === 0) {
+      return { debit: 0, credit: 0 }
+    }
+
+    const placeholders = leafIds.map(() => '?').join(',')
     const row = db
       .prepare(
         `
       SELECT
-        SUM(ab.current_debit) as total_debit,
-        SUM(ab.current_credit) as total_credit
-      FROM account_balances ab
-      JOIN accounts a ON a.id = ab.account_id
-      WHERE ab.account_set_id=? AND a.code LIKE ? AND ab.year=? AND ab.period>=? AND ab.period<=?
+        SUM(CASE WHEN ve.direction = 'debit' THEN ve.amount ELSE 0 END) as total_debit,
+        SUM(CASE WHEN ve.direction = 'credit' THEN ve.amount ELSE 0 END) as total_credit
+      FROM voucher_entries ve
+      JOIN vouchers v ON v.id = ve.voucher_id
+      JOIN voucher_types vt ON vt.id = v.voucher_type_id
+      WHERE v.account_set_id = ?
+        AND ve.account_id IN (${placeholders})
+        AND v.year = ?
+        AND v.period >= ?
+        AND v.period <= ?
+        AND v.status = 'posted'
+        AND vt.name != '结转'
     `
       )
-      .get(accountSetId, `${accountCode}%`, year, fromPeriod, toPeriod) as any
+      .get(accountSetId, ...leafIds, year, from, to) as any
 
     return {
       debit: row?.total_debit || 0,
@@ -111,44 +281,95 @@ export function getPeriodRangeSum(
 }
 
 /**
- * 从凭证分录直接汇总区间发生额，排除结转凭证（voucher_types.name = '结转'）
- * 用于 @jqy 函数，取结转前的净发生额
+ * 批量查询多个科目的期间发生额（优化版，消除 N+1 查询）
+ * @param db 数据库连接
+ * @param accountSetId 账套 ID
+ * @param accountCodes 科目编码数组
+ * @param year 年度
+ * @param period 期间
+ * @returns 科目编码到发生额的映射
  */
-export function getPeriodRangeSumExcludeTransfer(
-  db: BalanceQueryDb,
+export function getBatchPeriodRangeSums(
+  db: BalanceQueryDb | Database,
   accountSetId: string,
-  accountCode: string,
+  accountCodes: string[],
   year: number,
   fromPeriod: number,
   toPeriod: number
-): { debit: number; credit: number } {
-  try {
-    const row = db
-      .prepare(
-        `
-      SELECT
-        SUM(CASE WHEN ve.direction = 'debit' THEN ve.amount ELSE 0 END) as total_debit,
-        SUM(CASE WHEN ve.direction = 'credit' THEN ve.amount ELSE 0 END) as total_credit
-      FROM voucher_entries ve
-      JOIN vouchers v ON v.id = ve.voucher_id
-      JOIN accounts a ON a.id = ve.account_id
-      JOIN voucher_types vt ON vt.id = v.voucher_type_id
-      WHERE v.account_set_id = ?
-        AND (a.code = ? OR a.code LIKE ?)
-        AND v.year = ?
-        AND v.period >= ?
-        AND v.period <= ?
-        AND v.status = 'posted'
-        AND vt.name != '结转'
-    `
-      )
-      .get(accountSetId, accountCode, `${accountCode}%`, year, fromPeriod, toPeriod) as any
+): Map<string, { debit: number; credit: number }> {
+  const result = new Map<string, { debit: number; credit: number }>()
 
-    return {
-      debit: row?.total_debit || 0,
-      credit: row?.total_credit || 0,
+  if (accountCodes.length === 0) return result
+
+  try {
+    // 与 getBatchBalances 一致：把 top_code 展开为子树叶子，再聚合发生额
+    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, accountCodes)
+    const allIds: string[] = []
+    for (const info of codeMeta.values()) allIds.push(...info.ids)
+
+    if (allIds.length === 0) {
+      for (const code of accountCodes) {
+        if (!result.has(code)) result.set(code, { debit: 0, credit: 0 })
+      }
+      return result
     }
-  } catch {
-    return { debit: 0, credit: 0 }
+
+    const idPlaceholders = allIds.map(() => '?').join(',')
+    const periodRows = db
+      .prepare(
+        `SELECT account_id,
+                SUM(current_debit) AS d,
+                SUM(current_credit) AS c
+         FROM account_balances
+         WHERE account_set_id = ?
+           AND account_id IN (${idPlaceholders})
+           AND year = ?
+           AND period >= ?
+           AND period <= ?
+         GROUP BY account_id`
+      )
+      .all(accountSetId, ...allIds, year, fromPeriod, toPeriod) as Array<{
+      account_id: string
+      d: number | null
+      c: number | null
+    }>
+
+    const periodById = new Map<string, { d: number; c: number }>()
+    for (const r of periodRows) periodById.set(r.account_id, { d: Number(r.d) || 0, c: Number(r.c) || 0 })
+
+    for (const [code, info] of codeMeta) {
+      let debit = 0
+      let credit = 0
+      for (const id of info.ids) {
+        const p = periodById.get(id)
+        if (p) {
+          debit += p.d
+          credit += p.c
+        }
+      }
+      result.set(code, { debit, credit })
+    }
+
+    for (const code of accountCodes) {
+      if (!result.has(code)) {
+        result.set(code, { debit: 0, credit: 0 })
+      }
+    }
+
+    return result
+  } catch (err) {
+    console.error('批量查询区间发生额失败:', err)
+    return result
   }
+}
+
+/** 累计至指定期间的发生额（1 月至 period） */
+export function getBatchPeriodSums(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  accountCodes: string[],
+  year: number,
+  period: number
+): Map<string, { debit: number; credit: number }> {
+  return getBatchPeriodRangeSums(db, accountSetId, accountCodes, year, 1, period)
 }

@@ -1,0 +1,212 @@
+/* ========== Report Module - Apple Style ========== */
+/* 报表模块 - 苹果设计风格 */
+
+.report-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 96px);
+  background: var(--gray-100);
+}
+
+.report-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.report-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* 报表筛选栏 */
+.report-filter {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 16px 20px;
+  background: rgba(255, 255, 255, 0.85);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-radius: var(--radius-xl);
+  border: 1px solid rgba(255, 255, 255, 0.5);
+  margin-bottom: 20px;
+}
+
+/* 报表表格 */
+.report-table {
+  flex: 1;
+  min-height: 0;
+  border-radius: var(--radius-xl) !important;
+  overflow: hidden !important;
+  box-shadow: var(--shadow-sm) !important;
+}
+
+.report-table th.el-table__cell {
+  background: linear-gradient(to bottom, var(--gray-100) 0%, var(--gray-200) 100%) !important;
+  font-weight: 600 !important;
+  font-size: 12px !important;
+  text-transform: uppercase !important;
+  letter-spacing: 0.05em !important;
+}
+
+/* 报表数据行 */
+.report-row {
+  transition: background var(--duration-fast) var(--ease-out);
+}
+
+.report-row:hover {
+  background: rgba(0, 122, 255, 0.06) !important;
+}
+
+.report-row--header {
+  background: var(--gray-100) !important;
+  font-weight: 600 !important;
+}
+
+.report-row--subtotal {
+  background: var(--gray-50) !important;
+  font-weight: 600 !important;
+}
+
+.report-row--total {
+  background: var(--gray-100) !important;
+  font-weight: 700 !important;
+  border-top: 2px solid var(--border-medium) !important;
+}
+
+/* 报表金额 */
+.report-amount {
+  text-align: right;
+  font-family: 'SF Mono', 'Menlo', monospace;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.report-amount--positive {
+  color: var(--apple-green);
+}
+
+.report-amount--negative {
+  color: var(--apple-red);
+}
+
+.report-amount--zero {
+  color: var(--text-tertiary);
+}
+
+/* 动态报表 */
+.dynamic-report {
+  display: flex;
+  flex-direction: column;
+}
+
+.dynamic-report-tabs {
+  margin-bottom: 20px;
+}
+
+.dynamic-report-tabs :deep(.el-tabs__item) {
+  font-family: var(--font-body) !important;
+  font-weight: 500 !important;
+}
+
+.dynamic-report-tabs :deep(.el-tabs__item.is-active) {
+  color: var(--apple-blue) !important;
+  font-weight: 600 !important;
+}
+
+/* 报表编辑器 */
+.report-editor {
+  background: #fff;
+  border-radius: var(--radius-xl);
+  border: 1px solid var(--border-light);
+  overflow: hidden;
+}
+
+.report-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.report-editor-content {
+  padding: 20px;
+  min-height: 400px;
+}
+
+/* 报表单元格 */
+.report-cell {
+  padding: 8px 12px;
+  border: 1px solid var(--border-light);
+  font-size: 13px;
+  transition: all var(--duration-fast) var(--ease-out);
+}
+
+.report-cell:hover {
+  background: rgba(0, 122, 255, 0.04);
+}
+
+.report-cell--editable {
+  cursor: pointer;
+}
+
+.report-cell--editable:hover {
+  background: rgba(0, 122, 255, 0.08);
+  border-color: var(--apple-blue);
+}
+
+.report-cell--formula {
+  background: rgba(175, 82, 222, 0.04);
+  color: var(--apple-purple);
+}
+
+.report-cell--data {
+  background: rgba(52, 199, 89, 0.04);
+  color: var(--apple-green);
+}
+
+/* 打印标题 */
+.print-title-row {
+  display: none;
+}
+
+@media print {
+  .print-title-row {
+    display: block;
+    text-align: center;
+    margin-bottom: 24px;
+  }
+  
+  .print-title {
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+  
+  .print-date-range {
+    font-size: 14px;
+    color: var(--text-secondary);
+  }
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .report-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  
+  .report-filter {
+    padding: 12px;
+    gap: 8px;
+  }
+}

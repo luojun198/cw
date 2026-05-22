@@ -6,7 +6,7 @@
           <el-option label="审核" value="audit" />
           <el-option label="反审核" value="unaudit" />
           <el-option label="记账" value="post" />
-          <el-option label="反记账" value="unpost" />
+          <el-option v-if="canUnpost" label="反记账" value="unpost" />
         </el-select>
       </el-form-item>
       <el-form-item label="日期区间" required>
@@ -70,9 +70,12 @@ interface Props {
   previewFirstVoucherNo: string | null
   previewLastVoucherNo: string | null
   previewBlockedVoucherNo: string | null
+  canUnpost?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  canUnpost: true,
+})
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   preview: []

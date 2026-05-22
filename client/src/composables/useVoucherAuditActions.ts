@@ -3,11 +3,11 @@ import request from '@/api/request'
 import { useConfirm, useBatchConfirm } from './useConfirm'
 import { showSuccess, showError, showOperationSuccess } from './useMessage'
 import { useOperationHistory } from './useOperationHistory'
-import { useGlobalOperationHistory } from './useOperationHistory'
 
 export function useVoucherAuditActions(fetchData: () => Promise<void>) {
   const detail = ref<any>(null)
   const detailVisible = ref(false)
+  const batchAuditing = ref(false)
   const batchPosting = ref(false)
   const batchUnposting = ref(false)
   const batchUnauditing = ref(false)
@@ -75,10 +75,44 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
   }
 
   async function batchAudit(selected: any[]) {
-    for (const r of selected) {
-      if (r.status === 'draft') {
-        await audit(r)
+    const auditableVouchers = selected.filter(r => r.status === 'draft')
+
+    if (!auditableVouchers.length) {
+      showError('当前所选凭证中没有可审核的凭证')
+      return
+    }
+
+    batchAuditing.value = true
+    try {
+      // 注意：表格按分录展平时 row.id 会被 entry.id 覆盖；必须先取 _voucherId
+      // 同时按 voucher 去重，多条分录展平不要重复提交同一张凭证
+      const voucherIds = Array.from(
+        new Set(
+          auditableVouchers
+            .map(r => r._voucherId || r.id)
+            .filter(Boolean)
+        )
+      )
+      const res = await request.post<{
+        total?: number
+        success?: number
+        fail?: number
+        details?: Array<{ id: string; success: boolean; error?: string }>
+      }>('/voucher/vouchers/batch-audit', { voucherIds })
+      const data = res.data
+      const successCount = data?.success ?? voucherIds.length
+      const failCount = data?.fail ?? 0
+      if (failCount > 0 && successCount === 0) {
+        const firstError = data?.details?.find(d => !d.success)?.error
+        showError(`批量审核失败：${firstError || `${failCount} 张全部失败`}`)
+      } else if (failCount > 0) {
+        showError(`批量审核完成：成功 ${successCount} 张，失败 ${failCount} 张`)
+      } else {
+        showOperationSuccess('批量审核', res.message || `共审核 ${successCount} 张凭证`)
       }
+      await fetchData()
+    } finally {
+      batchAuditing.value = false
     }
   }
 
@@ -151,6 +185,7 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
   return {
     detail,
     detailVisible,
+    batchAuditing,
     batchPosting,
     batchUnposting,
     batchUnauditing,

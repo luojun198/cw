@@ -73,19 +73,19 @@ export function useBatchAuditDialog(fetchData: () => Promise<void>) {
       await handleBatchAuditPreview()
     }
     if (batchAuditPreviewBlockedVoucherNo.value) {
-      const operation = batchAuditForm.value.operation
-      const operationLabel = { audit: '审核', unaudit: '反审核', post: '记账', unpost: '反记账' }[operation] || '操作'
-      ElMessage.error(`存在不符合条件的凭证，无法${operationLabel}：${batchAuditPreviewBlockedVoucherNo.value}`)
+      const operation = batchAuditForm.value.operation as 'audit' | 'unaudit' | 'post' | 'unpost'
+      const operationLabel: Record<string, string> = { audit: '审核', unaudit: '反审核', post: '记账', unpost: '反记账' }
+      ElMessage.error(`存在不符合条件的凭证，无法${operationLabel[operation] || '操作'}：${batchAuditPreviewBlockedVoucherNo.value}`)
       return
     }
 
-    const operation = batchAuditForm.value.operation
-    const operationLabel = { audit: '审核', unaudit: '反审核', post: '记账', unpost: '反记账' }[operation] || '操作'
+    const operation = batchAuditForm.value.operation as 'audit' | 'unaudit' | 'post' | 'unpost'
+    const operationLabel: Record<string, string> = { audit: '审核', unaudit: '反审核', post: '记账', unpost: '反记账' }
 
     await ElMessageBox.confirm(
-      `当前条件预计${operationLabel} ${batchAuditPreviewCount.value ?? 0} 张凭证，是否继续？`,
+      `当前条件预计${operationLabel[operation] || '操作'} ${batchAuditPreviewCount.value ?? 0} 张凭证，是否继续？`,
       '二次确认',
-      { type: 'warning', confirmButtonText: `确认${operationLabel}`, cancelButtonText: '取消' }
+      { type: 'warning', confirmButtonText: `确认${operationLabel[operation] || '操作'}`, cancelButtonText: '取消' }
     )
 
     // 处理"全部类型"选项

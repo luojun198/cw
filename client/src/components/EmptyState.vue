@@ -1,17 +1,17 @@
 <template>
-  <div class="empty-state">
-    <div class="empty-state-icon">
-      <el-icon><component :is="icon" /></el-icon>
+  <div class="apple-empty-state">
+    <div class="apple-empty-state__icon">
+      <el-icon :size="80"><component :is="icon" /></el-icon>
     </div>
-    <div class="empty-state-text">{{ description }}</div>
-    <div v-if="showAction" class="empty-state-action">
+    <div class="apple-empty-state__text">{{ description }}</div>
+    <div v-if="showAction" class="apple-empty-state__action">
       <el-button type="primary" @click="handleAction">{{ actionText }}</el-button>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { Document, FolderOpened, Coin, User } from '@element-plus/icons-vue'
+import { Document, FolderOpened, Coin } from '@element-plus/icons-vue'
 
 interface Props {
   type?: 'voucher' | 'account' | 'data' | 'custom'
@@ -54,24 +54,5 @@ const handleAction = () => {
 </script>
 
 <style scoped>
-.empty-state {
-  padding: 60px 0;
-  text-align: center;
-  color: #909399;
-}
-
-.empty-state-icon {
-  font-size: 64px;
-  margin-bottom: 16px;
-  opacity: 0.3;
-}
-
-.empty-state-text {
-  font-size: 14px;
-  margin-bottom: 16px;
-}
-
-.empty-state-action {
-  margin-top: 16px;
-}
+@import './EmptyState.styles.css';
 </style>

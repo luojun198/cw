@@ -17,17 +17,26 @@
 
 .page-header h3 {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   font-weight: 600;
-  color: #2c3e50;
+  color: #1d1d1f;
+  letter-spacing: -0.3px;
 }
 
+/* 筛选栏视觉分隔 - 苹果风格 */
 .filter-row {
   display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
   flex-shrink: 0;
+  background: rgba(255, 255, 255, 0.8);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  padding: 14px 16px;
+  border-radius: 14px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
 }
 
 /* .page 内的 el-card、el-alert、el-tabs 等不伸缩 */
@@ -57,33 +66,76 @@
 
 /* 金额显示样式 */
 .amount-positive {
-  color: #2e7d32;
+  color: var(--cw-debit-color);
+  font-weight: var(--cw-font-semibold);
 }
 
 .amount-negative {
-  color: #c0392b;
+  color: var(--cw-credit-color);
+  font-weight: var(--cw-font-semibold);
 }
 
 .amount-zero {
-  color: #909399;
+  color: var(--cw-text-tertiary);
 }
 
-/* 状态标签样式 */
+/* 状态标签样式 - 苹果风格 */
 .status-draft {
-  color: #909399;
+  color: #8e8e93;
 }
 
 .status-audited {
-  color: #1a4b8c;
+  color: #007aff;
 }
 
 .status-posted {
-  color: #2e7d32;
+  color: #34c759;
 }
 
-/* 表格优化 - 严肃风格 */
+/* ========== 全站表格边框：Element Plus 单元格网格 + 统一颜色 ========== */
+:root {
+  --cw-table-grid-color: #adb3bc;
+}
+
 .el-table {
-  font-size: 14px;
+  font-size: var(--cw-text-base);
+  --el-table-border-color: var(--cw-table-grid-color);
+  --el-border-color-lighter: var(--cw-table-grid-color);
+}
+
+/* 使用 EP 单元格网格；根节点 1px 同色边框补全上/左外缘（伪元素在 overflow:hidden 下易被裁切） */
+.el-table.el-table--border {
+  border: 1px solid var(--cw-table-grid-color);
+  border-radius: 12px;
+  overflow: hidden;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+/* 根 border 已画四边，隐藏 EP 伪元素描边避免与单元格边重复 */
+.el-table.el-table--border::before,
+.el-table.el-table--border::after,
+.el-table.el-table--border .el-table__inner-wrapper::before,
+.el-table.el-table--border .el-table__inner-wrapper::after {
+  display: none !important;
+}
+
+.el-table.el-table--border th.el-table__cell,
+.el-table.el-table--border td.el-table__cell {
+  border-color: var(--cw-table-grid-color) !important;
+}
+
+/* 未加 border 属性的小表补网格 */
+.el-table:not(.el-table--border) {
+  border: 1px solid var(--cw-table-grid-color);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.el-table th.el-table__cell,
+.el-table td.el-table__cell {
+  border-color: var(--cw-table-grid-color) !important;
 }
 
 .el-table .cell {
@@ -91,20 +143,57 @@
 }
 
 .el-table__header th {
-  background-color: #e8edf3 !important;
-  color: #2c3e50;
-  font-weight: 600;
-  font-size: 13px;
+  background: linear-gradient(to bottom, #e8edf3 0%, #dce4ed 100%) !important;
+  color: var(--cw-text-primary);
+  font-weight: var(--cw-font-semibold);
+  font-size: var(--cw-text-sm);
+  border-bottom: 2px solid #9098a3;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.el-table__row {
+  transition: background-color 0.2s ease;
+}
+
+.el-table__row:nth-child(even) {
+  background-color: #fafbfc;
 }
 
 .el-table__row:hover {
-  background-color: #f0f4f8 !important;
+  background-color: var(--cw-bg-hover) !important;
+}
+
+.el-table__body tr.current-row > td.el-table__cell,
+.el-table__body tr.is-selected > td.el-table__cell,
+.el-table__row.current-row > td,
+.el-table__row.is-selected > td,
+.el-table--striped .el-table__body tr.current-row > td.el-table__cell,
+.el-table--striped .el-table__body tr.is-selected > td.el-table__cell,
+.el-table--striped .el-table__body tr.el-table__row--striped.current-row > td.el-table__cell,
+.el-table--striped .el-table__body tr.el-table__row--striped.is-selected > td.el-table__cell {
+  background-color: #b3d8ff !important;
+  font-weight: 500;
+}
+
+.el-table__body tr.current-row:hover > td.el-table__cell,
+.el-table__body tr.is-selected:hover > td.el-table__cell,
+.el-table__row.current-row:hover > td,
+.el-table__row.is-selected:hover > td,
+.el-table--striped .el-table__body tr.current-row:hover > td.el-table__cell,
+.el-table--striped .el-table__body tr.is-selected:hover > td.el-table__cell,
+.el-table--striped .el-table__body tr.el-table__row--striped.current-row:hover > td.el-table__cell,
+.el-table--striped .el-table__body tr.el-table__row--striped.is-selected:hover > td.el-table__cell {
+  background-color: #b3d8ff !important;
 }
 
 /* 金额列右对齐 */
 .amount-cell {
   text-align: right;
-  font-family: 'Courier New', monospace;
+  font-family: var(--cw-font-number);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  font-weight: var(--cw-font-medium);
 }
 
 /* 空状态样式 */
@@ -140,7 +229,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  z-index: 1000;
+  z-index: var(--cw-z-overlay);
 }
 
 /* 表单优化 */
@@ -166,41 +255,83 @@
 
 /* 按钮加载状态 */
 .el-button.is-loading {
+  position: relative;
   pointer-events: none;
-  opacity: 0.6;
+}
+
+.el-button.is-loading::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: inherit;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+/* 按钮样式升级 */
+.el-button {
+  border-radius: 6px;
+  font-weight: var(--cw-font-medium);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+  box-shadow: var(--cw-shadow-sm);
+}
+
+.el-button:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--cw-shadow-md);
+}
+
+.el-button:active {
+  transform: translateY(0);
+  box-shadow: var(--cw-shadow-sm);
+}
+
+/* 主按钮强调 */
+.el-button--primary {
+  background: linear-gradient(135deg, #1a4b8c 0%, #2e6bc4 100%);
+  border: none;
+  box-shadow: 0 4px 12px rgba(26, 75, 140, 0.3);
+}
+
+.el-button--primary:hover {
+  background: linear-gradient(135deg, #143c70 0%, #1a4b8c 100%);
+  box-shadow: 0 6px 16px rgba(26, 75, 140, 0.4);
 }
 
 /* 卡片优化 - 庄重大气 */
 .el-card {
-  border-radius: 8px;
-  box-shadow: 0 1px 8px 0 rgba(0, 0, 0, 0.06);
-  border: 1px solid #e4e8ed;
+  border-radius: 12px;
+  box-shadow: var(--cw-shadow-md);
+  border: 1px solid var(--cw-border-light);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  background: var(--cw-bg-elevated);
+}
+
+.el-card:hover {
+  box-shadow: var(--cw-shadow-lg);
+  transform: translateY(-2px);
 }
 
 .el-card__header {
-  border-bottom: 1px solid #e4e8ed;
-  padding: 14px 20px;
-  font-weight: 600;
-  color: #2c3e50;
+  border-bottom: 2px solid var(--cw-border-light);
+  padding: 16px 24px;
+  font-weight: var(--cw-font-semibold);
+  color: var(--cw-text-primary);
+  background: linear-gradient(to bottom, #fafbfc 0%, #ffffff 100%);
 }
 
 .el-card__body {
-  padding: 20px;
-}
-
-/* 对话框优化 */
-.el-dialog__header {
-  border-bottom: 1px solid #e4e8ed;
-  padding: 16px 20px;
-}
-
-.el-dialog__body {
-  padding: 20px;
-}
-
-.el-dialog__footer {
-  border-top: 1px solid #e4e8ed;
-  padding: 12px 20px;
+  padding: 24px;
 }
 
 /* 分页优化 - 仅用于独立 el-pagination（非 .pagination-bar 内的） */
@@ -304,38 +435,648 @@
 
 /* 响应式优化 */
 @media (max-width: 768px) {
-  .el-table .cell {
-    padding: 6px 8px;
-    font-size: 12px;
-  }
-
-  .el-card__body {
+  /* 页面容器 */
+  .page {
     padding: 12px;
   }
 
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+
+  .page-header h3 {
+    font-size: var(--cw-text-lg);
+  }
+
+  /* 筛选栏 */
+  .filter-row {
+    padding: 12px;
+    gap: 12px;
+  }
+
+  /* 表格 */
+  .el-table .cell {
+    padding: 6px 8px;
+    font-size: var(--cw-text-sm);
+  }
+
+  .el-table__header th {
+    font-size: var(--cw-text-xs);
+    padding: 8px 4px;
+  }
+
+  /* 卡片 */
+  .el-card {
+    border-radius: 8px;
+  }
+
+  .el-card__header {
+    padding: 12px 16px;
+    font-size: var(--cw-text-base);
+  }
+
+  .el-card__body {
+    padding: 16px;
+  }
+
+  /* 对话框 */
   .el-dialog {
     width: 90% !important;
+    margin: 20px auto !important;
+  }
+
+  .el-dialog__header {
+    padding: 12px 16px;
+  }
+
+  .el-dialog__body {
+    padding: 16px;
+  }
+
+  .el-dialog__footer {
+    padding: 12px 16px;
+  }
+
+  /* 按钮 */
+  .el-button {
+    padding: 8px 12px;
+    font-size: var(--cw-text-sm);
+  }
+
+  /* 表单 */
+  .el-form-item {
+    margin-bottom: 16px;
+  }
+
+  .el-form-item__label {
+    font-size: var(--cw-text-sm);
+  }
+
+  /* 分页 */
+  .pagination-bar {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  /* 移动端卡片列表 */
+  .mobile-card-list {
+    display: block;
+  }
+
+  .mobile-card {
+    background: var(--cw-bg-elevated);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+    box-shadow: var(--cw-shadow-sm);
+    border: 1px solid var(--cw-border-light);
+  }
+
+  .mobile-card-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--cw-border-light);
+  }
+
+  .mobile-card-row:last-child {
+    border-bottom: none;
+  }
+
+  .mobile-card-label {
+    color: var(--cw-text-secondary);
+    font-size: var(--cw-text-sm);
+    font-weight: var(--cw-font-medium);
+  }
+
+  .mobile-card-value {
+    color: var(--cw-text-primary);
+    font-weight: var(--cw-font-medium);
+    text-align: right;
+  }
+
+  /* 隐藏桌面端表格 */
+  .desktop-table {
+    display: none;
+  }
+}
+
+/* 桌面端隐藏移动端卡片 */
+@media (min-width: 769px) {
+  .mobile-card-list {
+    display: none;
   }
 }
 
 /* 打印样式 */
 @media print {
+  /* A4 纸张 */
+  @page {
+    size: A4;
+    margin: 10mm;
+  }
+
   .no-print {
     display: none !important;
   }
 
+  /* 隐藏全局导航布局 */
+  .layout-container > .el-aside,
+  .layout-container .aside,
+  .layout-container > .el-container > .el-header,
+  .layout-container .header,
+  .collapse-btn,
+  .header-right,
+  .el-breadcrumb {
+    display: none !important;
+  }
+
+  /* 布局切换为 block */
+  .layout-container,
+  .layout-container > .el-container,
+  .layout-container > .el-container > .el-main {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  /* 页面容器打印适配 */
+  .page {
+    padding: 0 !important;
+    height: auto !important;
+    display: block !important;
+    overflow: visible !important;
+  }
+
+  /* 隐藏所有筛选/操作栏 */
+  .page-header,
+  .filter-row,
+  .pagination,
+  .pagination-bar {
+    display: none !important;
+  }
+
+  /* 显示打印专用标题行（在各页面中定义） */
+  .print-title-row {
+    display: block !important;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
+  .print-title {
+    font-size: 18pt;
+    font-weight: bold;
+    margin: 0 0 8px 0;
+  }
+
+  .print-date-range {
+    font-size: 11pt;
+    margin: 0;
+    color: #333;
+  }
+
   .el-table {
     border: 1px solid #ddd;
+    font-size: 9pt;
   }
 
   .el-table th,
   .el-table td {
     border: 1px solid #ddd;
-    padding: 8px;
+    padding: 4px;
+  }
+
+  .el-table__body-wrapper {
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  /* 打印对话框：隐藏标题栏 */
+  .el-dialog__header {
+    display: none !important;
+  }
+
+  /* 打印对话框：移除所有内边距和边距 */
+  .el-dialog__body {
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  .preview-area {
+    padding: 0 !important;
+    margin: 0 !important;
   }
 }
 
 /* 隐藏 el-input-number 的 +/- 按钮 */
 .el-input-number {
   --el-input-number-controls-height: 0;
+}
+
+/* ========== 微交互优化 ========== */
+
+/* 输入框聚焦效果 */
+.el-input__wrapper {
+  transition: all 0.2s ease;
+}
+
+.el-input__wrapper:focus-within {
+  box-shadow: 0 0 0 3px rgba(26, 75, 140, 0.1);
+  border-color: var(--el-color-primary);
+}
+
+/* 下拉菜单动画 */
+.el-dropdown-menu {
+  animation: dropdown-fade-in 0.2s ease;
+}
+
+@keyframes dropdown-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Toast 通知优化 */
+.el-message {
+  border-radius: 8px;
+  box-shadow: var(--cw-shadow-xl);
+  backdrop-filter: blur(10px);
+  animation: message-slide-in 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes message-slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* 标签页优化 */
+.el-tabs__item {
+  transition: all 0.2s ease;
+}
+
+.el-tabs__item.is-active {
+  font-weight: var(--cw-font-semibold);
+}
+
+.el-tabs__item:hover {
+  color: var(--el-color-primary);
+}
+
+/* ========== 按钮布局优化 ========== */
+
+/* 页面头部操作栏 */
+.page-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.page-header-actions .el-button-group {
+  display: flex;
+}
+
+.page-header-actions .el-divider--vertical {
+  margin: 0 8px;
+  height: 20px;
+}
+
+/* 按钮图标间距 */
+.el-button .el-icon + span {
+  margin-left: 4px;
+}
+
+/* 危险操作按钮强化 */
+.el-button--danger:not(.is-plain) {
+  box-shadow: 0 2px 8px rgba(245, 108, 108, 0.3);
+}
+
+.el-button--danger:not(.is-plain):hover {
+  box-shadow: 0 4px 12px rgba(245, 108, 108, 0.4);
+}
+
+/* 主操作按钮强化 */
+.el-button--primary:not(.is-plain) {
+  box-shadow: 0 2px 8px rgba(26, 75, 140, 0.3);
+}
+
+.el-button--primary:not(.is-plain):hover {
+  box-shadow: 0 4px 12px rgba(26, 75, 140, 0.4);
+}
+
+/* 按钮组内按钮间距 */
+.el-button-group .el-button + .el-button {
+  margin-left: 0;
+}
+
+/* ========== 紧凑型数据表（对齐科目管理 Account.vue）========== */
+/* 使用方式：<el-table size="small" class="compact-data-table" ... /> */
+.page > .compact-data-table.el-table {
+  flex: 1;
+  min-height: 0;
+}
+
+/* ========== 合计行与数据行连续（不固定在视口底部）========== */
+/* 滚动层占满剩余高度 */
+.page > .table-summary-scroll,
+.table-summary-scroll {
+  flex: 1 1 0;
+  min-height: 0;
+  width: 100%;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  background: transparent;
+}
+
+/* 账簿管理模块：宽表外框贴合列宽 */
+.page-ledger .table-summary-scroll.table-summary-scroll--wide,
+.page.page-ledger-aux .table-summary-scroll.table-summary-scroll--wide {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.page-ledger .table-summary-scroll--wide > .el-table.el-table--border,
+.page.page-ledger-aux .table-summary-scroll.table-summary-scroll--wide > .el-table.el-table--border {
+  max-width: none;
+}
+
+.page-ledger .table-summary-scroll--wide > .el-table,
+.page.page-ledger-aux .table-summary-scroll.table-summary-scroll--wide > .el-table {
+  flex-shrink: 0;
+  width: auto;
+  max-width: none;
+}
+
+.page-ledger .table-summary-scroll > .el-table > .el-table__inner-wrapper,
+.page.page-ledger-aux .table-summary-scroll > .el-table > .el-table__inner-wrapper {
+  overflow: visible;
+}
+
+.table-summary-scroll > .el-table:not(.ledger-wide-table) {
+  width: 100%;
+}
+
+/* 账簿宽表（总分类账等）：列宽合计定宽 + 外层横向滚动，外框贴列无右侧空白 */
+.page > .table-summary-scroll.table-summary-scroll--wide,
+.table-summary-scroll.table-summary-scroll--wide {
+  overflow-x: auto;
+  overflow-y: auto;
+}
+
+.table-summary-scroll--wide > .el-table {
+  width: auto;
+  max-width: none;
+  flex-shrink: 0;
+}
+
+.table-summary-scroll--wide > .el-table.el-table--border {
+  width: auto;
+  max-width: none;
+}
+
+.table-summary-scroll--wide > .el-table > .el-table__inner-wrapper {
+  overflow: visible;
+}
+
+/* ========== 辅助账簿列表（余额表/明细账）单独布局 ========== */
+.page-ledger-aux .table-summary-scroll.table-summary-scroll--wide > .el-table {
+  flex-shrink: 0;
+  width: auto;
+  max-width: none;
+}
+
+.page.page-ledger-aux .table-summary-scroll.table-summary-scroll--wide > .el-table.el-table--border {
+  max-width: none;
+}
+
+.page.page-ledger-aux .table-summary-scroll > .el-table > .el-table__inner-wrapper {
+  overflow: visible;
+}
+
+.table-summary-scroll > .el-table > .el-table__inner-wrapper {
+  overflow-x: auto;
+  overflow-y: visible;
+}
+
+.table-summary-scroll > .el-table .el-table__body-wrapper {
+  overflow: visible !important;
+  max-height: none !important;
+  height: auto !important;
+}
+
+.table-summary-scroll > .el-table .el-table__body-wrapper .el-scrollbar {
+  height: auto !important;
+}
+
+.table-summary-scroll > .el-table .el-table__body-wrapper .el-scrollbar__wrap {
+  overflow: visible !important;
+  height: auto !important;
+  max-height: none !important;
+}
+
+.table-summary-scroll > .el-table .el-table__body-wrapper .el-scrollbar__view {
+  display: inline-block !important;
+  vertical-align: top;
+}
+
+/* 隐藏 body 区横向条（改用 inner-wrapper 底部滚动条） */
+.table-summary-scroll > .el-table .el-table__body-wrapper .el-scrollbar__bar {
+  display: none !important;
+}
+
+.table-summary-scroll > .el-table .el-table__header-wrapper,
+.table-summary-scroll > .el-table .el-table__footer-wrapper {
+  overflow: visible !important;
+}
+
+.table-summary-scroll .el-table thead th.el-table__cell {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+}
+
+.table-summary-scroll .el-table thead th.el-table__cell.is-fixed,
+.table-summary-scroll .el-table .el-table-fixed-column--left,
+.table-summary-scroll .el-table .el-table-fixed-column--right {
+  z-index: 5;
+}
+
+.table-summary-scroll .compact-data-table.el-table .el-table__footer-wrapper td.el-table__cell {
+  background: var(--el-fill-color-light) !important;
+  font-weight: 600;
+}
+
+.compact-data-table.el-table--small .el-table__body .el-table__cell {
+  padding: 2px 0 !important;
+}
+
+.compact-data-table.el-table--small .el-table__footer .el-table__cell {
+  padding: 2px 0 !important;
+}
+
+/* 表头单元格：见下方「紧凑表表头」统一规则 */
+
+.compact-data-table.el-table--small .el-table__body .el-table__row {
+  height: 30px;
+}
+
+.compact-data-table.el-table--small .cell {
+  min-height: 24px;
+  line-height: 24px;
+  padding: 0 6px !important;
+  font-size: 13px;
+}
+
+.compact-data-table.el-table--small .el-tag {
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 20px;
+}
+
+.compact-data-table.el-table--small .el-button.is-link {
+  font-size: 12px;
+  padding: 3px 5px;
+  height: auto;
+  min-height: 22px;
+}
+
+/* 紧凑表表头：覆盖全局 .el-table__header 的大写/渐变感，与表体密度一致 */
+.compact-data-table.el-table--small thead .el-table__cell {
+  background: var(--el-fill-color-light) !important;
+  border-bottom: 1px solid var(--el-table-border-color) !important;
+}
+
+.compact-data-table.el-table--small th.el-table__cell {
+  padding: 3px 0 !important;
+  font-size: 11px !important;
+  font-weight: 600;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  line-height: 1.2;
+}
+
+.compact-data-table.el-table--small th.el-table__cell .cell {
+  min-height: 20px !important;
+  line-height: 20px !important;
+  padding: 0 6px !important;
+  font-size: 11px !important;
+}
+
+/* 含紧凑数据表的页面：页边距、标题、筛选栏与主按钮收紧（减轻「头重脚轻」） */
+.page:has(.compact-data-table) {
+  padding: 10px 12px;
+}
+
+.page:has(.compact-data-table) > .page-header {
+  margin-bottom: 8px;
+  gap: 8px;
+  align-items: center;
+}
+
+.page:has(.compact-data-table) > .page-header h3 {
+  font-size: 15px;
+  line-height: 1.25;
+  font-weight: 600;
+}
+
+.page:has(.compact-data-table) .filter-row {
+  padding: 8px 10px !important;
+  margin-bottom: 8px !important;
+  border-radius: 10px !important;
+  gap: 6px !important;
+}
+
+.page:has(.compact-data-table) .page-header .filter-row {
+  margin-bottom: 0;
+}
+
+.page:has(.compact-data-table) .page-header .el-button:not(.is-link),
+.page:has(.compact-data-table) .filter-row .el-button:not(.is-link) {
+  height: 28px !important;
+  padding: 0 10px !important;
+  font-size: 12px !important;
+}
+
+.page:has(.compact-data-table) .filter-row .el-input__wrapper,
+.page:has(.compact-data-table) .filter-row .el-select__wrapper,
+.page:has(.compact-data-table) .filter-row .el-date-editor .el-input__wrapper,
+.page:has(.compact-data-table) .page-header .el-input__wrapper,
+.page:has(.compact-data-table) .page-header .el-select__wrapper {
+  min-height: 28px !important;
+}
+
+.page:has(.compact-data-table) .filter-row .el-checkbox__label,
+.page:has(.compact-data-table) .page-header .el-checkbox__label {
+  font-size: 12px;
+}
+
+.page:has(.compact-data-table) .filter-row .el-divider--vertical,
+.page:has(.compact-data-table) .page-header .el-divider--vertical {
+  margin: 0 6px;
+  height: 18px;
+}
+
+.page:has(.compact-data-table) .pagination-bar {
+  margin-top: 6px;
+}
+
+.page:has(.compact-data-table) .pagination-bar .el-pagination {
+  font-size: 12px;
+}
+
+.page:has(.compact-data-table) .pagination-bar .el-pagination button,
+.page:has(.compact-data-table) .pagination-bar .el-pager li {
+  min-width: 26px;
+  height: 26px;
+  line-height: 26px;
+  font-size: 12px;
+}
+
+/* 凭证录入：科目负数试算弹框 */
+.no-negative-balance-messagebox {
+  width: 620px;
+  max-width: 92vw;
+}
+
+.no-negative-balance-messagebox .el-message-box__message {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.no-negative-balance-messagebox .el-message-box__content {
+  padding-top: 12px;
+}
+
+/* 自动结转：生成 / 反结转确认弹框 */
+.auto-transfer-confirm-messagebox,
+.revoke-transfer-messagebox {
+  width: 520px;
+  max-width: 92vw;
+}
+
+.auto-transfer-confirm-messagebox .el-message-box__message,
+.revoke-transfer-messagebox .el-message-box__message {
+  max-height: 60vh;
+  overflow-y: auto;
+}
+
+.auto-transfer-confirm-messagebox .el-message-box__content,
+.revoke-transfer-messagebox .el-message-box__content {
+  padding-top: 12px;
 }

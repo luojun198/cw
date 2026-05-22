@@ -1,5 +1,9 @@
 <template>
-  <div class="print-preview">
+  <div
+    class="print-preview"
+    :data-paper-width="template.paper_width"
+    :data-paper-height="template.paper_height"
+  >
     <div class="preview-container">
       <div class="print-page" :style="pageStyle">
         <!-- 渲染非表格字段元素 -->
@@ -43,7 +47,9 @@
                   :key="col.field"
                   :style="getColumnCellStyle(col, element)"
                 >
-                  {{ row ? formatEntryField(row, col.field, element.numberFormat || 'thousand') : '' }}
+                  {{
+                    row ? formatEntryField(row, col.field, element.numberFormat || 'thousand') : ''
+                  }}
                 </td>
               </tr>
               <!-- 合计行 -->
@@ -65,8 +71,33 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, onUnmounted } from 'vue'
 import type { PrintTemplate, VoucherPrintData, FieldElement, TableColumn } from '@/types/print'
+import {
+  getDataRowsPerPage,
+  normalizePrintTemplate,
+} from '@/utils/printTemplate'
+
+let globalPrintStyle: HTMLStyleElement | null = null
+let printStyleRefCount = 0
+
+function ensurePrintPageStyle(width: number, height: number) {
+  if (!globalPrintStyle) {
+    globalPrintStyle = document.createElement('style')
+    globalPrintStyle.setAttribute('data-print-page-style', '')
+    document.head.appendChild(globalPrintStyle)
+  }
+  globalPrintStyle.textContent = `@media print { @page { margin: 0; size: ${width}mm ${height}mm; } }`
+  printStyleRefCount++
+}
+
+function removePrintPageStyle() {
+  printStyleRefCount = Math.max(0, printStyleRefCount - 1)
+  if (printStyleRefCount <= 0 && globalPrintStyle) {
+    document.head.removeChild(globalPrintStyle)
+    globalPrintStyle = null
+  }
+}
 
 interface Props {
   template: PrintTemplate
@@ -75,43 +106,56 @@ interface Props {
 
 const props = defineProps<Props>()
 
+const normalizedTemplate = computed(() => normalizePrintTemplate(props.template))
+
+// 生命周期：动态注入 @page 打印纸张尺寸
+onMounted(() => {
+  ensurePrintPageStyle(props.template.paper_width, props.template.paper_height)
+})
+
+onUnmounted(() => {
+  removePrintPageStyle()
+})
+
 // 页面样式
 const pageStyle = computed(() => ({
-  width: `${props.template.paper_width}mm`,
-  height: `${props.template.paper_height}mm`,
-  padding: `${props.template.margin_top}mm ${props.template.margin_right}mm ${props.template.margin_bottom}mm ${props.template.margin_left}mm`,
-  position: 'relative'
+  width: `${normalizedTemplate.value.paper_width}mm`,
+  height: `${normalizedTemplate.value.paper_height}mm`,
+  padding: `${normalizedTemplate.value.margin_top}mm ${normalizedTemplate.value.margin_right}mm ${normalizedTemplate.value.margin_bottom}mm ${normalizedTemplate.value.margin_left}mm`,
+  position: 'relative' as const,
+  boxSizing: 'border-box' as const,
 }))
 
 // 非表格元素
-const nonTableElements = computed(() => 
-  props.template.elements.filter(el => el.type !== 'table')
+const nonTableElements = computed(() =>
+  normalizedTemplate.value.elements.filter(el => el.type !== 'table')
 )
 
 // 表格元素
-const tableElements = computed(() => 
-  props.template.elements.filter(el => el.type === 'table')
+const tableElements = computed(() =>
+  normalizedTemplate.value.elements.filter(el => el.type === 'table')
 )
 
 // 获取元素样式
 function getElementStyle(element: FieldElement) {
-    const isTable = element.type === 'table'
-    return {
-      position: 'absolute',
-      left: `${element.x}mm`,
-      top: `${element.y}mm`,
-      width: `${element.width}mm`,
-      height: isTable ? 'auto' : `${element.height}mm`,
-      fontSize: `${element.fontSize}pt`,
-      fontWeight: element.fontWeight,
-      textAlign: element.align,
-      display: 'flex',
-      alignItems: isTable ? 'flex-start' : 'center',
-      justifyContent: element.align === 'center' ? 'center' : element.align === 'right' ? 'flex-end' : 'flex-start',
-      overflow: isTable ? 'visible' : 'hidden',
-      whiteSpace: isTable ? 'normal' : 'nowrap'
-    }
+  const isTable = element.type === 'table'
+  return {
+    position: 'absolute' as const,
+    left: `${element.x}mm`,
+    top: `${element.y}mm`,
+    width: `${element.width}mm`,
+    height: `${element.height}mm`,
+    fontSize: `${element.fontSize}pt`,
+    fontWeight: element.fontWeight as 'normal' | 'bold',
+    textAlign: element.align as 'left' | 'center' | 'right',
+    display: isTable ? ('block' as const) : ('flex' as const),
+    alignItems: isTable ? undefined : ('center' as const),
+    justifyContent:
+      element.align === 'center' ? ('center' as const) : element.align === 'right' ? ('flex-end' as const) : ('flex-start' as const),
+    overflow: 'visible' as const,
+    whiteSpace: isTable ? ('normal' as const) : ('nowrap' as const),
   }
+}
 
 // 凭证类型简称映射
 const typeAbbr: Record<string, string> = {
@@ -148,47 +192,50 @@ function renderElement(element: FieldElement): string {
     case 'text':
     case 'total_label':
       return element.text || ''
-    
+
     case 'unit_name':
     case 'account_set_name':
       return props.voucherData.account_set_name || ''
-    
+
     case 'voucher_no': {
-      const base = formatVoucherNo(props.voucherData.voucher_no || '', props.voucherData.voucher_type || '')
+      const base = formatVoucherNo(
+        props.voucherData.voucher_no || '',
+        props.voucherData.voucher_type || ''
+      )
       const totalPages = props.voucherData.totalPages || 1
       if (totalPages > 1) {
         return `${base}  ${props.voucherData.pageIndex}/${totalPages}`
       }
       return base
     }
-    
+
     case 'date':
       return formatDate(props.voucherData.date, element.dateFormat || 'YYYY-MM-DD')
-    
+
     case 'voucher_type':
       return props.voucherData.voucher_type || ''
-    
+
     case 'attachments':
       return `${props.voucherData.attachments || 0}`
-    
+
     case 'total_debit':
       return formatNumber(props.voucherData.total_debit, element.numberFormat || 'thousand')
-    
+
     case 'total_credit':
       return formatNumber(props.voucherData.total_credit, element.numberFormat || 'thousand')
-    
+
     case 'signature_maker':
       return props.voucherData.maker || ''
-    
+
     case 'signature_auditor':
       return props.voucherData.auditor || ''
-    
+
     case 'signature_poster':
       return props.voucherData.poster || ''
-    
+
     case 'signature_supervisor':
       return props.voucherData.supervisor || ''
-    
+
     default:
       return ''
   }
@@ -197,12 +244,12 @@ function renderElement(element: FieldElement): string {
 // 格式化日期
 function formatDate(date: string, format: string): string {
   if (!date) return ''
-  
+
   const d = new Date(date)
   const year = d.getFullYear()
   const month = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
-  
+
   switch (format) {
     case 'YYYY年MM月DD日':
       return `${year}年${month}月${day}日`
@@ -217,7 +264,7 @@ function formatDate(date: string, format: string): string {
 // 格式化数字
 function formatNumber(value: number, format: string): string {
   if (value === 0 || value === null || value === undefined) return ''
-  
+
   switch (format) {
     case 'thousand':
       return value.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -237,7 +284,7 @@ function visibleColumns(element: FieldElement) {
 // 获取表格明细行数据（固定 printRows-1 行，不足补 null 空行）
 function getTableRows(element: FieldElement): (any | null)[] {
   const totalRows = element.printRows || 6
-  const dataRows = totalRows - 1  // 最后一行留给合计
+  const dataRows = totalRows - 1 // 最后一行留给合计
   // 优先使用分页后的 pageEntries，否则回退到全部 entries
   const entries = props.voucherData.pageEntries || props.voucherData.entries || []
   const rows: (any | null)[] = []
@@ -281,8 +328,7 @@ function getCumulativeDebit(): number {
   // 累计 = 前面所有页的小计 + 当前页小计
   // 由于每页的 pageEntries 已经切好，用 entries 按页数累加
   const entries = props.voucherData.entries || []
-  const tableEl = props.template.elements.find(el => el.type === 'table')
-  const rowsPerPage = (tableEl?.printRows || 6) - 1
+  const rowsPerPage = getDataRowsPerPage(normalizedTemplate.value)
   const endIdx = pageIndex * rowsPerPage
   return entries.slice(0, endIdx).reduce((sum, e) => sum + (e.debit || 0), 0)
 }
@@ -293,21 +339,24 @@ function getCumulativeCredit(): number {
   const pageIndex = props.voucherData.pageIndex || 1
   if (totalPages <= 1) return props.voucherData.total_credit
   const entries = props.voucherData.entries || []
-  const tableEl = props.template.elements.find(el => el.type === 'table')
-  const rowsPerPage = (tableEl?.printRows || 6) - 1
+  const rowsPerPage = getDataRowsPerPage(normalizedTemplate.value)
   const endIdx = pageIndex * rowsPerPage
   return entries.slice(0, endIdx).reduce((sum, e) => sum + (e.credit || 0), 0)
 }
 
 // 合计行单元格样式
-function getTotalCellStyle(col: TableColumn, element: FieldElement, colIdx: number) {
+function getTotalCellStyle(col: TableColumn, element: FieldElement, _colIdx: number) {
   return {
     width: formatCellWidth(col.width),
-    textAlign: col.field === 'summary' ? 'center' : col.align,
+    textAlign: (col.field === 'summary' ? 'center' : (col.align || 'left')) as 'left' | 'center' | 'right',
+    verticalAlign: (col.verticalAlign || 'middle') as 'top' | 'middle' | 'bottom',
     border: `${element.borderWidth || 1}px solid #000`,
-    padding: '1mm',
+    paddingTop: `${col.paddingTop ?? 1}mm`,
+    paddingBottom: `${col.paddingBottom ?? 1}mm`,
+    paddingLeft: `${col.paddingLeft ?? 1}mm`,
+    paddingRight: `${col.paddingRight ?? 1}mm`,
     height: `${element.rowHeight || 8}mm`,
-    fontWeight: 'bold'
+    fontWeight: 'bold',
   }
 }
 
@@ -315,8 +364,8 @@ function getTotalCellStyle(col: TableColumn, element: FieldElement, colIdx: numb
 function getTableStyle(element: FieldElement) {
   return {
     width: '100%',
-    borderCollapse: 'collapse',
-    fontSize: `${element.fontSize}pt`
+    borderCollapse: 'collapse' as const,
+    fontSize: `${element.fontSize}pt`,
   }
 }
 
@@ -331,12 +380,13 @@ function formatCellWidth(width: string | number): string {
 function getColumnHeaderStyle(col: TableColumn, element: FieldElement) {
   return {
     width: formatCellWidth(col.width),
-    textAlign: col.align,
+    textAlign: 'center' as const, // 列头永远居中
+    verticalAlign: 'middle' as const, // 列头永远垂直居中
     border: `${element.borderWidth || 1}px solid #000`,
-    padding: '1mm',
+    padding: '1mm', // 列头使用固定内边距
     fontWeight: 'bold',
     backgroundColor: '#f5f5f5',
-    height: `${element.rowHeight || 8}mm`
+    height: `${element.rowHeight || 8}mm`,
   }
 }
 
@@ -344,10 +394,14 @@ function getColumnHeaderStyle(col: TableColumn, element: FieldElement) {
 function getColumnCellStyle(col: TableColumn, element: FieldElement) {
   return {
     width: formatCellWidth(col.width),
-    textAlign: col.align,
+    textAlign: (col.align || 'left') as 'left' | 'center' | 'right',
+    verticalAlign: (col.verticalAlign || 'middle') as 'top' | 'middle' | 'bottom',
     border: `${element.borderWidth || 1}px solid #000`,
-    padding: '1mm',
-    height: `${element.rowHeight || 8}mm`
+    paddingTop: `${col.paddingTop ?? 1}mm`,
+    paddingBottom: `${col.paddingBottom ?? 1}mm`,
+    paddingLeft: `${col.paddingLeft ?? 1}mm`,
+    paddingRight: `${col.paddingRight ?? 1}mm`,
+    height: `${element.rowHeight || 8}mm`,
   }
 }
 
@@ -361,7 +415,7 @@ function formatEntryField(entry: any, field: string, numberFormat: string): stri
     }
     return ''
   }
-  
+
   switch (field) {
     case 'summary':
       return entry.summary || ''
@@ -369,6 +423,8 @@ function formatEntryField(entry: any, field: string, numberFormat: string): stri
       return entry.account_code || ''
     case 'account_name':
       return entry.account_name || ''
+    case 'account':
+      return [entry.account_code, entry.account_name].filter(Boolean).join(' ')
     case 'debit':
       return entry.debit !== 0 ? formatNumber(entry.debit, numberFormat) : ''
     case 'credit':
@@ -400,6 +456,7 @@ function formatEntryField(entry: any, field: string, numberFormat: string): stri
   background: #fff;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
   font-family: 'SimSun', 'Microsoft YaHei', sans-serif;
+  box-sizing: border-box;
 }
 
 .field-element {
@@ -416,17 +473,42 @@ function formatEntryField(entry: any, field: string, numberFormat: string): stri
 
 @media print {
   .print-preview {
-    padding: 0;
-    background: #fff;
+    padding: 0 !important;
+    background: #fff !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
+  }
+
+  .preview-container {
+    display: block !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    width: 100% !important;
+    height: 100% !important;
   }
 
   .print-page {
-    box-shadow: none;
+    box-shadow: none !important;
     page-break-after: always;
+    margin: 0 !important;
+    /* 确保凭证页面尺寸与模版一致 */
+    position: relative !important;
   }
 
   .print-page:last-child {
     page-break-after: auto;
+  }
+
+  /* 设置打印页面尺寸 - 移除所有边距 */
+  @page {
+    margin: 0;
+  }
+
+  /* 确保所有元素正确显示 */
+  .field-element,
+  .table-element {
+    page-break-inside: avoid;
   }
 }
 </style>

@@ -48,7 +48,6 @@
         <div class="signature-item"><span>制单</span><em>{{ detail.maker_name || '' }}</em></div>
         <div class="signature-item"><span>审核</span><em>{{ detail.auditor_name || '' }}</em></div>
         <div class="signature-item"><span>记账</span><em>{{ detail.poster_name || '' }}</em></div>
-        <div class="signature-item"><span>出纳</span><em></em></div>
       </div>
     </div>
 
@@ -58,7 +57,7 @@
           <el-button v-if="detail?.status === 'draft'" type="success" @click="handleAudit">审核</el-button>
           <el-button v-if="detail?.status === 'audited'" type="warning" @click="handleUnAudit">反审核</el-button>
           <el-button v-if="detail?.status === 'audited'" type="primary" @click="handlePost">记账</el-button>
-          <el-button v-if="detail?.status === 'posted'" type="warning" @click="handleUnPost">反记账</el-button>
+          <el-button v-if="detail?.status === 'posted' && canUnpost" type="warning" @click="handleUnPost">反记账</el-button>
         </div>
         <div class="footer-right">
           <el-button v-if="detail?.status !== 'draft'" type="primary" @click="handleEdit">编辑</el-button>
@@ -73,13 +72,17 @@
 import { ref, computed, watch } from 'vue'
 import { formatMoney } from '@/composables/useVoucherAuditData'
 import request from '@/api/request'
+import { filterAuxCategoriesForAccount } from '@/utils/accountCashFlow'
 
 interface Props {
   modelValue: boolean
   detail: any
+  canUnpost?: boolean
 }
 
-const props = defineProps<Props>()
+const props = withDefaults(defineProps<Props>(), {
+  canUnpost: true,
+})
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   audit: [row: any]
@@ -99,7 +102,7 @@ watch(visible, val => { emit('update:modelValue', val) })
 async function fetchAuxCategories() {
   try {
     const res = await request.get<any[]>('/base/aux-categories')
-    auxCategories.value = res.data || []
+    auxCategories.value = filterAuxCategoriesForAccount(res.data || [])
   } catch { /* ignore */ }
 }
 fetchAuxCategories()

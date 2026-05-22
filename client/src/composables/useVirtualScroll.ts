@@ -1,4 +1,4 @@
-import { ref, computed, watch } from 'vue'
+import { ref, computed } from 'vue'
 
 export interface VirtualScrollOptions {
   itemHeight: number // 每行高度
@@ -102,7 +102,7 @@ export function useVirtualScroll<T>(
   }
 
   // 滚动到指定索引
-  function scrollToIndex(index: number, behavior: ScrollBehavior = 'smooth') {
+  function scrollToIndex(index: number, _behavior: ScrollBehavior = 'smooth') {
     const top = index * itemHeight
     scrollTop.value = top
     // 如果有实际的 DOM 元素，也滚动它

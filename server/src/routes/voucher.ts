@@ -1,9 +1,10 @@
-import { Router } from 'express'
+import { Router, type Response } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import dayjs from 'dayjs'
-import { getDb } from '../db/index.ts'
-import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.ts'
-import { buildVoucherListQuery } from '../services/voucherQuery.ts'
+import { getDb } from '../db/index.js'
+import { authMiddleware, AuthRequest, requirePermission, operationLog } from '../middleware/index.js'
+import { buildVoucherListQuery } from '../services/voucherQuery.js'
+import { yuanToCents } from '../utils/amountUtils.js'
 import {
   attachVoucherEntries,
   buildVoucherEntryPayloads,
@@ -16,16 +17,55 @@ import {
   getVoucherDetail,
   getVoucherUpdateBalanceError,
   isPostedVoucher,
+  createRealtimeNoNegativeBalanceGetters,
   loadVoucherAuxiliaryData,
   replaceVoucherEntries,
   validateVoucherEntriesNoNegativeBalance,
   validateVoucherEntryCount,
-} from '../services/voucherEntry.ts'
+  validateVoucherEntriesCashFlow,
+  VOUCHER_ENTRY_INSERT_SQL,
+  type VoucherEntryInput,
+  type NoNegativeBalanceCheckResult,
+} from '../services/voucherEntry.js'
 import fs from 'fs/promises'
 import path from 'path'
 import multer from 'multer'
 
 const router = Router()
+
+/** 禁止负数余额：期初 + 全部凭证实时汇总；启用辅助核算时按各辅助项目分项校验 */
+function validateNoNegativeBalance(
+  db: ReturnType<typeof getDb>,
+  accountSetId: string,
+  entries: VoucherEntryInput[],
+  year: number,
+  period: number,
+  excludeVoucherId?: string
+) {
+  const { categories } = loadVoucherAuxiliaryData({ db, accountSetId })
+  const realtimeGetters = createRealtimeNoNegativeBalanceGetters(db, {
+    accountSetId,
+    year,
+    period,
+    categories,
+    excludeVoucherId,
+  })
+  return validateVoucherEntriesNoNegativeBalance({
+    entries,
+    getAccountById: accountId =>
+      db.prepare('SELECT * FROM accounts WHERE id=?').get(accountId) as any,
+    ...realtimeGetters,
+  })
+}
+
+function respondNoNegativeBalanceError(res: Response, result: NoNegativeBalanceCheckResult) {
+  return res.status(400).json({
+    code: 400,
+    codeType: 'NO_NEGATIVE_BALANCE',
+    message: result.message,
+    violations: result.violations,
+  })
+}
 
 // 附件上传配置
 const ALLOWED_ATTACHMENT_MIMES = [
@@ -96,6 +136,7 @@ router.get('/next-voucher-no', (req: AuthRequest, res) => {
 // 修改单个凭证编号（含冲突检测）
 router.put(
   '/vouchers/:id/number',
+  requirePermission('voucher:entry'),
   operationLog('修改凭证编号', '凭证管理'),
   (req: AuthRequest, res) => {
     const { id } = req.params
@@ -145,7 +186,7 @@ router.put(
 )
 
 // 批量重新排号
-router.post('/vouchers/renumber', operationLog('重新排号', '凭证管理'), (req: AuthRequest, res) => {
+router.post('/vouchers/renumber', requirePermission('voucher:entry'), operationLog('重新排号', '凭证管理'), (req: AuthRequest, res) => {
   const { year, period, start_no, voucher_type_id } = req.body
   if (!year || !period) {
     return res.status(400).json({ code: 400, message: '请指定年和期间' })
@@ -203,7 +244,7 @@ router.post('/vouchers/renumber', operationLog('重新排号', '凭证管理'), 
 })
 
 // 插入凭证（在指定凭证前插入，自动调整后续凭证号）
-router.post('/vouchers/insert', operationLog('插入凭证', '凭证管理'), (req: AuthRequest, res) => {
+router.post('/vouchers/insert', requirePermission('voucher:entry'), operationLog('插入凭证', '凭证管理'), (req: AuthRequest, res) => {
   const { target_voucher_id, voucher } = req.body
 
   if (!target_voucher_id) {
@@ -241,6 +282,9 @@ router.post('/vouchers/insert', operationLog('插入凭证', '凭证管理'), (r
 
   // 插行允许空分录
   if (entries.length > 0) {
+    const finalVoucherDate = voucher_date || targetVoucher.voucher_date
+    const year = dayjs(finalVoucherDate).year()
+    const period = dayjs(finalVoucherDate).month() + 1
     const balanceError = getVoucherBalanceError(entries)
     if (balanceError) {
       return res.status(400).json({ code: 400, message: balanceError })
@@ -251,14 +295,24 @@ router.post('/vouchers/insert', operationLog('插入凭证', '凭证管理'), (r
       return res.status(400).json({ code: 400, message: entryCountError })
     }
 
-    const negativeError = validateVoucherEntriesNoNegativeBalance({
+    const negativeError = validateNoNegativeBalance(
+      db,
+      req.accountSetId || '',
       entries,
-      getAccountById: accountId =>
-        db.prepare('SELECT * FROM accounts WHERE id=?').get(accountId) as any,
-      getBalanceByAccountId: () => 0,
-    })
+      year,
+      period
+    )
     if (negativeError) {
-      return res.status(400).json({ code: 400, message: negativeError })
+      return respondNoNegativeBalanceError(res, negativeError)
+    }
+
+    const cashFlowError = validateVoucherEntriesCashFlow(
+      db,
+      req.accountSetId || '',
+      entries
+    )
+    if (cashFlowError) {
+      return res.status(400).json({ code: 400, message: cashFlowError })
     }
   }
 
@@ -348,12 +402,10 @@ router.post('/vouchers/insert', operationLog('插入凭证', '凭证管理'), (r
     )
 
     // 3. 插入分录（使用和新建凭证相同的完整 INSERT）
-    const insertEntryStmt = db.prepare(`
-      INSERT INTO voucher_entries (id, account_set_id, voucher_id, seq, account_id, account_code, account_name, direction, amount, summary, dept_id, dept_name, project_id, project_name, supplier_id, supplier_name, person_id, person_name, func_class_id, func_class_name, aux_data)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `)
+    const insertEntryStmt = db.prepare(VOUCHER_ENTRY_INSERT_SQL)
 
     const entryPayloads = buildVoucherEntryPayloads({
+      db,
       accountSetId: req.accountSetId || '',
       voucherId,
       entries,
@@ -381,7 +433,7 @@ router.post('/vouchers/insert', operationLog('插入凭证', '凭证管理'), (r
   })
 })
 
-router.post('/vouchers', operationLog('录入凭证', '凭证管理'), (req: AuthRequest, res) => {
+router.post('/vouchers', requirePermission('voucher:entry'), operationLog('录入凭证', '凭证管理'), (req: AuthRequest, res) => {
   const { voucher_type_id, voucher_date, entries, remark } = req.body
   const entryCountError = validateVoucherEntryCount(entries)
   if (!voucher_date || entryCountError) {
@@ -410,85 +462,149 @@ router.post('/vouchers', operationLog('录入凭证', '凭证管理'), (req: Aut
     })
   }
 
+  // 凭证时序控制检查（仅针对新增凭证）
+  const timeControlParam = db.prepare(
+    'SELECT param_value FROM system_params WHERE account_set_id = ? AND param_key = ?'
+  ).get(req.accountSetId, 'voucher_time_control') as { param_value: string } | undefined
+
+  if (timeControlParam?.param_value === 'true') {
+    // 查询该账套中最大的凭证日期（新增凭证不需要排除自身）
+    const maxDateRow = db.prepare(`
+      SELECT MAX(voucher_date) as max_date
+      FROM vouchers
+      WHERE account_set_id = ?
+        AND status IN ('draft', 'audited', 'posted')
+    `).get(req.accountSetId) as { max_date: string | null } | undefined
+
+    const maxDate = maxDateRow?.max_date
+
+    // 如果存在凭证，且当前凭证日期早于最大日期，则拒绝
+    if (maxDate && voucher_date < maxDate) {
+      return res.status(400).json({
+        error: `凭证时序控制已开启，不允许录入早于 ${maxDate} 的凭证。当前凭证日期：${voucher_date}`,
+        code: 'VOUCHER_DATE_OUT_OF_ORDER',
+        maxDate: maxDate,
+        currentDate: voucher_date
+      })
+    }
+  }
+
   const { debitTotal } = calculateVoucherTotals(entries)
   const balanceError = getVoucherBalanceError(entries)
   if (balanceError) {
     return res.status(400).json({ code: 400, message: balanceError })
   }
 
-  const { effectiveTypeId, voucherNo } = getNextVoucherNo({
+  const noNegativeBalanceError = validateNoNegativeBalance(
     db,
-    accountSetId: req.accountSetId || '',
-    year,
-    period,
-    voucherTypeId: voucher_type_id,
-  })
-
-  const voucherId = uuidv4()
-
-  const noNegativeBalanceError = validateVoucherEntriesNoNegativeBalance({
+    req.accountSetId || '',
     entries,
-    getAccountById: accountId =>
-      db.prepare('SELECT * FROM accounts WHERE id=?').get(accountId) as any,
-    getBalanceByAccountId: accountId => {
-      const balance = db
-        .prepare(
-          `
-          SELECT end_balance FROM account_balances WHERE account_set_id=? AND account_id=? AND year=? AND period=?
-          ORDER BY year DESC, period DESC LIMIT 1
-        `
-        )
-        .get(req.accountSetId, accountId, year, period) as any
-      return balance?.end_balance || 0
-    },
-  })
+    year,
+    period
+  )
   if (noNegativeBalanceError) {
-    return res.status(400).json({ code: 400, message: noNegativeBalanceError })
+    return respondNoNegativeBalanceError(res, noNegativeBalanceError)
   }
 
-  const insertVoucher = db.prepare(`
-    INSERT INTO vouchers (id, account_set_id, voucher_no, voucher_type_id, voucher_date, year, period, total_amount, maker_id, maker_name, remark)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `)
-  const insertEntry = db.prepare(`
-    INSERT INTO voucher_entries (id, account_set_id, voucher_id, seq, account_id, account_code, account_name, direction, amount, summary, dept_id, dept_name, project_id, project_name, supplier_id, supplier_name, person_id, person_name, func_class_id, func_class_name, aux_data)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `)
+  const cashFlowError = validateVoucherEntriesCashFlow(db, req.accountSetId || '', entries)
+  if (cashFlowError) {
+    return res.status(400).json({ code: 400, message: cashFlowError })
+  }
 
   const { categories, itemMap } = loadVoucherAuxiliaryData({
     db,
     accountSetId: req.accountSetId || '',
   })
 
-  const createVoucher = db.transaction(() => {
-    insertVoucher.run(
-      voucherId,
-      req.accountSetId,
-      voucherNo,
-      effectiveTypeId,
-      voucher_date,
-      year,
-      period,
-      debitTotal,
-      req.userId,
-      req.userName,
-      remark
-    )
-    const entryPayloads = buildVoucherEntryPayloads({
-      accountSetId: req.accountSetId || '',
-      voucherId,
-      entries,
-      categories,
-      itemMap,
-    })
+  // 并发控制：使用 BEGIN IMMEDIATE 排它锁 + 自动重试机制（最多3次）
+  const MAX_RETRIES = 3
+  let lastError: any = null
 
-    entryPayloads.forEach(payload => {
-      insertEntry.run(...payload)
-    })
+  for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+    try {
+      // 使用 BEGIN IMMEDIATE 获取排它锁，防止并发冲突
+      db.exec('BEGIN IMMEDIATE')
+
+      try {
+        // 在锁保护下获取凭证号
+        const { effectiveTypeId, voucherNo } = getNextVoucherNo({
+          db,
+          accountSetId: req.accountSetId || '',
+          year,
+          period,
+          voucherTypeId: voucher_type_id,
+        })
+
+        const voucherId = uuidv4()
+
+        const insertVoucher = db.prepare(`
+          INSERT INTO vouchers (id, account_set_id, voucher_no, voucher_type_id, voucher_date, year, period, total_amount, maker_id, maker_name, remark)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `)
+        const insertEntry = db.prepare(VOUCHER_ENTRY_INSERT_SQL)
+
+        insertVoucher.run(
+          voucherId,
+          req.accountSetId,
+          voucherNo,
+          effectiveTypeId,
+          voucher_date,
+          year,
+          period,
+          debitTotal,
+          req.userId,
+          req.userName,
+          remark
+        )
+        const entryPayloads = buildVoucherEntryPayloads({
+          db,
+          accountSetId: req.accountSetId || '',
+          voucherId,
+          entries,
+          categories,
+          itemMap,
+        })
+
+        entryPayloads.forEach(payload => {
+          insertEntry.run(...payload)
+        })
+
+        // 提交事务
+        db.exec('COMMIT')
+
+        // 成功，返回结果
+        return res.json({
+          code: 0,
+          message: attempt > 0 ? `凭证录入成功（自动重试${attempt}次）` : '凭证录入成功',
+          data: { id: voucherId, voucherNo }
+        })
+      } catch (innerError: any) {
+        // 回滚事务
+        try {
+          db.exec('ROLLBACK')
+        } catch (rollbackError) {
+          // 忽略回滚错误（可能事务已结束）
+        }
+        throw innerError
+      }
+    } catch (error: any) {
+      lastError = error
+      // 检查是否是唯一约束冲突（凭证号重复）
+      if (error.code === 'SQLITE_CONSTRAINT' && error.message.includes('UNIQUE')) {
+        // 凭证号冲突，继续重试
+        continue
+      }
+      // 其他错误，直接抛出
+      throw error
+    }
+  }
+
+  // 重试次数用完，返回错误
+  return res.status(500).json({
+    code: 500,
+    message: `凭证号冲突，已重试${MAX_RETRIES}次仍失败，请稍后再试`,
+    error: lastError?.message,
   })
-  createVoucher()
-
-  res.json({ code: 0, message: '凭证录入成功', data: { id: voucherId, voucherNo } })
 })
 
 // ===================== 凭证查询 =====================
@@ -517,47 +633,57 @@ router.get('/vouchers', (req: AuthRequest, res) => {
       ? voucher_type_ids.split(',').filter(id => id.trim())
       : undefined
 
-  // 提取辅助核算项目筛选参数（格式：aux_<categoryId>=<itemId>）
-  const auxItemsInput: Record<string, string> = {}
+  // 提取辅助核算项目筛选参数（格式：aux_<categoryId>=<itemId> 或 aux_<categoryId>=<itemId1>,<itemId2>）
+  const auxItemsInput: Record<string, string | string[]> = {}
   // 提取辅助核算自定义字段筛选参数（格式：aux_field_<categoryId>_<fieldKey>=<value>）
   const auxFieldsInput: Record<string, string> = {}
   for (const [key, value] of Object.entries(rest)) {
     if (key.startsWith('aux_field_') && typeof value === 'string' && value) {
       const fieldKey = key.substring(10) // 去掉 aux_field_ 前缀，得到 categoryId_fieldKey
       auxFieldsInput[fieldKey] = value
-    } else if (key.startsWith('aux_') && typeof value === 'string' && value) {
+    } else if (key.startsWith('aux_')) {
       const categoryId = key.substring(4)
-      auxItemsInput[categoryId] = value
+      // 支持字符串（逗号分隔）或数组
+      if (typeof value === 'string' && value) {
+        auxItemsInput[categoryId] = value
+      } else if (Array.isArray(value) && value.length > 0) {
+        auxItemsInput[categoryId] = value.filter((v): v is string => typeof v === 'string')
+      }
     }
   }
 
   // 将 categoryId 转换为 categoryCode（aux_data 使用 code 作为 key）
-  const auxItems: Record<string, string> = {}
+  const auxItems: Record<string, number[]> = {}
   const auxFields: Record<string, string> = {}
-  
+
   if (Object.keys(auxItemsInput).length > 0 || Object.keys(auxFieldsInput).length > 0) {
     const categoryIds = [
       ...Object.keys(auxItemsInput),
       ...Object.keys(auxFieldsInput).map(k => k.split('_')[0])
     ]
     const uniqueCategoryIds = [...new Set(categoryIds)]
-    
+
     if (uniqueCategoryIds.length > 0) {
       const placeholders = uniqueCategoryIds.map(() => '?').join(',')
       const categories = db
         .prepare(`SELECT id, code FROM aux_categories WHERE id IN (${placeholders})`)
         .all(...uniqueCategoryIds) as Array<{ id: string; code: string }>
-      
+
       const categoryCodeMap = new Map(categories.map(c => [c.id, c.code]))
-      
-      // 转换 auxItems：categoryId -> categoryCode
-      for (const [categoryId, itemId] of Object.entries(auxItemsInput)) {
+
+      // 转换 auxItems：categoryId -> categoryCode，支持字符串（逗号分隔）或数组
+      for (const [categoryId, itemIds] of Object.entries(auxItemsInput)) {
         const code = categoryCodeMap.get(categoryId)
         if (code) {
-          auxItems[code] = itemId
+          // 将字符串或数组统一转换为数组
+          if (typeof itemIds === 'string') {
+            auxItems[code] = itemIds.split(',').map(id => parseInt(id.trim(), 10))
+          } else if (Array.isArray(itemIds)) {
+            auxItems[code] = itemIds.map(id => typeof id === 'string' ? parseInt(id, 10) : id)
+          }
         }
       }
-      
+
       // 转换 auxFields：categoryId_fieldKey -> categoryCode_fieldKey
       for (const [key, value] of Object.entries(auxFieldsInput)) {
         const [categoryId, ...fieldKeyParts] = key.split('_')
@@ -587,7 +713,7 @@ router.get('/vouchers', (req: AuthRequest, res) => {
     auxFields: Object.keys(auxFields).length > 0 ? auxFields : undefined,
     sortField: sortField as string | undefined,
     sortOrder: sortOrder as string | undefined,
-  })
+  }, db)
 
   const total = (db.prepare(query.countSql).get(...query.countParams) as any).count
   const list = db.prepare(query.listSql).all(...query.listParams) as any[]
@@ -618,22 +744,85 @@ router.get('/vouchers/:id', (req: AuthRequest, res) => {
   res.json({ code: 0, data: voucher })
 })
 
-router.put('/vouchers/:id', operationLog('修改凭证', '凭证管理'), (req: AuthRequest, res) => {
+router.put('/vouchers/:id', requirePermission('voucher:entry'), operationLog('修改凭证', '凭证管理'), (req: AuthRequest, res) => {
   const { id } = req.params
-  const { entries, remark } = req.body
+  const { entries, remark, voucher_date, voucher_type_id, voucher_no } = req.body
   const db = getDb()
   const voucher = getVoucherById({ db, voucherId: id })
   if (!voucher) {
     return res.status(404).json({ code: 404, message: '凭证不存在' })
   }
   if (isPostedVoucher(voucher)) {
-    return res.status(400).json({ code: 400, message: '已过账凭证不能修改' })
+    return res.status(400).json({ code: 400, message: '已记账凭证不能修改' })
+  }
+
+  // 凭证号冲突检测
+  if (voucher_no && voucher_no !== voucher.voucher_no) {
+    const conflict = db
+      .prepare('SELECT id FROM vouchers WHERE voucher_no=? AND account_set_id=? AND id<>?')
+      .get(voucher_no, req.accountSetId, id) as any
+    if (conflict) {
+      return res.status(400).json({
+        code: 400,
+        message: `凭证号「${voucher_no}」已被其他凭证占用`,
+      })
+    }
+  }
+
+  // 凭证时序控制检查（如果修改了日期）
+  if (voucher_date && voucher_date !== voucher.voucher_date) {
+    const timeControlParam = db.prepare(
+      'SELECT param_value FROM system_params WHERE account_set_id = ? AND param_key = ?'
+    ).get(req.accountSetId, 'voucher_time_control') as { param_value: string } | undefined
+
+    if (timeControlParam?.param_value === 'true') {
+      // 查询该账套中最大的凭证日期（排除当前凭证）
+      const maxDateRow = db.prepare(`
+        SELECT MAX(voucher_date) as max_date
+        FROM vouchers
+        WHERE account_set_id = ?
+          AND status IN ('draft', 'audited', 'posted')
+          AND id != ?
+      `).get(req.accountSetId, id) as { max_date: string | null } | undefined
+
+      const maxDate = maxDateRow?.max_date
+
+      // 如果存在其他凭证，且修改后的日期早于最大日期，则拒绝
+      if (maxDate && voucher_date < maxDate) {
+        return res.status(400).json({
+          error: `凭证时序控制已开启，不允许修改为早于 ${maxDate} 的日期。修改后日期：${voucher_date}`,
+          code: 'VOUCHER_DATE_OUT_OF_ORDER',
+          maxDate: maxDate,
+          currentDate: voucher_date
+        })
+      }
+    }
   }
 
   const balanceError = getVoucherUpdateBalanceError(entries)
   if (balanceError) {
     return res.status(400).json({ code: 400, message: balanceError })
   }
+  const finalVoucherDate = voucher_date || voucher.voucher_date
+  const year = dayjs(finalVoucherDate).year()
+  const period = dayjs(finalVoucherDate).month() + 1
+  const noNegativeBalanceError = validateNoNegativeBalance(
+    db,
+    req.accountSetId || '',
+    entries,
+    year,
+    period,
+    id
+  )
+  if (noNegativeBalanceError) {
+    return respondNoNegativeBalanceError(res, noNegativeBalanceError)
+  }
+
+  const cashFlowError = validateVoucherEntriesCashFlow(db, req.accountSetId || '', entries)
+  if (cashFlowError) {
+    return res.status(400).json({ code: 400, message: cashFlowError })
+  }
+
   const { debitTotal } = calculateVoucherTotals(entries)
 
   const { categories, itemMap } = loadVoucherAuxiliaryData({
@@ -642,9 +831,20 @@ router.put('/vouchers/:id', operationLog('修改凭证', '凭证管理'), (req: 
   })
 
   const updateVoucher = db.transaction(() => {
+    // 更新所有字段
     db.prepare(
-      "UPDATE vouchers SET total_amount=?, remark=?, updated_at=datetime('now') WHERE id=?"
-    ).run(debitTotal, remark, id)
+      "UPDATE vouchers SET voucher_type_id=?, voucher_no=?, voucher_date=?, year=?, period=?, total_amount=?, remark=?, updated_at=datetime('now') WHERE id=?"
+    ).run(
+      voucher_type_id !== undefined ? (voucher_type_id || null) : voucher.voucher_type_id,
+      voucher_no || voucher.voucher_no,
+      finalVoucherDate,
+      year,
+      period,
+      debitTotal,
+      remark,
+      id
+    )
+
     replaceVoucherEntries({
       db,
       accountSetId: req.accountSetId || '',
@@ -661,6 +861,7 @@ router.put('/vouchers/:id', operationLog('修改凭证', '凭证管理'), (req: 
 // 修改已审核凭证（自动反审核-修改-重新审核）
 router.put(
   '/vouchers/:id/edit-audited',
+  requirePermission('voucher:entry'),
   operationLog('修改已审核凭证', '凭证管理'),
   (req: AuthRequest, res) => {
     const { id } = req.params
@@ -673,7 +874,7 @@ router.put(
     }
 
     if (isPostedVoucher(voucher)) {
-      return res.status(400).json({ code: 400, message: '已过账凭证不能修改，请先反过账' })
+      return res.status(400).json({ code: 400, message: '已记账凭证不能修改，请先反记账' })
     }
 
     // 检查是否已审核
@@ -685,6 +886,17 @@ router.put(
     const balanceError = getVoucherUpdateBalanceError(entries)
     if (balanceError) {
       return res.status(400).json({ code: 400, message: balanceError })
+    }
+    const noNegativeBalanceError = validateNoNegativeBalance(
+      db,
+      req.accountSetId || '',
+      entries,
+      voucher.year,
+      voucher.period,
+      id
+    )
+    if (noNegativeBalanceError) {
+      return respondNoNegativeBalanceError(res, noNegativeBalanceError)
     }
 
     const { debitTotal } = calculateVoucherTotals(entries)
@@ -734,12 +946,12 @@ router.put(
 
 // ===================== 凭证删除 =====================
 
-router.delete('/vouchers/:id', operationLog('删除凭证', '凭证管理'), (req: AuthRequest, res) => {
+router.delete('/vouchers/:id', requirePermission('voucher:entry'), operationLog('删除凭证', '凭证管理'), (req: AuthRequest, res) => {
   const { id } = req.params
   const db = getDb()
   const voucher = getVoucherById({ db, voucherId: id })
   if (voucher?.status === 'posted') {
-    return res.status(400).json({ code: 400, message: '已过账凭证不能删除' })
+    return res.status(400).json({ code: 400, message: '已记账凭证不能删除' })
   }
   deleteVoucherRecords(db, id)
   res.json({ code: 0, message: '删除成功' })
@@ -751,6 +963,7 @@ router.delete('/vouchers/:id', operationLog('删除凭证', '凭证管理'), (re
 router.post(
   '/vouchers/:voucherId/attachments',
   attachmentUpload.array('file'),
+  requirePermission('voucher:entry'),
   operationLog('上传凭证附件', '凭证管理'),
   async (req: AuthRequest, res) => {
     const { voucherId } = req.params
@@ -767,21 +980,34 @@ router.post(
       return res.status(404).json({ code: 404, message: '凭证不存在' })
     }
 
-    const uploadedFiles = await Promise.all(
-      (req.files as Express.Multer.File[]).map(async file => {
+    const uploadDir = path.join(process.cwd(), 'uploads', 'attachments')
+    await fs.mkdir(uploadDir, { recursive: true })
+
+    // 阶段 1：先把全部文件写到磁盘，任一失败即清理已写入的物理文件
+    const files = req.files as Express.Multer.File[]
+    const writtenPaths: string[] = []
+    const attachments: Array<{
+      id: string
+      account_set_id: string | undefined
+      voucher_id: string
+      filename: string
+      original_name: string
+      file_path: string
+      file_size: number
+      mime_type: string
+      created_by: string | undefined
+      created_at: string
+    }> = []
+
+    try {
+      for (const file of files) {
         const fileId = uuidv4()
         const ext = path.extname(file.originalname)
         const filename = `${fileId}${ext}`
-        const uploadDir = path.join(process.cwd(), 'uploads', 'attachments')
-
-        // 确保上传目录存在
-        await fs.mkdir(uploadDir, { recursive: true })
-
-        // 保存文件
         const filePath = path.join(uploadDir, filename)
         await fs.writeFile(filePath, file.buffer)
-
-        const attachment = {
+        writtenPaths.push(filePath)
+        attachments.push({
           id: fileId,
           account_set_id: accountSetId,
           voucher_id: voucherId,
@@ -790,39 +1016,62 @@ router.post(
           file_path: `/uploads/attachments/${filename}`,
           file_size: file.size,
           mime_type: file.mimetype,
-          created_by: req.user?.id,
+          created_by: req.userId,
           created_at: new Date().toISOString(),
+        })
+      }
+    } catch (err: any) {
+      // 写盘失败：清理已写入的物理文件
+      await Promise.all(
+        writtenPaths.map(p => fs.unlink(p).catch(() => undefined))
+      )
+      console.error('上传附件写盘失败:', err)
+      return res.status(500).json({ code: 500, message: '上传附件失败: ' + (err?.message || '未知错误') })
+    }
+
+    // 阶段 2：DB 写入用事务包裹；attachments 计数基于 COUNT(*) 重算，避免并发 +N 漂移
+    const insertStmt = db.prepare(
+      `INSERT INTO voucher_attachments
+       (id, account_set_id, voucher_id, filename, original_name, file_path, file_size, mime_type, created_by, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    const countStmt = db.prepare(
+      'SELECT COUNT(*) as count FROM voucher_attachments WHERE voucher_id = ?'
+    )
+    const updateCounterStmt = db.prepare(
+      'UPDATE vouchers SET attachments = ? WHERE id = ?'
+    )
+
+    try {
+      const persist = db.transaction(() => {
+        for (const a of attachments) {
+          insertStmt.run(
+            a.id,
+            a.account_set_id,
+            a.voucher_id,
+            a.filename,
+            a.original_name,
+            a.file_path,
+            a.file_size,
+            a.mime_type,
+            a.created_by,
+            a.created_at
+          )
         }
-
-        // 保存到数据库
-        db.prepare(
-          `INSERT INTO voucher_attachments
-           (id, account_set_id, voucher_id, filename, original_name, file_path, file_size, mime_type, created_by, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-        ).run(
-          attachment.id,
-          attachment.account_set_id,
-          attachment.voucher_id,
-          attachment.filename,
-          attachment.original_name,
-          attachment.file_path,
-          attachment.file_size,
-          attachment.mime_type,
-          attachment.created_by,
-          attachment.created_at
-        )
-
-        return attachment
+        const { count } = countStmt.get(voucherId) as { count: number }
+        updateCounterStmt.run(count, voucherId)
       })
-    )
+      persist()
+    } catch (err: any) {
+      // DB 失败：回滚磁盘文件
+      await Promise.all(
+        writtenPaths.map(p => fs.unlink(p).catch(() => undefined))
+      )
+      console.error('保存附件元数据失败:', err)
+      return res.status(500).json({ code: 500, message: '保存附件失败: ' + (err?.message || '未知错误') })
+    }
 
-    // 更新凭证附件计数
-    db.prepare('UPDATE vouchers SET attachments = attachments + ? WHERE id = ?').run(
-      uploadedFiles.length,
-      voucherId
-    )
-
-    res.json({ code: 0, data: uploadedFiles, message: `成功上传 ${uploadedFiles.length} 个文件` })
+    res.json({ code: 0, data: attachments, message: `成功上传 ${attachments.length} 个文件` })
   }
 )
 
@@ -846,6 +1095,7 @@ router.get('/vouchers/:voucherId/attachments', (req: AuthRequest, res) => {
 // 删除附件
 router.delete(
   '/vouchers/:voucherId/attachments/:attachmentId',
+  requirePermission('voucher:entry'),
   operationLog('删除凭证附件', '凭证管理'),
   async (req: AuthRequest, res) => {
     const { voucherId, attachmentId } = req.params
@@ -869,6 +1119,16 @@ router.delete(
       // 删除物理文件
       const normalizedFilePath = String((attachment as any).file_path || '').replace(/^\//, '')
       const filePath = path.join(process.cwd(), normalizedFilePath)
+
+      // 安全检查：确保文件路径在 uploads 目录内
+      const uploadsDir = path.join(process.cwd(), 'uploads')
+      const resolvedPath = path.resolve(filePath)
+      const resolvedUploadsDir = path.resolve(uploadsDir)
+
+      if (!resolvedPath.startsWith(resolvedUploadsDir)) {
+        return res.status(400).json({ code: 400, message: '非法的文件路径' })
+      }
+
       await fs.unlink(filePath)
 
       // 从数据库删除
@@ -877,9 +1137,10 @@ router.delete(
       ).run(attachmentId, voucherId, accountSetId)
 
       // 更新凭证附件计数
-      const attachmentCount = db
+      const result = db
         .prepare('SELECT COUNT(*) as count FROM voucher_attachments WHERE voucher_id = ?')
-        .get(voucherId).count as number
+        .get(voucherId) as { count: number }
+      const attachmentCount = result.count
 
       db.prepare('UPDATE vouchers SET attachments = ? WHERE id = ?').run(attachmentCount, voucherId)
 
@@ -1036,12 +1297,23 @@ router.post('/print-data/batch', authMiddleware, (req: AuthRequest, res) => {
 
       // 凭证号范围
       if (voucher_no_start) {
-        sql += ' AND v.voucher_no >= ?'
-        params.push(voucher_no_start)
+        if (/^\d+$/.test(voucher_no_start)) {
+          // 纯数字：提取凭证号中'-'后的数字部分进行数值比较
+          sql += ` AND COALESCE(CAST(SUBSTR(v.voucher_no, INSTR(v.voucher_no, '-') + 1) AS INTEGER), CAST(v.voucher_no AS INTEGER)) >= ?`
+          params.push(parseInt(voucher_no_start, 10))
+        } else {
+          sql += ' AND v.voucher_no >= ?'
+          params.push(voucher_no_start)
+        }
       }
       if (voucher_no_end) {
-        sql += ' AND v.voucher_no <= ?'
-        params.push(voucher_no_end)
+        if (/^\d+$/.test(voucher_no_end)) {
+          sql += ` AND COALESCE(CAST(SUBSTR(v.voucher_no, INSTR(v.voucher_no, '-') + 1) AS INTEGER), CAST(v.voucher_no AS INTEGER)) <= ?`
+          params.push(parseInt(voucher_no_end, 10))
+        } else {
+          sql += ' AND v.voucher_no <= ?'
+          params.push(voucher_no_end)
+        }
       }
 
       sql += ' ORDER BY v.voucher_date, v.voucher_no'

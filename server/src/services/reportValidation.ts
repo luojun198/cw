@@ -1,3 +1,5 @@
+import { validateStaticCashFlowReport } from './cashFlowReconciliation.js'
+
 /**
  * 报表数据验证服务
  * 检查报表数据的合理性，提供异常提示和建议
@@ -34,7 +36,7 @@ export function validateBalanceSheet(data: any): ReportValidationResult {
       severity: 'error',
     })
     suggestions.push('请检查期初余额设置是否正确')
-    suggestions.push('请检查所有凭证是否已过账')
+    suggestions.push('请检查所有凭证是否已记账')
     suggestions.push('请检查是否有未完成的结转操作')
   }
 
@@ -109,34 +111,10 @@ export function validateIncomeStatement(data: any): ReportValidationResult {
 }
 
 /**
- * 验证现金流量表数据
+ * 验证现金流量表数据（静态 API：operatingActivities / investingActivities / financingActivities）
  */
 export function validateCashFlow(data: any): ReportValidationResult {
-  const warnings: ReportWarning[] = []
-  const suggestions: string[] = []
-
-  // 检查现金流量平衡
-  const operatingCashFlow = data.operatingCashFlow || 0
-  const investingCashFlow = data.investingCashFlow || 0
-  const financingCashFlow = data.financingCashFlow || 0
-  const netCashFlow = data.netCashFlow || 0
-  const calculatedNetCashFlow = operatingCashFlow + investingCashFlow + financingCashFlow
-  const difference = Math.abs(netCashFlow - calculatedNetCashFlow)
-
-  if (difference > 0.01) {
-    warnings.push({
-      type: 'cashflow_mismatch',
-      message: `现金流量净额计算不正确，差额 ${difference.toFixed(2)} 元`,
-      severity: 'error',
-    })
-    suggestions.push('请检查现金流量分类是否正确')
-  }
-
-  return {
-    isValid: warnings.filter(w => w.severity === 'error').length === 0,
-    warnings,
-    suggestions,
-  }
+  return validateStaticCashFlowReport(data)
 }
 
 /**

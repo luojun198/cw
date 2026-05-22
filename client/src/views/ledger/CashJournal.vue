@@ -1,81 +1,200 @@
 <template>
-  <div class="page">
+  <div class="page page-ledger">
     <div class="page-header">
       <h3>日记账</h3>
       <div class="quick-filter-btns">
         <el-button type="primary" plain @click="quickFilterCash">现金日记账</el-button>
         <el-button type="success" plain @click="quickFilterBank">银行日记账</el-button>
       </div>
+
       <div class="filter-row">
-        <el-select
-          v-model="filters.account_type"
-          style="width: 120px"
-          clearable
-          placeholder="账户类型"
-        >
-          <el-option label="现金" value="cash" />
-          <el-option label="银行存款" value="bank" />
-        </el-select>
         <el-select
           v-model="filters.account_id"
           filterable
           placeholder="选择具体科目"
           style="width: 200px"
           clearable
+          @visible-change="onAccountSelectOpen"
         >
-          <el-option v-for="a in cashBankAccounts" :key="a.id" :label="`${a.code} ${a.name}`" :value="a.id" />
+          <el-option
+            v-for="a in cashBankAccounts"
+            :key="a.id"
+            :label="`${a.code} ${a.name}`"
+            :value="a.id"
+          >
+            <span :style="{ paddingLeft: `${a.level * 16}px` }"> {{ a.code }} {{ a.name }} </span>
+          </el-option>
         </el-select>
-        <el-select v-model="filters.year" style="width: 100px">
+        <el-select
+          v-model="filters.year"
+          placeholder="年份"
+          clearable
+          style="width: 100px"
+          @change="onYearPeriodChange"
+        >
           <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
         </el-select>
-        <el-select v-model="filters.period" style="width: 100px">
+        <el-select
+          v-model="filters.period"
+          placeholder="月份"
+          clearable
+          style="width: 100px"
+          @change="onYearPeriodChange"
+        >
           <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
         </el-select>
-        <el-select v-model="filters.direction" placeholder="收支类型" clearable style="width: 120px">
+        <el-date-picker
+          v-model="filters.start_date"
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="开始日期"
+          style="width: 140px"
+          clearable
+          @change="onDateRangeChange"
+        />
+        <el-date-picker
+          v-model="filters.end_date"
+          type="date"
+          value-format="YYYY-MM-DD"
+          placeholder="结束日期"
+          style="width: 140px"
+          clearable
+          @change="onDateRangeChange"
+        />
+        <el-select
+          v-model="filters.direction"
+          placeholder="收支类型"
+          clearable
+          style="width: 120px"
+        >
           <el-option label="收入(借方)" value="debit" />
           <el-option label="支出(贷方)" value="credit" />
         </el-select>
-        <el-checkbox v-model="filters.include_unposted" @change="fetchData" style="margin-left: 12px">
+        <el-checkbox
+          v-model="filters.include_unposted"
+          style="margin-left: 12px"
+          @change="fetchData"
+        >
           统计未记账凭证
         </el-checkbox>
-        <el-button type="primary" @click="fetchData">查询</el-button>
-        <el-button @click="exportData">导出Excel</el-button>
+        <el-button type="primary" @click="fetchData">
+          <el-icon><Search /></el-icon>
+          查询
+        </el-button>
+
+        <el-divider direction="vertical" />
+
+        <el-button plain @click="exportData">
+          <el-icon><Download /></el-icon>
+          导出 Excel
+        </el-button>
+        <el-button plain @click="printPage">
+          <el-icon><Printer /></el-icon>
+          打印
+        </el-button>
       </div>
     </div>
 
-    <el-table ref="tableRef" :data="list" stripe border height="calc(100vh - 200px)" @header-dragend="onDragEnd">
-      <el-table-column prop="voucher_date" label="日期" :width="widths['voucher_date'] || 100" />
-      <el-table-column prop="voucher_no" label="凭证号" :width="widths['voucher_no'] || 130" />
-      <el-table-column prop="account_code" label="科目编码" :width="widths['account_code'] || 100" />
-      <el-table-column prop="account_name" label="科目名称" :width="widths['account_name'] || 140" />
-      <el-table-column prop="summary" label="摘要" :width="widths['summary'] || 160" />
-      <el-table-column prop="opposite_accounts" label="对方科目" :width="widths['opposite_accounts'] || 180" />
-      <el-table-column label="借贷" :width="widths['借贷'] || 50">
-        <template #default="{ row }">{{ row.direction === 'debit' ? '借' : '贷' }}</template>
+    <div class="print-title-row">
+      <h2 class="print-title">日记账</h2>
+      <p class="print-date-range">{{ printDateLabel }}</p>
+    </div>
+
+    <div v-if="queried" class="table-summary-scroll table-summary-scroll--wide">
+    <el-table
+      ref="tableRef"
+      :data="list"
+      :style="{ width: `${ledgerTableWidth}px` }"
+      :fit="false"
+      stripe
+      border
+      size="small"
+      class="compact-data-table"
+      highlight-current-row
+      @header-dragend="handleHeaderDragEnd"
+      @row-dblclick="handleLedgerRowDblClick"
+    >
+      <el-table-column prop="voucher_date" label="日期" :width="colWidth('voucher_date', 100)" />
+      <el-table-column prop="voucher_no" label="凭证号" :width="colWidth('voucher_no', 130)" />
+      <el-table-column
+        prop="account_code"
+        label="科目编码"
+        :width="colWidth('account_code', 100)"
+      />
+      <el-table-column
+        prop="account_name"
+        label="科目名称"
+        :width="colWidth('account_name', 140)"
+      />
+      <el-table-column prop="summary" label="摘要" :width="colWidth('summary', 160)" />
+      <el-table-column
+        prop="opposite_accounts"
+        label="对方科目"
+        :width="colWidth('opposite_accounts', 180)"
+      />
+      <el-table-column column-key="借贷" label="借贷" :width="colWidth('借贷', 50)">
+        <template #default="{ row }">{{ row.is_opening_balance ? '' : row.direction === 'debit' ? '借' : '贷' }}</template>
       </el-table-column>
-      <el-table-column label="金额" :width="widths['金额'] || 140" align="right">
-        <template #default="{ row }">{{ formatAmount(row.amount) }}</template>
+      <el-table-column column-key="金额" label="金额" :width="colWidth('金额', 140)" align="right">
+        <template #default="{ row }">{{ row.is_opening_balance ? '' : formatAmount(row.amount) }}</template>
       </el-table-column>
-      <el-table-column label="余额" :width="widths['余额'] || 140" align="right">
+      <el-table-column column-key="余额" label="余额" :width="colWidth('余额', 140)" align="right">
         <template #default="{ row }">{{ formatAmount(row.running_balance) }}</template>
       </el-table-column>
-      <el-table-column prop="maker_name" label="制单人" :width="widths['maker_name'] || 80" />
-      <el-table-column prop="auditor_name" label="审核人" :width="widths['auditor_name'] || 80" />
+      <el-table-column prop="maker_name" label="制单人" :width="colWidth('maker_name', 80)" />
+      <el-table-column prop="auditor_name" label="审核人" :width="colWidth('auditor_name', 80)" />
+      <template #empty>
+        <EmptyState type="data" description="当前条件下暂无流水" />
+      </template>
     </el-table>
+    </div>
+
+    <div v-else class="journal-empty-wrap">
+      <EmptyState
+        type="data"
+        description="请选择具体科目，或点击「现金日记账」「银行日记账」后再查询"
+      />
+    </div>
+
+    <div v-if="queried" class="pagination">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :page-sizes="[50, 100, 200, 500]"
+        :total="total"
+        layout="total, sizes, prev, pager, next, jumper"
+        @size-change="fetchData"
+        @current-change="fetchData"
+      />
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'
+import { useRoute } from 'vue-router'
+import { Printer, Search, Download } from '@element-plus/icons-vue'
 import request from '@/api/request'
-import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import EmptyState from '@/components/EmptyState.vue'
+import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
+import { useLedgerVoucherNavigate } from '@/composables/useLedgerVoucherNavigate'
+import { showWarning } from '@/composables/useMessage'
 import { formatAmount } from '@/utils/format'
+import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
 
+const route = useRoute()
+const { handleLedgerRowDblClick } = useLedgerVoucherNavigate()
 const list = ref<any[]>([])
+const total = ref(0)
+const queried = ref(false)
+const currentPage = ref(1)
+const pageSize = ref(100)
 const cashBankAccounts = ref<any[]>([])
 const filters = ref<any>({
   year: new Date().getFullYear(),
   period: new Date().getMonth() + 1,
+  start_date: '',
+  end_date: '',
   account_type: '',
   account_id: '',
   direction: '',
@@ -85,106 +204,306 @@ const filters = ref<any>({
 })
 const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
 
-const tableRef = ref()
-const { widths, onDragEnd } = useColumnWidthMemory('ledger_cash_journal')
+/** 已选择具体科目，或现金/银行快捷范围 */
+const hasAccountScope = computed(
+  () => Boolean(filters.value.account_id || filters.value.account_type)
+)
 
-async function fetchData() {
-  const params: any = {
-    year: filters.value.year,
-    period: filters.value.period,
+const printDateLabel = computed(() => {
+  if (!queried.value) return '请先选择科目后查询'
+  if (filters.value.start_date || filters.value.end_date) {
+    const start = filters.value.start_date || '不限'
+    const end = filters.value.end_date || '不限'
+    return `日期：${start} 至 ${end}`
   }
+  if (!filters.value.year && !filters.value.period) {
+    return '日期：当前期间'
+  }
+  return `日期：${filters.value.year}年 ${filters.value.period}月`
+})
+
+let printTimer: ReturnType<typeof setTimeout> | null = null
+
+onBeforeUnmount(() => {
+  if (printTimer) clearTimeout(printTimer)
+})
+
+function printPage() {
+  // 展开表格解除高度限制，确保打印全部内容
+  const tableWrapper = document.querySelector('.el-table__body-wrapper') as HTMLElement
+  const table = document.querySelector('.el-table') as HTMLElement
+  if (tableWrapper) {
+    tableWrapper.style.setProperty('height', 'auto', 'important')
+    tableWrapper.style.setProperty('overflow', 'visible', 'important')
+    tableWrapper.style.setProperty('max-height', 'none', 'important')
+  }
+  if (table) {
+    table.style.setProperty('height', 'auto', 'important')
+    table.style.setProperty('max-height', 'none', 'important')
+  }
+
+  // 强制重排后打印
+  void document.body.offsetHeight
+  window.print()
+
+  // 打印后恢复
+  const restore = () => {
+    if (tableWrapper) { tableWrapper.style.cssText = '' }
+    if (table) { table.style.cssText = '' }
+  }
+  if ('onafterprint' in window) {
+    window.addEventListener('afterprint', restore, { once: true })
+    printTimer = setTimeout(restore, 2000)
+  } else {
+    printTimer = setTimeout(restore, 2000)
+  }
+}
+
+const ledgerColumnDefs = computed(() => [
+  { key: 'voucher_date', fallback: 100 },
+  { key: 'voucher_no', fallback: 130 },
+  { key: 'account_code', fallback: 100 },
+  { key: 'account_name', fallback: 140 },
+  { key: 'summary', fallback: 160 },
+  { key: 'opposite_accounts', fallback: 180 },
+  { key: '借贷', fallback: 50 },
+  { key: '金额', fallback: 140 },
+  { key: '余额', fallback: 140 },
+  { key: 'maker_name', fallback: 80 },
+  { key: 'auditor_name', fallback: 80 },
+])
+
+const { tableRef, colWidth, ledgerTableWidth, handleHeaderDragEnd, afterTableLayout } =
+  useLedgerWideTable('ledger_cash_journal', ledgerColumnDefs)
+
+function isDateFilterActive() {
+  return Boolean(filters.value.start_date || filters.value.end_date)
+}
+
+function onYearPeriodChange() {
+  if (filters.value.year || filters.value.period) {
+    filters.value.start_date = ''
+    filters.value.end_date = ''
+  }
+}
+
+function onDateRangeChange() {
+  if (isDateFilterActive()) {
+    filters.value.year = null
+    filters.value.period = null
+  }
+}
+
+function buildQueryParams(page: number, size: number) {
+  const params: any = {
+    page,
+    pageSize: size,
+  }
+  if (!isDateFilterActive()) {
+    if (filters.value.year) params.year = filters.value.year
+    if (filters.value.period) params.period = filters.value.period
+  }
+  if (filters.value.start_date) params.start_date = filters.value.start_date
+  if (filters.value.end_date) params.end_date = filters.value.end_date
   if (filters.value.account_type) params.account_type = filters.value.account_type
   if (filters.value.account_id) params.account_id = filters.value.account_id
   if (filters.value.direction) params.direction = filters.value.direction
   if (filters.value.account_code_start) params.account_code_start = filters.value.account_code_start
   if (filters.value.account_code_end) params.account_code_end = filters.value.account_code_end
   if (filters.value.include_unposted) params.include_unposted = 'true'
+  return params
+}
 
-  console.log('日记账查询参数:', params)
-  const res = await request.get<any[]>('/ledger/cash-journal', { params })
-  console.log('日记账查询结果:', res.data?.length, '条')
-  if (res.data && res.data.length > 0) {
-    console.log('第一条数据的科目:', res.data[0].account_code, res.data[0].account_name)
-    console.log('所有科目编码:', res.data.map((e: any) => e.account_code).join(', '))
+function getOpeningBalanceDate() {
+  if (filters.value.start_date) {
+    const d = new Date(`${filters.value.start_date}T00:00:00`)
+    if (!Number.isNaN(d.getTime()) && !/^\d{4}-01-01$/.test(filters.value.start_date)) {
+      d.setDate(d.getDate() - 1)
+      const year = d.getFullYear()
+      const month = String(d.getMonth() + 1).padStart(2, '0')
+      const day = String(d.getDate()).padStart(2, '0')
+      return `${year}-${month}-${day}`
+    }
+    return filters.value.start_date
   }
+
+  const year = filters.value.year || new Date().getFullYear()
+  const period = filters.value.period || new Date().getMonth() + 1
+  return `${year}-${String(period).padStart(2, '0')}-01`
+}
+
+function buildOpeningBalanceRow(balance: number) {
+  return {
+    id: '__opening_balance__',
+    voucher_date: getOpeningBalanceDate(),
+    voucher_no: '',
+    account_code: '',
+    account_name: '',
+    summary: '期初余额',
+    opposite_accounts: '',
+    direction: '',
+    amount: 0,
+    running_balance: balance,
+    maker_name: '',
+    auditor_name: '',
+    is_opening_balance: true,
+  }
+}
+
+async function fetchData() {
+  if (!hasAccountScope.value) {
+    queried.value = false
+    list.value = []
+    total.value = 0
+    showWarning('请先选择具体科目，或点击「现金日记账」「银行日记账」')
+    return
+  }
+  const params = buildQueryParams(currentPage.value, pageSize.value)
+  const res = await request.get<any>('/ledger/cash-journal', { params })
+  queried.value = true
   const entries = res.data || []
-
-  // 计算余额 (按科目分组计算)
-  const balanceByAccount: Record<string, number> = {}
-  for (const entry of entries) {
-    const accountKey = entry.account_id || entry.account_code
-    if (!balanceByAccount[accountKey]) {
-      balanceByAccount[accountKey] = 0
-    }
-    if (entry.direction === 'debit') {
-      balanceByAccount[accountKey] += entry.amount
-    } else {
-      balanceByAccount[accountKey] -= entry.amount
-    }
-    entry.running_balance = balanceByAccount[accountKey]
-  }
-
-  list.value = entries
+  const openingRow = buildOpeningBalanceRow((res as any).initBalance || 0)
+  list.value = currentPage.value === 1 ? [openingRow, ...entries] : entries
+  total.value = res.total || 0
+  await afterTableLayout()
 }
 
 async function fetchCashBankAccounts() {
   const res = await request.get<any[]>('/base/accounts', {
     params: { is_enabled: 1 },
   })
-  // 筛选现金和银行科目
-  cashBankAccounts.value = res.data.filter((a: any) => a.is_cash || a.is_bank)
+  // 筛选现金和银行科目（包括父科目和明细科目），并按编码排序
+  const filtered = res.data.filter((a: any) => {
+    // 如果是现金或银行科目本身
+    if (a.is_cash || a.is_bank) return true
+    // 如果是现金或银行科目的子科目（编码以1001或1002开头）
+    if (a.code.startsWith('1001') || a.code.startsWith('1002')) return true
+    return false
+  })
+  // 按编码排序
+  filtered.sort((a: any, b: any) => a.code.localeCompare(b.code))
+  cashBankAccounts.value = filtered
 }
 
-// 快捷筛选：现金日记账 (100101和100102及其所有子科目)
-function quickFilterCash() {
-  // 使用account_type='cash'查询所有现金科目
-  filters.value.account_type = 'cash'
-  filters.value.account_id = ''
-  filters.value.account_code_start = ''
-  filters.value.account_code_end = ''
-  fetchData()
+// 下拉框打开时刷新科目列表
+function onAccountSelectOpen(visible: boolean) {
+  if (visible) {
+    fetchCashBankAccounts()
+  }
 }
 
-// 快捷筛选：银行日记账 (100201和100202及其所有子科目)
-function quickFilterBank() {
-  // 使用account_type='bank'查询所有银行科目
-  filters.value.account_type = 'bank'
-  filters.value.account_id = ''
-  filters.value.account_code_start = ''
-  filters.value.account_code_end = ''
+/** 默认/快捷：现金日记账（1001 及其子科目；无 1001 时按 is_cash 范围） */
+async function applyCashScope() {
+  filters.value.account_type = ''
+  const cashAccount = cashBankAccounts.value.find(a => a.code === '1001')
+  if (cashAccount) {
+    filters.value.account_id = cashAccount.id
+  } else {
+    filters.value.account_id = ''
+    filters.value.account_type = 'cash'
+  }
+  currentPage.value = 1
+  await fetchData()
+}
+
+async function quickFilterCash() {
+  await fetchCashBankAccounts()
+  await applyCashScope()
+}
+
+// 快捷筛选：银行日记账 (1002及其所有子科目)
+async function quickFilterBank() {
+  // 查找1002银行存款科目
+  const bankAccount = cashBankAccounts.value.find(a => a.code === '1002')
+  if (bankAccount) {
+    filters.value.account_id = bankAccount.id
+  } else {
+    filters.value.account_id = ''
+  }
+  filters.value.account_type = ''
+  await fetchCashBankAccounts()
   fetchData()
 }
 
 async function exportData() {
-  const { utils, writeFile } = await import('xlsx')
-  const ws = utils.json_to_sheet(
-    list.value.map((v: any) => ({
-      日期: v.voucher_date,
-      凭证号: v.voucher_no,
-      科目编码: v.account_code,
-      科目名称: v.account_name,
-      摘要: v.summary,
-      对方科目: v.opposite_accounts || '',
-      借贷: v.direction === 'debit' ? '借' : '贷',
-      金额: v.amount,
-      余额: v.running_balance,
-      制单人: v.maker_name || '',
-      审核人: v.auditor_name || '',
-    }))
-  )
-  const wb = utils.book_new()
-  utils.book_append_sheet(wb, ws, '日记账')
-  writeFile(wb, `日记账_${filters.value.year}_${filters.value.period}.xlsx`)
+  if (!hasAccountScope.value) {
+    showWarning('请先选择科目后再导出')
+    return
+  }
+  // 导出全部数据
+  const params = buildQueryParams(1, 10000)
+  const res = await request.get<any>('/ledger/cash-journal', { params })
+  const allData = [buildOpeningBalanceRow((res as any).initBalance || 0), ...(res.data || [])]
+  const dateRange = isDateFilterActive()
+    ? `${filters.value.start_date || '不限'}_${filters.value.end_date || '不限'}`
+    : `${filters.value.year || new Date().getFullYear()}_${filters.value.period || new Date().getMonth() + 1}`
+
+  const columns: ExportColumnDef[] = [
+    { label: '日期', width: colWidth('voucher_date', 100), value: row => row.voucher_date },
+    { label: '凭证号', width: colWidth('voucher_no', 130), value: row => row.voucher_no },
+    { label: '科目编码', width: colWidth('account_code', 100), value: row => row.account_code || '' },
+    { label: '科目名称', width: colWidth('account_name', 140), value: row => row.account_name || '' },
+    { label: '摘要', width: colWidth('summary', 160), value: row => row.summary },
+    {
+      label: '对方科目',
+      width: colWidth('opposite_accounts', 180),
+      value: row => row.opposite_accounts || '',
+    },
+    {
+      label: '借贷',
+      width: colWidth('借贷', 50),
+      align: 'center',
+      value: row => (row.is_opening_balance ? '' : row.direction === 'debit' ? '借' : '贷'),
+    },
+    {
+      label: '金额',
+      width: colWidth('金额', 140),
+      align: 'right',
+      type: 'amount',
+      value: row => (row.is_opening_balance ? '' : row.amount),
+    },
+    {
+      label: '余额',
+      width: colWidth('余额', 140),
+      align: 'right',
+      type: 'amount',
+      value: row => row.running_balance,
+    },
+    { label: '制单人', width: colWidth('maker_name', 80), value: row => row.maker_name || '' },
+    { label: '审核人', width: colWidth('auditor_name', 80), value: row => row.auditor_name || '' },
+  ]
+
+  await exportStyledTable({
+    fileName: `日记账_${dateRange}.xlsx`,
+    sheetName: '日记账',
+    title: '日记账',
+    subtitle: printDateLabel.value,
+    columns,
+    rows: allData,
+  })
 }
 
 // 当账户类型改变时,清空具体科目选择
-watch(() => filters.value.account_type, () => {
-  filters.value.account_id = ''
-})
+watch(
+  () => filters.value.account_type,
+  () => {
+    filters.value.account_id = ''
+    // 刷新科目列表
+    fetchCashBankAccounts()
+  }
+)
 
 onMounted(async () => {
-  await fetchData()
-  fetchCashBankAccounts()
+  await fetchCashBankAccounts()
+  if (route.query.account_id) {
+    filters.value.account_id = String(route.query.account_id)
+    if (route.query.start_date) filters.value.start_date = String(route.query.start_date)
+    if (route.query.end_date) filters.value.end_date = String(route.query.end_date)
+    currentPage.value = 1
+    await fetchData()
+  } else {
+    await applyCashScope()
+  }
 })
 </script>
 
@@ -211,5 +530,81 @@ onMounted(async () => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.pagination {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.journal-empty-wrap {
+  min-height: calc(100vh - 220px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.print-title-row {
+  display: none;
+}
+</style>
+<style>
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  body {
+    padding: 15mm 10mm !important;
+  }
+
+  /* 隐藏筛选栏、按钮、分页等非打印元素 */
+  .page-header,
+  .filter-row,
+  .pagination,
+  .el-button,
+  .el-divider,
+  .balance-tag {
+    display: none !important;
+  }
+
+  /* 显示打印标题 */
+  .print-title-row {
+    display: block !important;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .print-title {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 8px;
+  }
+  .print-date-range {
+    font-size: 11pt;
+    color: #333;
+    margin: 0 0 12px;
+  }
+
+  /* 表格占满页面 */
+  .el-table {
+    height: auto !important;
+    max-height: none !important;
+  }
+  .el-table__body-wrapper {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* 页面主体 */
+  .page {
+    padding: 0 !important;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
 </style>

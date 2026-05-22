@@ -38,9 +38,15 @@ export interface TableColumn {
   field: TableColumnField | string  // 支持辅助项目类别代码（如 'aux_CAT001'）
   label: string
   width: string
-  align?: 'left' | 'center' | 'right'
+  align?: 'left' | 'center' | 'right'  // 水平对齐
+  verticalAlign?: 'top' | 'middle' | 'bottom'  // 垂直对齐
+  paddingTop?: number      // 上内边距（mm）
+  paddingBottom?: number   // 下内边距（mm）
+  paddingLeft?: number     // 左内边距（mm）
+  paddingRight?: number    // 右内边距（mm）
   visible?: boolean
   auxCategoryCode?: string  // 辅助项目类别代码（当 field 以 'aux_' 开头时使用）
+  showPaddingSettings?: boolean  // 内边距设置面板是否展开（设计器运行时状态）
 }
 
 // 字段元素接口（设计器使用）

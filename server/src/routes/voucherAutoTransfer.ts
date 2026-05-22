@@ -1,16 +1,13 @@
 import { Router } from 'express'
-import { getDb } from '../db/index.ts'
-import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.ts'
+import { getDb } from '../db/index.js'
+import { authMiddleware, AuthRequest, requirePermission, operationLog } from '../middleware/index.js'
 import {
-  buildAutoTransferPreview,
   buildAllTransferPreviews,
-  createAutoTransferVoucher,
   createAllTransferVouchers,
   getAutoTransferStatus,
-  revokeAutoTransferVoucher,
   revokeAllTransferVouchers,
   validateAutoTransferPeriod,
-} from '../services/autoTransfer.ts'
+} from '../services/autoTransfer.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -75,10 +72,14 @@ router.post(
 
 router.post(
   '/auto-transfer/run',
+  requirePermission('base:transfer'),
   operationLog('执行自动结转', '凭证管理'),
   (req: AuthRequest, res) => {
     const year = Number(req.body.year)
     const period = Number(req.body.period)
+    const transferTypeCodes = Array.isArray(req.body.transferTypeCodes)
+      ? req.body.transferTypeCodes.map((code: unknown) => String(code || '').trim()).filter(Boolean)
+      : undefined
     const periodError = validateAutoTransferPeriod(year, period)
     if (periodError) {
       return res.status(400).json({ code: 400, message: periodError })
@@ -94,6 +95,7 @@ router.post(
       userName: req.userName,
       year,
       period,
+      transferTypeCodes,
     })
 
     if (result.error) {
@@ -105,7 +107,7 @@ router.post(
     }
 
     // 统计成功创建的凭证数量
-    const successCount = result.results.filter(r => !r.skipped && !r.error).length
+    const successCount = result.results.filter(r => !r.skipped && !('error' in r && r.error)).length
     const skippedCount = result.results.filter(r => r.skipped).length
     const voucherNos = result.results
       .filter(r => r.voucherNo)
@@ -114,7 +116,7 @@ router.post(
 
     res.json({
       code: 0,
-      message: `自动结转成功（${year}年${period}期，生成${successCount}张凭证${skippedCount > 0 ? `，跳过${skippedCount}个类型` : ''}，凭证号：${voucherNos}，已自动审核并过账）`,
+      message: `自动结转成功（${year}年${period}期，生成${successCount}张凭证${skippedCount > 0 ? `，跳过${skippedCount}个类型` : ''}，凭证号：${voucherNos}，已自动审核并记账）`,
       data: {
         results: result.results,
         successCount,
@@ -126,7 +128,8 @@ router.post(
 
 router.post(
   '/auto-transfer/revoke',
-  operationLog('撤销自动结转', '凭证管理'),
+  requirePermission('base:transfer'),
+  operationLog('反结转', '凭证管理'),
   (req: AuthRequest, res) => {
     const year = Number(req.body.year)
     const period = Number(req.body.period)
@@ -138,7 +141,7 @@ router.post(
     const db = getDb()
 
     try {
-      // 使用新的撤销所有凭证函数
+      // 反结转按期间一次性删除全部自动结转生成的凭证
       const result = revokeAllTransferVouchers({
         db,
         accountSetId: req.accountSetId || '',
@@ -161,7 +164,7 @@ router.post(
 
       res.json({
         code: 0,
-        message: `撤销自动结转成功（${year}年${period}期，撤销${successCount}张凭证${failCount > 0 ? `，${failCount}张失败` : ''}，凭证号：${voucherNos}）`,
+        message: `反结转成功（${year}年${period}期，删除${successCount}张结转凭证${failCount > 0 ? `，${failCount}张失败` : ''}，凭证号：${voucherNos}）`,
         data: {
           results: result.results,
           successCount,
@@ -172,7 +175,7 @@ router.post(
       console.error('Revoke auto transfer failed:', error)
       return res.status(500).json({
         code: 500,
-        message: error?.message || '撤销自动结转失败',
+        message: error?.message || '反结转失败',
         data: {
           stack: process.env.NODE_ENV !== 'production' ? error?.stack : undefined,
         },

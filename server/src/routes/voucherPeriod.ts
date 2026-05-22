@@ -1,86 +1,136 @@
 import { Router } from 'express'
-import { v4 as uuidv4 } from 'uuid'
-import { getDb } from '../db/index.ts'
-import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.ts'
+import { getDb } from '../db/index.js'
+import { authMiddleware, AuthRequest, requirePermission, operationLog } from '../middleware/index.js'
+import { listPeriodClosingStatus } from '../services/voucherEntry.js'
 import {
-  closePeriod,
-  getPeriodClosingRecord,
-  isPeriodClosed,
-  listPeriodClosingStatus,
-} from '../services/voucherEntry.ts'
+  buildYearPeriodStatusView,
+  closeAccountingPeriod,
+  openAccountingPeriod,
+} from '../services/yearClosing.js'
 
 const router = Router()
 router.use(authMiddleware)
 
-// ===================== 月结/年结 =====================
+function parseYearPeriod(params: { year?: string; period?: string }) {
+  return {
+    year: Number(params.year),
+    period: Number(params.period),
+  }
+}
+
+router.get('/periods/:year/overview', (req: AuthRequest, res) => {
+  const db = getDb()
+  const year = Number(req.params.year) || new Date().getFullYear()
+  const data = buildYearPeriodStatusView({
+    db,
+    accountSetId: req.accountSetId || '',
+    year,
+  })
+  res.json({ code: 0, data })
+})
 
 router.post(
   '/periods/:year/:period/close',
-  operationLog('月结', '凭证管理'),
+  requirePermission('period:close'),
+  operationLog('结账', '凭证管理'),
   (req: AuthRequest, res) => {
-    const { year, period } = req.params
+    const { year, period } = parseYearPeriod(req.params)
     const db = getDb()
-    const existing = getPeriodClosingRecord({
-      db,
-      accountSetId: req.accountSetId || '',
-      year,
-      period,
-    })
-    if (isPeriodClosed(existing)) {
-      return res.status(400).json({
+
+    try {
+      const result = closeAccountingPeriod({
+        db,
+        accountSetId: req.accountSetId || '',
+        year,
+        period,
+        userId: req.userId,
+      })
+
+      res.json({
+        code: 0,
+        message: period === 12 ? '年度结账成功，已生成下一年期初余额' : '月结成功',
+        data: result,
+      })
+    } catch (error: any) {
+      res.status(400).json({
         code: 400,
-        message: '该月份已结账',
-        data: {
-          hint: '该期间已经结账，无法重复结账',
-        },
+        message: error?.message || '结账失败',
       })
     }
-    const id = existing?.id || uuidv4()
-    closePeriod({
-      db,
-      id,
-      accountSetId: req.accountSetId || '',
-      year,
-      period,
-      userId: req.userId,
-    })
-    res.json({ code: 0, message: '月结成功' })
   }
 )
 
 router.post(
   '/periods/:year/:period/open',
-  operationLog('反月结', '凭证管理'),
+  requirePermission('period:unclose'),
+  operationLog('反结账', '凭证管理'),
   (req: AuthRequest, res) => {
-    const { year, period } = req.params
+    const { year, period } = parseYearPeriod(req.params)
     const db = getDb()
-    openPeriod({
-      db,
-      accountSetId: req.accountSetId || '',
-      year,
-      period,
-    })
-    res.json({ code: 0, message: '反月结成功' })
+
+    try {
+      const result = openAccountingPeriod({
+        db,
+        accountSetId: req.accountSetId || '',
+        year,
+        period,
+        userId: req.userId,
+      })
+      res.json({
+        code: 0,
+        message:
+          period === 12 && result.removedNextYearOpening
+            ? '年度反结账成功，已撤销下一年期初余额'
+            : '反结账成功',
+        data: result,
+      })
+    } catch (error: any) {
+      res.status(400).json({
+        code: 400,
+        message: error?.message || '反结账失败',
+      })
+    }
   }
 )
 
 router.get('/periods/status', (req: AuthRequest, res) => {
   const { year } = req.query
   const db = getDb()
+  const yearValue = typeof year === 'string' || typeof year === 'number' ? year : new Date().getFullYear()
   const list = listPeriodClosingStatus({
     db,
     accountSetId: req.accountSetId || '',
-    year: year || new Date().getFullYear(),
+    year: yearValue,
   })
   res.json({ code: 0, data: list })
 })
 
-// Helper function for opening period
-function openPeriod(params: { db: any; accountSetId: string; year: string; period: string }) {
-  const { db, accountSetId, year, period } = params
-  db.prepare(
-    `UPDATE period_closing SET status='open', updated_at=datetime('now') WHERE account_set_id=? AND year=? AND period=?`
-  ).run(accountSetId, year, period)
-}
+router.get('/periods/available-for-report', (req: AuthRequest, res) => {
+  const db = getDb()
+  const { year } = req.query
+  let y = Number(year) || new Date().getFullYear()
+
+  if (y < 100) {
+    y = 2000 + y
+  }
+
+  const closedPeriods = db
+    .prepare(
+      `
+      SELECT year, period
+      FROM period_closing
+      WHERE account_set_id = ?
+        AND year = ?
+        AND status = 'closed'
+      ORDER BY period
+    `
+    )
+    .all(req.accountSetId, y)
+
+  res.json({
+    code: 0,
+    data: closedPeriods.map((p: any) => p.period),
+  })
+})
 
 export default router

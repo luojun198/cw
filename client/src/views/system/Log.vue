@@ -21,13 +21,25 @@
       </div>
     </el-card>
 
-    <el-table :data="list" stripe border height="100%" style="margin-top: 16px" :loading="loading">
-      <el-table-column prop="created_at" label="时间" width="180" />
-      <el-table-column prop="username" label="操作用户" width="120" />
-      <el-table-column prop="action" label="操作" width="150" />
-      <el-table-column prop="module" label="模块" width="100" />
+    <el-table
+      ref="tableRef"
+      :data="list"
+      stripe
+      border
+      height="100%"
+      style="margin-top: 16px"
+      :loading="loading"
+      @header-dragend="onDragEnd"
+    >
+      <el-table-column prop="created_at" label="时间" :width="colWidth('created_at', 180)" />
+      <el-table-column prop="username" label="操作用户" :width="colWidth('username', 120)" />
+      <el-table-column prop="action" label="操作" :width="colWidth('action', 150)" />
+      <el-table-column prop="module" label="模块" :width="colWidth('module', 100)" />
       <el-table-column prop="detail" label="详情" />
-      <el-table-column prop="ip_address" label="IP 地址" width="140" />
+      <el-table-column prop="ip_address" label="IP 地址" :width="colWidth('ip_address', 140)" />
+      <template #empty>
+        <EmptyState type="data" description="暂无操作日志" />
+      </template>
     </el-table>
 
     <el-pagination
@@ -46,7 +58,9 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
 import request from '@/api/request'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
+const { tableRef, onDragEnd, colWidth } = useListColumnWidth('system_log')
 const list = ref<any[]>([])
 const loading = ref(false)
 const filters = ref<any>({ action: '', module: '', dateRange: [] })

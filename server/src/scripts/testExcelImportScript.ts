@@ -1,6 +1,6 @@
 import * as path from 'path'
 import { fileURLToPath } from 'url'
-import { importExcelReport } from './importExcelReport.ts'
+import { importExcelReport } from './importExcelReport.js'
 
 // 获取当前文件目录
 const __filename = fileURLToPath(import.meta.url)
@@ -15,7 +15,7 @@ async function testImport() {
 
     // 首先需要获取一个账套ID
     // 这里假设有一个测试账套，或者我们可以从数据库中获取第一个账套
-    const { getDb } = await import('../db/index.ts')
+    const { getDb } = await import('../db/index.js')
     const db = getDb()
 
     // 获取第一个账套

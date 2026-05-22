@@ -1,5 +1,5 @@
 import Database from 'better-sqlite3'
-import { getDb } from '../db/index.ts'
+import { getDb } from '../db/index.js'
 
 /**
  * 数据库迁移系统

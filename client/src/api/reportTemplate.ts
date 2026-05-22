@@ -1,5 +1,9 @@
 import request from './request'
 
+/** 报表导入/执行可能涉及大模板解析，超时需长于默认 30s */
+export const REPORT_LONG_REQUEST_TIMEOUT = 120_000
+export const REPORT_EXECUTE_REQUEST_TIMEOUT = 60_000
+
 export type MergeInfo = {
   colSpan: number
   rowSpan: number
@@ -114,6 +118,13 @@ export async function getTemplateDetail(code: string): Promise<TemplateDetailDat
   return res.data
 }
 
+export async function downloadReportExport(
+  code: string,
+  params: { year: number; period: number }
+): Promise<Blob> {
+  return request.download(`/report/templates/${encodeURIComponent(code)}/export`, { params })
+}
+
 export async function saveTemplateCells(
   code: string,
   payload: SaveTemplateCellsRequest
@@ -128,4 +139,32 @@ export async function saveTemplateCells(
   }
 
   await request.put(`/report/templates/${code}/cells`, normalized)
+}
+
+export interface UpdateTemplateMetaResponse {
+  code: string
+  name: string
+  is_enabled: boolean
+  swapped: boolean
+  swapWith: {
+    code: string
+    name: string
+    originalCode: string
+  } | null
+}
+
+/**
+ * 修改报表模板的 code / name / is_enabled。
+ * - 若新 code 与同账套另一个报表重复，后端会自动互换两者的 code，并在响应中返回 swapped=true。
+ * - is_enabled = false 的报表不会出现在导航栏。
+ */
+export async function updateReportTemplateMeta(
+  currentCode: string,
+  payload: { code?: string; name?: string; is_enabled?: boolean }
+): Promise<{ message: string; data: UpdateTemplateMetaResponse }> {
+  const res = await request.patch<UpdateTemplateMetaResponse>(
+    `/report/templates/${encodeURIComponent(currentCode)}/meta`,
+    payload
+  )
+  return { message: res.message || '更新成功', data: res.data }
 }

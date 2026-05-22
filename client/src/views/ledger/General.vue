@@ -1,5 +1,5 @@
 <template>
-  <div class="page">
+  <div class="page page-ledger">
     <div class="page-header">
       <h3>科目余额表</h3>
       <div class="filter-row">
@@ -27,7 +27,13 @@
           @clear="fetchData"
           @keyup.enter="fetchData"
         />
-        <el-select v-model="filters.account_level" placeholder="科目级次" clearable style="width: 120px" @change="fetchData">
+        <el-select
+          v-model="filters.account_level"
+          placeholder="科目级次"
+          clearable
+          style="width: 120px"
+          @change="fetchData"
+        >
           <el-option label="展开到1级" :value="1" />
           <el-option label="展开到2级" :value="2" />
           <el-option label="展开到3级" :value="3" />
@@ -44,37 +50,66 @@
           统计未记账凭证
         </el-checkbox>
         <el-divider direction="vertical" />
-        <el-button type="primary" @click="fetchData">查询</el-button>
-        <el-button :type="hideZero ? 'primary' : 'default'" @click="hideZero = !hideZero">
-          {{ hideZero ? '显示0值' : '隐藏0值' }}
+        <el-button type="primary" @click="fetchData">
+          <el-icon><Search /></el-icon>
+          查询
         </el-button>
-        <el-button @click="exportData">导出Excel</el-button>
+
+        <el-divider direction="vertical" />
+
+        <el-button plain @click="exportData">
+          <el-icon><Download /></el-icon>
+          导出 Excel
+        </el-button>
+        <el-button plain @click="printPage">
+          <el-icon><Printer /></el-icon>
+          打印
+        </el-button>
       </div>
     </div>
 
+    <div class="print-title-row">
+      <h2 class="print-title">科目余额表</h2>
+      <p class="print-date-range">{{ printDateLabel }}</p>
+    </div>
+
+    <div v-if="!initialLoaded && loading" class="skeleton-table">
+      <div v-for="i in 8" :key="i" class="skeleton skeleton-row" />
+    </div>
+
+    <div v-else v-loading="loading" class="table-summary-scroll table-summary-scroll--wide">
     <el-table
       ref="tableRef"
       :data="list"
+      :style="{ width: `${ledgerTableWidth}px` }"
+      :fit="false"
       stripe
       border
-      height="calc(100vh - 200px)"
+      size="small"
+      class="compact-data-table"
+      highlight-current-row
       show-summary
       :summary-method="getSummaries"
-      @header-dragend="onDragEnd"
+      @header-dragend="handleHeaderDragEnd"
       @row-dblclick="handleRowDblClick"
     >
-      <el-table-column label="科目编码" :width="widths['account_code'] || 100" fixed>
+      <el-table-column column-key="account_code" label="科目编码" :width="colWidth('account_code', 100)">
         <template #default="{ row }">
           <span :style="{ paddingLeft: (row.level - 1) * 20 + 'px' }">{{ row.account_code }}</span>
         </template>
       </el-table-column>
-      <el-table-column prop="account_name" label="科目名称" :width="widths['account_name'] || 150" fixed>
+      <el-table-column
+        column-key="account_name"
+        prop="account_name"
+        label="科目名称"
+        :width="colWidth('account_name', 150)"
+      >
         <template #default="{ row }">
           <span :style="{ paddingLeft: (row.level - 1) * 20 + 'px' }">{{ row.account_name }}</span>
         </template>
       </el-table-column>
       <el-table-column label="期初余额" align="center">
-        <el-table-column label="方向" :width="widths['方向'] || 60" align="center">
+        <el-table-column column-key="方向" label="方向" :width="colWidth('方向', 60)" align="center">
           <template #default="{ row }">
             {{
               row.init_balance !== 0
@@ -89,30 +124,78 @@
             }}
           </template>
         </el-table-column>
-        <el-table-column label="余额" :width="widths['余额'] || 100" align="right">
+        <el-table-column column-key="余额" label="余额" :width="colWidth('余额', 100)" align="right">
           <template #default="{ row }">
-            {{ row.init_balance !== 0 ? formatAmount(Math.abs(row.init_balance)) : (hideZero ? '' : formatAmount(0)) }}
+            {{
+              row.init_balance !== 0
+                ? formatAmount(Math.abs(row.init_balance))
+                : hideZero
+                  ? ''
+                  : formatAmount(0)
+            }}
           </template>
         </el-table-column>
       </el-table-column>
       <el-table-column label="本期发生额" align="center">
-        <el-table-column label="借方" :width="widths['借方'] || 120" align="right">
-          <template #default="{ row }">{{ row.current_debit && row.current_debit > 0 ? formatAmount(row.current_debit) : (hideZero ? '' : formatAmount(0)) }}</template>
+        <el-table-column column-key="借方" label="借方" :width="colWidth('借方', 120)" align="right">
+          <template #default="{ row }">{{
+            row.current_debit && row.current_debit > 0
+              ? formatAmount(row.current_debit)
+              : hideZero
+                ? ''
+                : formatAmount(0)
+          }}</template>
         </el-table-column>
-        <el-table-column label="贷方" :width="widths['贷方'] || 120" align="right">
-          <template #default="{ row }">{{ row.current_credit && row.current_credit > 0 ? formatAmount(row.current_credit) : (hideZero ? '' : formatAmount(0)) }}</template>
+        <el-table-column column-key="贷方" label="贷方" :width="colWidth('贷方', 120)" align="right">
+          <template #default="{ row }">{{
+            row.current_credit && row.current_credit > 0
+              ? formatAmount(row.current_credit)
+              : hideZero
+                ? ''
+                : formatAmount(0)
+          }}</template>
         </el-table-column>
       </el-table-column>
       <el-table-column label="本年累计发生额" align="center">
-        <el-table-column label="借方" prop="year_debit" :width="widths['year_debit'] || 120" align="right">
-          <template #default="{ row }">{{ row.year_debit && row.year_debit > 0 ? formatAmount(row.year_debit) : (hideZero ? '' : formatAmount(0)) }}</template>
+        <el-table-column
+          column-key="year_debit"
+          label="借方"
+          prop="year_debit"
+          :width="colWidth('year_debit', 120)"
+          align="right"
+        >
+          <template #default="{ row }">{{
+            row.year_debit && row.year_debit > 0
+              ? formatAmount(row.year_debit)
+              : hideZero
+                ? ''
+                : formatAmount(0)
+          }}</template>
         </el-table-column>
-        <el-table-column label="贷方" prop="year_credit" :width="widths['year_credit'] || 120" align="right">
-          <template #default="{ row }">{{ row.year_credit && row.year_credit > 0 ? formatAmount(row.year_credit) : (hideZero ? '' : formatAmount(0)) }}</template>
+        <el-table-column
+          column-key="year_credit"
+          label="贷方"
+          prop="year_credit"
+          :width="colWidth('year_credit', 120)"
+          align="right"
+        >
+          <template #default="{ row }">{{
+            row.year_credit && row.year_credit > 0
+              ? formatAmount(row.year_credit)
+              : hideZero
+                ? ''
+                : formatAmount(0)
+          }}</template>
         </el-table-column>
       </el-table-column>
       <el-table-column label="期末余额" align="center">
-        <el-table-column label="方向" prop="end_direction" :width="widths['end_direction'] || 60" align="center">
+        <el-table-column
+          column-key="end_direction"
+          label="方向"
+          prop="end_direction"
+          :width="colWidth('end_direction', 60)"
+          align="center"
+        >
           <template #default="{ row }">
             {{
               row.end_balance !== 0
@@ -127,32 +210,113 @@
             }}
           </template>
         </el-table-column>
-        <el-table-column label="余额" prop="end_balance" :width="widths['end_balance'] || 100" align="right">
+        <el-table-column
+          column-key="end_balance"
+          label="余额"
+          prop="end_balance"
+          :width="colWidth('end_balance', 100)"
+          align="right"
+        >
           <template #default="{ row }">
-            {{ row.end_balance !== 0 ? formatAmount(Math.abs(row.end_balance)) : (hideZero ? '' : formatAmount(0)) }}
+            {{
+              row.end_balance !== 0
+                ? formatAmount(Math.abs(row.end_balance))
+                : hideZero
+                  ? ''
+                  : formatAmount(0)
+            }}
           </template>
         </el-table-column>
       </el-table-column>
+      <template #empty>
+        <EmptyState type="data" description="暂无数据，请选择期间后查询" />
+      </template>
     </el-table>
+    </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
 import { useRouter } from 'vue-router'
+import { Printer, Search, Download } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import type { TableColumnCtx } from 'element-plus'
-import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
 import { formatAmount } from '@/utils/format'
+import { exportStyledTable } from '@/utils/exportStyledExcel'
+import {
+  buildGeneralLedgerExportColumns,
+  buildGeneralLedgerSummaryValues,
+} from '@/utils/ledgerExportBuilders'
+import { getSummaryAccountRows } from '@/utils/exportLedgerHelpers'
 
 const router = useRouter()
-const tableRef = ref()
 const list = ref<any[]>([])
+const loading = ref(false)
+const initialLoaded = ref(false)
 const hideZero = ref(true)
 
-const { widths, onDragEnd } = useColumnWidthMemory('ledger_general')
+const ledgerColumnDefs = computed(() => [
+  { key: 'account_code', fallback: 100 },
+  { key: 'account_name', fallback: 150 },
+  { key: '方向', fallback: 60 },
+  { key: '余额', fallback: 100 },
+  { key: '借方', fallback: 120 },
+  { key: '贷方', fallback: 120 },
+  { key: 'year_debit', fallback: 120 },
+  { key: 'year_credit', fallback: 120 },
+  { key: 'end_direction', fallback: 60 },
+  { key: 'end_balance', fallback: 100 },
+])
+
+const { tableRef, colWidth, ledgerTableWidth, handleHeaderDragEnd, afterTableLayout } =
+  useLedgerWideTable('ledger_general', ledgerColumnDefs)
 
 const year = new Date().getFullYear()
+
+let printTimer: ReturnType<typeof setTimeout> | null = null
+
+const printDateLabel = computed(() => {
+  const s = filters.value.start_date || `${year}-01-01`
+  const e = filters.value.end_date || `${year}-12-31`
+  return `日期：${s} 至 ${e}`
+})
+
+onBeforeUnmount(() => {
+  if (printTimer) clearTimeout(printTimer)
+})
+
+function printPage() {
+  // 展开表格解除高度限制，确保打印全部内容
+  const tableWrapper = document.querySelector('.el-table__body-wrapper') as HTMLElement
+  const table = document.querySelector('.el-table') as HTMLElement
+  if (tableWrapper) {
+    tableWrapper.style.setProperty('height', 'auto', 'important')
+    tableWrapper.style.setProperty('overflow', 'visible', 'important')
+    tableWrapper.style.setProperty('max-height', 'none', 'important')
+  }
+  if (table) {
+    table.style.setProperty('height', 'auto', 'important')
+    table.style.setProperty('max-height', 'none', 'important')
+  }
+
+  // 强制重排后打印
+  void document.body.offsetHeight
+  window.print()
+
+  // 打印后恢复
+  const restore = () => {
+    if (tableWrapper) { tableWrapper.style.cssText = '' }
+    if (table) { table.style.cssText = '' }
+  }
+  if ('onafterprint' in window) {
+    window.addEventListener('afterprint', restore, { once: true })
+    printTimer = setTimeout(restore, 2000)
+  } else {
+    printTimer = setTimeout(restore, 2000)
+  }
+}
 
 const filters = ref<any>({
   start_date: `${year}-01-01`,
@@ -163,130 +327,129 @@ const filters = ref<any>({
   include_unposted: true,
 })
 
+/** 将带符号余额拆分为借贷方展示金额（与表格行、后端 summary 一致） */
+function splitBalanceToDebitCredit(balance: number, direction: string) {
+  if (!balance) return { debit: 0, credit: 0 }
+  const amount = Math.abs(balance)
+  const onDebitSide =
+    (balance > 0 && direction === 'debit') || (balance < 0 && direction === 'credit')
+  return onDebitSide ? { debit: amount, credit: 0 } : { debit: 0, credit: amount }
+}
+
+function sumBalanceSides(rows: any[], field: 'init_balance' | 'end_balance') {
+  return rows.reduce(
+    (acc, row) => {
+      const { debit, credit } = splitBalanceToDebitCredit(row[field] || 0, row.direction)
+      acc.debit += debit
+      acc.credit += credit
+      return acc
+    },
+    { debit: 0, credit: 0 }
+  )
+}
+
+function resolveSummaryColumnKey(column: TableColumnCtx<any>): string {
+  if (column.columnKey != null && column.columnKey !== '') return String(column.columnKey)
+  if (column.property) return String(column.property)
+  return column.label ? String(column.label) : ''
+}
+
+function formatBalanceDirection(netBalance: number): string {
+  if (Math.abs(netBalance) < 0.005) return '平'
+  return netBalance > 0 ? '借' : '贷'
+}
+
+/** 合计行应参与的科目：有限定级次时取顶层（已含下级汇总），否则取叶节点 */
+function getSummaryRows(data: any[]) {
+  if (!data.length) return []
+  const maxLevel = filters.value.account_level
+  if (maxLevel) {
+    const topLevel = Math.min(...data.map(r => r.level))
+    return data.filter(row => row.level === topLevel)
+  }
+  return data.filter(
+    row =>
+      !data.some(
+        r => r.account_code !== row.account_code && r.account_code.startsWith(row.account_code)
+      )
+  )
+}
+
 function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
   const { columns, data } = param
-  const sums: string[] = []
+  const summaryRows = getSummaryRows(data)
+  const initSides = sumBalanceSides(summaryRows, 'init_balance')
+  const endSides = sumBalanceSides(summaryRows, 'end_balance')
+  const initNet = initSides.debit - initSides.credit
+  const endNet = endSides.debit - endSides.credit
 
-  columns.forEach((column, index) => {
-    if (index === 0) {
-      sums[index] = '合计'
-      return
-    }
-    if (index === 1) {
-      sums[index] = ''
-      return
-    }
-
-    // 期初余额方向
-    if (index === 2) {
-      const debitTotal = data.reduce((sum, row) => sum + (row.init_balance > 0 && row.direction === 'debit' ? row.init_balance : 0), 0)
-      const creditTotal = data.reduce((sum, row) => sum + (row.init_balance > 0 && row.direction === 'credit' ? row.init_balance : 0), 0)
-      const netBalance = debitTotal - creditTotal
-      sums[index] = netBalance === 0 ? '平' : netBalance > 0 ? '借' : '贷'
-    }
-    // 期初余额金额
-    else if (index === 3) {
-      const debitTotal = data.reduce((sum, row) => sum + (row.init_balance > 0 && row.direction === 'debit' ? row.init_balance : 0), 0)
-      const creditTotal = data.reduce((sum, row) => sum + (row.init_balance > 0 && row.direction === 'credit' ? row.init_balance : 0), 0)
-      const netBalance = debitTotal - creditTotal
-      sums[index] = formatAmount(Math.abs(netBalance))
-    }
-    // 本期发生额借方
-    else if (index === 4) {
-      const total = data.reduce((sum, row) => sum + (row.current_debit || 0), 0)
-      sums[index] = formatAmount(total)
-    }
-    // 本期发生额贷方
-    else if (index === 5) {
-      const total = data.reduce((sum, row) => sum + (row.current_credit || 0), 0)
-      sums[index] = formatAmount(total)
-    }
-    // 本年累计发生额借方
-    else if (index === 6) {
-      const total = data.reduce((sum, row) => sum + (row.year_debit || 0), 0)
-      sums[index] = formatAmount(total)
-    }
-    // 本年累计发生额贷方
-    else if (index === 7) {
-      const total = data.reduce((sum, row) => sum + (row.year_credit || 0), 0)
-      sums[index] = formatAmount(total)
-    }
-    // 期末余额方向
-    else if (index === 8) {
-      const debitTotal = data.reduce((sum, row) => sum + (row.end_balance > 0 && row.direction === 'debit' ? row.end_balance : 0), 0)
-      const creditTotal = data.reduce((sum, row) => sum + (row.end_balance > 0 && row.direction === 'credit' ? row.end_balance : 0), 0)
-      const netBalance = debitTotal - creditTotal
-      sums[index] = netBalance === 0 ? '平' : netBalance > 0 ? '借' : '贷'
-    }
-    // 期末余额金额
-    else if (index === 9) {
-      const debitTotal = data.reduce((sum, row) => sum + (row.end_balance > 0 && row.direction === 'debit' ? row.end_balance : 0), 0)
-      const creditTotal = data.reduce((sum, row) => sum + (row.end_balance > 0 && row.direction === 'credit' ? row.end_balance : 0), 0)
-      const netBalance = debitTotal - creditTotal
-      sums[index] = formatAmount(Math.abs(netBalance))
+  return columns.map(column => {
+    const key = resolveSummaryColumnKey(column)
+    switch (key) {
+      case 'account_code':
+        return '合计'
+      case 'account_name':
+        return ''
+      case '方向':
+        return formatBalanceDirection(initNet)
+      case '余额':
+        return formatAmount(Math.abs(initNet))
+      case '借方':
+        return formatAmount(summaryRows.reduce((sum, row) => sum + (row.current_debit || 0), 0))
+      case '贷方':
+        return formatAmount(summaryRows.reduce((sum, row) => sum + (row.current_credit || 0), 0))
+      case 'year_debit':
+        return formatAmount(summaryRows.reduce((sum, row) => sum + (row.year_debit || 0), 0))
+      case 'year_credit':
+        return formatAmount(summaryRows.reduce((sum, row) => sum + (row.year_credit || 0), 0))
+      case 'end_direction':
+        return formatBalanceDirection(endNet)
+      case 'end_balance':
+        return formatAmount(Math.abs(endNet))
+      default:
+        return ''
     }
   })
-
-  return sums
 }
 
 async function fetchData() {
-  const params: any = {}
-  if (filters.value.start_date) params.start_date = filters.value.start_date
-  if (filters.value.end_date) params.end_date = filters.value.end_date
-  if (filters.value.account_code) params.account_code = filters.value.account_code
-  if (filters.value.account_level) params.account_level = filters.value.account_level
-  // 将数组转为逗号分隔的字符串传递给后端
-  if (filters.value.filter_types && filters.value.filter_types.length > 0) {
-    params.filter_types = filters.value.filter_types.join(',')
-  }
-  if (filters.value.include_unposted) params.include_unposted = 'true'
+  loading.value = true
+  try {
+    const params: any = {}
+    if (filters.value.start_date) params.start_date = filters.value.start_date
+    if (filters.value.end_date) params.end_date = filters.value.end_date
+    if (filters.value.account_code) params.account_code = filters.value.account_code
+    if (filters.value.account_level) params.account_level = filters.value.account_level
+    if (filters.value.filter_types && filters.value.filter_types.length > 0) {
+      params.filter_types = filters.value.filter_types.join(',')
+    }
+    if (filters.value.include_unposted) params.include_unposted = 'true'
 
-  const res = await request.get<any[]>('/ledger/general', { params })
-  list.value = res.data
+    const res = await request.get<any[]>('/ledger/general', { params })
+    list.value = res.data
+    initialLoaded.value = true
+    await afterTableLayout()
+  } finally {
+    loading.value = false
+  }
 }
 
 async function exportData() {
-  const { utils, writeFile } = await import('xlsx')
-  const ws = utils.json_to_sheet(
-    list.value.map((v: any) => ({
-      科目编码: v.account_code,
-      科目名称: v.account_name,
-      方向: v.direction === 'debit' ? '借' : '贷',
-      期初余额方向:
-        v.init_balance !== 0
-          ? v.init_balance > 0
-            ? v.direction === 'debit'
-              ? '借'
-              : '贷'
-            : v.direction === 'debit'
-              ? '贷'
-              : '借'
-          : '',
-      期初余额: v.init_balance !== 0 ? Math.abs(v.init_balance) : '',
-      本期借方发生额: v.current_debit || 0,
-      本期贷方发生额: v.current_credit || 0,
-      本年累计借方发生额: v.year_debit || 0,
-      本年累计贷方发生额: v.year_credit || 0,
-      期末余额方向:
-        v.end_balance !== 0
-          ? v.end_balance > 0
-            ? v.direction === 'debit'
-              ? '借'
-              : '贷'
-            : v.direction === 'debit'
-              ? '贷'
-              : '借'
-          : '',
-      期末余额: v.end_balance !== 0 ? Math.abs(v.end_balance) : '',
-    }))
-  )
-  const wb = utils.book_new()
-  utils.book_append_sheet(wb, ws, '总账')
-  const dateRange = filters.value.start_date && filters.value.end_date
-    ? `${filters.value.start_date}_${filters.value.end_date}`
-    : new Date().toISOString().split('T')[0]
-  writeFile(wb, `总账_${dateRange}.xlsx`)
+  const dateRange =
+    filters.value.start_date && filters.value.end_date
+      ? `${filters.value.start_date}_${filters.value.end_date}`
+      : new Date().toISOString().split('T')[0]
+  const summaryRows = getSummaryAccountRows(list.value, filters.value.account_level)
+
+  await exportStyledTable({
+    fileName: `科目余额表_${dateRange}.xlsx`,
+    sheetName: '科目余额表',
+    title: '科目余额表',
+    subtitle: printDateLabel.value,
+    columns: buildGeneralLedgerExportColumns(colWidth, hideZero.value),
+    rows: list.value,
+    summaryValues: buildGeneralLedgerSummaryValues(summaryRows, hideZero.value),
+  })
 }
 
 function handleRowDblClick(row: any) {
@@ -300,7 +463,7 @@ function handleRowDblClick(row: any) {
 
   router.push({
     path: '/ledger/detail',
-    query
+    query,
   })
 }
 
@@ -326,5 +489,78 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   align-items: center;
+}
+
+.print-title-row {
+  display: none;
+}
+.skeleton-table {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 0;
+}
+.skeleton-row {
+  height: 36px;
+  border-radius: 4px;
+}
+</style>
+<style>
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  body {
+    padding: 15mm 10mm !important;
+  }
+
+  /* 隐藏筛选栏、按钮、分页等非打印元素 */
+  .page-header,
+  .filter-row,
+  .pagination,
+  .el-button,
+  .el-divider,
+  .balance-tag {
+    display: none !important;
+  }
+
+  /* 显示打印标题 */
+  .print-title-row {
+    display: block !important;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+  .print-title {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 8px;
+  }
+  .print-date-range {
+    font-size: 11pt;
+    color: #333;
+    margin: 0 0 12px;
+  }
+
+  /* 表格占满页面 */
+  .el-table {
+    height: auto !important;
+    max-height: none !important;
+  }
+  .el-table__body-wrapper {
+    height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+  }
+
+  /* 页面主体 */
+  .page {
+    padding: 0 !important;
+  }
+  body {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
 }
 </style>

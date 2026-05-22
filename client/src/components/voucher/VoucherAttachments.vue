@@ -137,10 +137,10 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ref } from 'vue'
+import { ElMessageBox } from 'element-plus'
 import { Document, Upload, View, Delete, Download } from '@element-plus/icons-vue'
-import { showSuccess, showError } from '@/composables/useMessage'
+import { showError } from '@/composables/useMessage'
 
 interface Attachment {
   id: string
