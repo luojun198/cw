@@ -3,19 +3,93 @@
     <template #header>
       <div class="draft-card-header">
         <span class="draft-card-title">未审核凭证</span>
-        <div class="voucher-draft-toolbar">
-          <div class="voucher-toolbar-group voucher-toolbar-group--tools">
-            <span class="voucher-toolbar-group-label">工具</span>
-            <el-button class="voucher-toolbar-btn" size="small" type="warning" plain @click="emit('renumber')">重新排号</el-button>
-            <el-button class="voucher-toolbar-btn" size="small" type="danger" plain @click="emit('batch-delete')">批量删除</el-button>
+
+        <!-- 筛选栏移到标题右侧 -->
+        <div class="draft-filter-bar">
+          <el-input
+            v-model="filters.keyword"
+            class="filter-input"
+            placeholder="搜索凭证号、摘要、科目..."
+            clearable
+            size="small"
+            prefix-icon="Search"
+            @input="handleKeywordChange"
+          />
+          <el-date-picker
+            v-model="filters.dateRange"
+            type="daterange"
+            size="small"
+            range-separator="至"
+            start-placeholder="开始日期"
+            end-placeholder="结束日期"
+            value-format="YYYY-MM-DD"
+            style="width: 220px"
+            @change="handleFilterChange"
+          />
+          <el-select
+            v-model="filters.voucherTypeIds"
+            placeholder="凭证类型"
+            size="small"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            clearable
+            style="width: 140px"
+            @change="handleFilterChange"
+          >
+            <el-option v-for="vt in voucherTypes" :key="vt.id" :label="vt.name" :value="vt.id" />
+          </el-select>
+          <el-select
+            v-model="filters.accountIds"
+            placeholder="科目"
+            size="small"
+            :popper-class="ACCOUNT_SELECT_POPPER_CLASS"
+            multiple
+            collapse-tags
+            collapse-tags-tooltip
+            clearable
+            filterable
+            style="width: 140px"
+            @focus="emit('load-accounts')"
+            @change="handleFilterChange"
+          >
+            <el-option
+              v-for="acc in accounts"
+              :key="acc.id"
+              :label="`${acc.code} ${acc.name}`"
+              :value="acc.id"
+            />
+          </el-select>
+          <div class="filter-amount-range">
+            <el-input
+              v-model="filters.minAmount"
+              placeholder="最小金额"
+              size="small"
+              clearable
+              style="width: 100px"
+              @change="handleFilterChange"
+            />
+            <span style="margin: 0 4px">~</span>
+            <el-input
+              v-model="filters.maxAmount"
+              placeholder="最大金额"
+              size="small"
+              clearable
+              style="width: 100px"
+              @change="handleFilterChange"
+            />
           </div>
+          <el-button size="small" @click="handleClearFilters">清空</el-button>
+        </div>
+
+        <div class="voucher-draft-toolbar">
           <div class="voucher-toolbar-group voucher-toolbar-group--sort">
             <span class="voucher-toolbar-group-label">排序</span>
             <el-select
               :model-value="props.sortConfig.field"
-              @update:model-value="handleFieldChange"
               size="small"
               style="width: 108px"
+              @update:model-value="handleFieldChange"
             >
               <el-option label="凭证号" value="voucher_no" />
               <el-option label="凭证日期" value="voucher_date" />
@@ -30,26 +104,25 @@
               {{ props.sortConfig.order === 'asc' ? '升序' : '降序' }}
             </el-button>
           </div>
-          <el-input
-            v-model="inputKeyword"
-            class="voucher-draft-search"
-            placeholder="搜索凭证号、摘要、科目..."
-            clearable
+          <el-button
+            class="voucher-toolbar-btn"
             size="small"
-            prefix-icon="Search"
-          />
-          <el-button class="voucher-toolbar-btn" size="small" type="primary" link @click="emit('refresh')">刷新</el-button>
+            type="primary"
+            link
+            @click="emit('refresh')"
+            >刷新</el-button
+          >
         </div>
       </div>
     </template>
 
     <el-table
       ref="tableRef"
+      v-loading="loading"
       :data="filteredData"
       border
       size="small"
       class="compact-data-table"
-      v-loading="loading"
       empty-text="暂无未审核凭证"
       :row-class-name="getDraftRowClass"
       :cell-class-name="getCellClassName"
@@ -144,13 +217,19 @@
       </el-table-column>
       <el-table-column column-key="状态" label="状态" :width="colWidth('状态', 90)" align="center">
         <template #default="{ row }">
-          <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          <el-tag :type="statusTagType(row.status)" size="small">{{
+            statusLabel(row.status)
+          }}</el-tag>
         </template>
       </el-table-column>
     </el-table>
 
     <!-- 分页 -->
-    <div v-if="props.pagination" class="draft-pagination" style="display: flex; justify-content: flex-end">
+    <div
+      v-if="props.pagination"
+      class="draft-pagination"
+      style="display: flex; justify-content: flex-end"
+    >
       <el-pagination
         :current-page="props.pagination.page"
         :page-size="props.pagination.pageSize"
@@ -171,10 +250,20 @@ import { useTableSearch } from '@/composables/useTableSearch'
 import { useDebounce } from '@/composables/useDebounceThrottle'
 import { SortUp, SortDown } from '@element-plus/icons-vue'
 import { formatAmount } from '@/utils/format'
+import { ACCOUNT_SELECT_POPPER_CLASS } from '@/utils/accountSelectDisplay'
 
 interface SortConfig {
   field: string
   order: string
+}
+
+interface DraftFilters {
+  keyword: string
+  dateRange: string[]
+  voucherTypeIds: string[]
+  accountIds: number[]
+  minAmount: string
+  maxAmount: string
 }
 
 interface Props {
@@ -182,12 +271,13 @@ interface Props {
   loading?: boolean
   sortConfig?: SortConfig
   auxCategories?: any[]
+  voucherTypes?: any[]
+  accounts?: any[]
   pagination?: {
     page: number
     pageSize: number
     total: number
   }
-  /** 当前选中的凭证 ID（与凭证管理页选中逻辑一致） */
   selectedVoucherId?: string
 }
 
@@ -195,6 +285,8 @@ const props = withDefaults(defineProps<Props>(), {
   loading: false,
   sortConfig: () => ({ field: 'voucher_date', order: 'asc' }),
   auxCategories: () => [],
+  voucherTypes: () => [],
+  accounts: () => [],
   selectedVoucherId: '',
 })
 
@@ -205,10 +297,45 @@ const emit = defineEmits<{
   'sort-change': [config: SortConfig]
   'row-click': [row: any]
   'row-dblclick': [row: any]
-  'renumber': []
-  'batch-delete': []
   'page-change': [page: number, pageSize: number]
+  'filter-change': [filters: DraftFilters]
+  'load-accounts': []
 }>()
+
+// 筛选条件
+const filters = ref<DraftFilters>({
+  keyword: '',
+  dateRange: [],
+  voucherTypeIds: [],
+  accountIds: [],
+  minAmount: '',
+  maxAmount: '',
+})
+
+// 防抖处理关键词搜索
+const debouncedKeywordSearch = useDebounce(() => {
+  handleFilterChange()
+}, 300)
+
+function handleKeywordChange() {
+  debouncedKeywordSearch()
+}
+
+function handleFilterChange() {
+  emit('filter-change', filters.value)
+}
+
+function handleClearFilters() {
+  filters.value = {
+    keyword: '',
+    dateRange: [],
+    voucherTypeIds: [],
+    accountIds: [],
+    minAmount: '',
+    maxAmount: '',
+  }
+  handleFilterChange()
+}
 
 const { tableRef, onDragEnd, colWidth } = useListColumnWidth('voucher_draft_list')
 
@@ -288,7 +415,9 @@ function parseAuxData(entry: any): Record<string, string> {
         result[`_aux_${code}`] = (val as any).name
       }
     }
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
   return result
 }
 
@@ -308,7 +437,7 @@ const draftFlatList = computed(() => {
         id: v.id,
         entry_id: e?.id,
         voucher_no: voucherLabel,
-        summary: e ? (e.summary || v.remark || '') : (v.remark || ''),
+        summary: e ? e.summary || v.remark || '' : v.remark || '',
         _voucherId: v.id,
         _stripeGroup: index % 2,
         _voucherRowIndex: entryIdx,
@@ -343,18 +472,11 @@ const auxColumns = computed(() => {
   }))
 })
 
-// 搜索功能：inputKeyword 直接绑定输入框，debouncedKeyword 延迟 300ms 后更新实际过滤条件
-const inputKeyword = ref('')
-const debouncedKeyword = useDebounce(inputKeyword, 300)
-const { searchKeyword, filteredData, highlightText } = useTableSearch(() => draftFlatList.value, [
-  'voucher_no',
-  'summary',
-  'account_code',
-  'account_name',
-  'dept_name',
-  'project_name',
-])
-watch(debouncedKeyword, (val) => { searchKeyword.value = val })
+// 搜索功能：现在改为服务端搜索，移除本地过滤
+const { highlightText } = useTableSearch(() => props.vouchers, [])
+
+// 直接使用 props.vouchers 构建扁平列表（服务端已过滤）
+const filteredData = computed(() => draftFlatList.value)
 
 function voucherSpanMethod({ row, column }: { row: any; column: any }) {
   // 这些列同一个凭证的多行分录合并显示
@@ -382,16 +504,44 @@ function handleCurrentPageChange(page: number) {
 }
 
 .draft-card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
+  display: flex !important;
+  align-items: center !important;
+  gap: 12px !important;
+  flex-wrap: wrap !important;
 }
 
 .draft-card-title {
   font-weight: 600;
   font-size: 15px;
+  flex-shrink: 0;
+  width: 120px;
+}
+
+/* 筛选栏样式 - 完全居中显示 */
+.draft-filter-bar {
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+  flex: 1 !important;
+  justify-content: center !important;
+  min-width: 0 !important;
+}
+
+.voucher-draft-toolbar {
+  flex-shrink: 0;
+  width: 280px;
+  display: flex !important;
+  align-items: center !important;
+  gap: 6px !important;
+}
+
+.filter-input {
+  width: 180px;
+}
+
+.filter-amount-range {
+  display: flex;
+  align-items: center;
 }
 
 .draft-card-header-actions {

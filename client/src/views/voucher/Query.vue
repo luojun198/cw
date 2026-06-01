@@ -1,182 +1,111 @@
 <template>
   <div class="page voucher-list-page">
     <div class="voucher-page-top">
-      <h3 class="voucher-page-top-title">凭证查询</h3>
-      <VoucherFilterBar
-        layout="grouped"
-        :filters="filters"
-        :aux-categories="auxCategories"
-        :voucher-types="voucherTypes"
-        :accounts="accounts"
-        :aux-items-map="auxItemsMap"
-        enable-status
-        enable-year-period
-        enable-voucher-type
-        enable-account
-        enable-auxiliary
-        enable-sort
-        @search="fetchData"
-        @sort-change="onSortChange"
-        @load-accounts="loadAccounts"
-        @load-aux-items="loadAuxItems"
-      >
-        <template #actions>
-          <el-popover placement="bottom-start" :width="200" trigger="click">
-            <template #reference>
-              <el-button class="voucher-toolbar-btn" plain>
-                <el-icon><Setting /></el-icon>
-                列设置
-              </el-button>
-            </template>
-            <div style="display: flex; flex-direction: column; gap: 8px">
-              <div
-                v-for="col in visibleCols"
-                :key="col.prop"
-                style="display: flex; align-items: center; gap: 8px"
-              >
-                <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
-                <span>{{ col.label }}</span>
+      <div class="voucher-page-top-row">
+        <h3 class="voucher-page-top-title">凭证查询</h3>
+        <VoucherFilterBar
+          layout="grouped"
+          :filters="filters"
+          :aux-categories="auxCategories"
+          :voucher-types="voucherTypes"
+          :accounts="accounts"
+          :aux-items-map="auxItemsMap"
+          enable-status
+          enable-year-period
+          enable-voucher-type
+          enable-account
+          enable-auxiliary
+          enable-sort
+          enable-query-scheme
+          enable-operator
+          query-scheme-key="voucher-query-schemes"
+          @search="fetchData"
+          @sort-change="onSortChange"
+          @load-accounts="loadAccounts"
+          @load-aux-items="loadAuxItems"
+          @search-aux-items="searchAuxItems"
+          @apply-scheme="handleApplyScheme"
+        >
+          <template #actions>
+            <el-popover placement="bottom-start" :width="220" trigger="click">
+              <template #reference>
+                <el-button class="voucher-toolbar-btn" plain size="small">
+                  <el-icon><Setting /></el-icon>
+                  列设置
+                </el-button>
+              </template>
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <div
+                  v-for="col in columnSettingsList"
+                  :key="col.prop"
+                  style="display: flex; align-items: center; gap: 8px"
+                >
+                  <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
+                  <span>{{ col.label }}</span>
+                </div>
               </div>
-            </div>
-          </el-popover>
-          <el-button class="voucher-toolbar-btn" plain :loading="exporting" @click="exportData">
-            <el-icon><Download /></el-icon>
-            导出 Excel
-          </el-button>
-          <el-button class="voucher-toolbar-btn" plain @click="handleBatchPrint">
-            <el-icon><Printer /></el-icon>
-            批量打印
-          </el-button>
-          <el-button
-            class="voucher-toolbar-btn"
-            plain
-            :disabled="!selectedVoucherId"
-            @click="handleTurnTemplate"
-          >
-            转模版
-          </el-button>
-        </template>
-      </VoucherFilterBar>
+            </el-popover>
+            <el-button class="voucher-toolbar-btn" plain size="small" :loading="exporting" @click="exportData">
+              <el-icon><Download /></el-icon>
+              导出
+            </el-button>
+            <el-button class="voucher-toolbar-btn" plain size="small" @click="handleBatchPrint">
+              <el-icon><Printer /></el-icon>
+              批量打印
+            </el-button>
+            <el-button
+              class="voucher-toolbar-btn"
+              plain
+              size="small"
+              :disabled="!selectedVoucherId"
+              @click="handleTurnTemplate"
+            >
+              转模版
+            </el-button>
+          </template>
+        </VoucherFilterBar>
+      </div>
     </div>
 
-    <el-table
-      ref="tableRef"
-      :data="flatList"
-      border
-      size="small"
-      class="compact-data-table"
-      height="100%"
+    <VoucherAuditTable
+      class="voucher-audit-table-host"
+      mode="query"
       :loading="loading"
-      :row-class-name="getRowClass"
-      :cell-class-name="getCellClassName"
-      :span-method="voucherSpanMethod"
-      @header-dragend="onDragEnd"
+      :flat-list="flatList"
+      :is-selectable-row="() => false"
+      :get-row-class="getRowClass"
+      :get-cell-class-name-fn="getCellClassName"
+      :aux-categories="auxCategories"
+      :get-col-visible="getColVisible"
+      :column-widths="columnWidths"
+      :highlight-text="highlightText"
+      @header-dragend="onColumnDragEnd"
       @row-click="handleRowClick"
-    >
-      <el-table-column
-        v-if="getColVisible('voucher_no')"
-        label="凭证号"
-        prop="voucher_no"
-        :width="colWidth('voucher_no', 80)"
-        align="center"
-      />
-      <el-table-column
-        v-if="getColVisible('voucher_date')"
-        label="日期"
-        prop="voucher_date"
-        :width="colWidth('voucher_date', 100)"
-      />
-      <el-table-column
-        v-if="getColVisible('summary')"
-        label="摘要"
-        prop="summary"
-        :width="colWidth('summary', 150)"
-      />
-      <el-table-column
-        v-if="getColVisible('account_code')"
-        prop="account_code"
-        label="科目编码"
-        :width="colWidth('account_code', 100)"
-      />
-      <el-table-column
-        v-if="getColVisible('account_name')"
-        prop="account_name"
-        label="科目名称"
-        :width="colWidth('account_name', 160)"
-      />
-      <el-table-column
-        v-if="getColVisible('debit_amt')"
-        label="借方金额"
-        prop="debit_amt"
-        :width="colWidth('debit_amt', 130)"
-        align="right"
-        class-name="amount-cell"
-      >
-        <template #default="{ row }">
-          <AmountDisplay v-if="row.direction === 'debit'" :value="row.amount" :show-color="false" />
-        </template>
-      </el-table-column>
-      <el-table-column
-        v-if="getColVisible('credit_amt')"
-        label="贷方金额"
-        prop="credit_amt"
-        :width="colWidth('credit_amt', 130)"
-        align="right"
-        class-name="amount-cell"
-      >
-        <template #default="{ row }">
-          <AmountDisplay
-            v-if="row.direction === 'credit'"
-            :value="row.amount"
-            :show-color="false"
-          />
-        </template>
-      </el-table-column>
-      <el-table-column
-        v-for="col in auxColumns"
-        :key="col.prop"
-        :prop="col.prop"
-        :label="col.name"
-        :width="colWidth(col.prop, 100)"
-      />
-      <el-table-column
-        v-if="getColVisible('operator_info')"
-        label="经办信息"
-        prop="operator_info"
-        :width="colWidth('operator_info', 150)"
-      >
-        <template #default="{ row }">
-          <div class="operator-info">
-            <span>制单 {{ row.maker_name || '-' }}</span>
-            <span>审核 {{ row.auditor_name || '-' }}</span>
-            <span>记账 {{ row.poster_name || '-' }}</span>
-          </div>
-        </template>
-      </el-table-column>
-      <el-table-column
-        v-if="getColVisible('status')"
-        label="状态"
-        prop="status"
-        :width="colWidth('status', 80)"
-      >
-        <template #default="{ row }">
-          <StatusTag :status="row.status" size="small" />
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="120" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="printVoucher(row)">打印</el-button>
-          <el-button
-            v-if="row.status !== 'posted'"
-            link
-            type="danger"
-            size="small"
-            @click="handleDelete(row)"
-            >删除</el-button
-          >
-        </template>
-      </el-table-column>
-    </el-table>
+      @view-detail="handleRowDblclick"
+      @print="printVoucher"
+      @delete="handleDelete"
+    />
+
+    <div v-if="flatList.length > 0" class="voucher-batch-bar voucher-query-summary-bar">
+      <span class="summary-item">
+        <span class="summary-label">凭证数量：</span>
+        <span class="summary-value">{{ voucherCount }} 张</span>
+      </span>
+      <span class="summary-item">
+        <span class="summary-label">借方合计：</span>
+        <span class="summary-value summary-debit">{{ formatAmount(totalDebit) }}</span>
+      </span>
+      <span class="summary-item">
+        <span class="summary-label">贷方合计：</span>
+        <span class="summary-value summary-credit">{{ formatAmount(totalCredit) }}</span>
+      </span>
+      <span class="summary-item">
+        <span class="summary-label">差额：</span>
+        <span class="summary-value" :class="balanceDiff !== 0 ? 'summary-error' : ''">
+          {{ formatAmount(balanceDiff) }}
+        </span>
+      </span>
+    </div>
 
     <div class="pagination-bar">
       <span class="pagination-text">共 {{ pagination.total }} 条</span>
@@ -196,34 +125,7 @@
       />
     </div>
 
-    <!-- 日期范围对话框 -->
-    <el-dialog v-model="showDateDialog" title="选择日期范围" width="300px">
-      <el-form label-width="80px">
-        <el-form-item label="开始日期">
-          <el-date-picker
-            v-model="tempDateRange[0]"
-            type="date"
-            placeholder="选择开始日期"
-            value-format="YYYY-MM-DD"
-            style="width: 100%"
-          />
-        </el-form-item>
-        <el-form-item label="结束日期">
-          <el-date-picker
-            v-model="tempDateRange[1]"
-            type="date"
-            placeholder="选择结束日期"
-            value-format="YYYY-MM-DD"
-            style="width: 100%"
-          />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showDateDialog = false">取消</el-button>
-        <el-button @click="clearDateRange">清空</el-button>
-        <el-button type="primary" @click="confirmDateRange">确定</el-button>
-      </template>
-    </el-dialog>
+    <VoucherEntryDialogHost ref="entryDialogHostRef" @saved="fetchData" />
 
     <PrintDialog
       v-model="printDialogVisible"
@@ -238,7 +140,6 @@
       :default-voucher-type-ids="batchPrintVoucherTypeIds"
     />
 
-    <!-- 转模版对话框 -->
     <el-dialog v-model="templateDialogVisible" title="保存为模版" width="500px">
       <el-form :model="templateForm" label-width="100px">
         <el-form-item label="模版编号" required>
@@ -250,35 +151,94 @@
       </el-form>
       <template #footer>
         <el-button @click="templateDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="templateSaving" @click="handleTemplateConfirm"
-          >确定</el-button
-        >
+        <el-button type="primary" :loading="templateSaving" @click="handleTemplateConfirm">
+          确定
+        </el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onActivated } from 'vue'
+import { ref, computed, onMounted, onActivated, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import request from '@/api/request'
 import { Setting, Printer, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import StatusTag from '@/components/StatusTag.vue'
-import AmountDisplay from '@/components/AmountDisplay.vue'
 import PrintDialog from '@/components/print/PrintDialog.vue'
 import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
 import VoucherFilterBar from '@/components/voucher/VoucherFilterBar.vue'
+import VoucherAuditTable from '@/components/voucher/VoucherAuditTable.vue'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
-import { useVoucherQuery } from '@/composables/useVoucherQuery'
+import { useVoucherQuery, applyVoucherFilters, type VoucherFilters } from '@/composables/useVoucherQuery'
+import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 import { useOperationHistory } from '@/composables/useOperationHistory'
 import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { useTableSearch } from '@/composables/useTableSearch'
 import { exportVouchersToExcel, fetchAllVouchers } from '@/utils/voucherExport'
 
-const route = useRoute()
+const VIS_COL_KEY = 'voucher-query-cols-visible'
+const {
+  widths: columnWidths,
+  onDragEnd: onColumnDragEnd,
+  load: reloadColumnWidths,
+} = useColumnWidthMemory('voucher_query')
 
-// 使用 useVoucherQuery composable
+interface ColSetting {
+  prop: string
+  label: string
+  visible: boolean
+  dynamic?: boolean
+}
+
+const baseVisibleCols: ColSetting[] = [
+  { prop: 'voucher_date', label: '日期', visible: true },
+  { prop: 'voucher_no', label: '凭证号', visible: true },
+  { prop: 'voucher_type_name', label: '类型', visible: true },
+  { prop: 'summary', label: '摘要', visible: true },
+  { prop: 'account_code', label: '科目编码', visible: true },
+  { prop: 'account_name', label: '科目名称', visible: true },
+  { prop: 'debit_amt', label: '借方金额', visible: true },
+  { prop: 'credit_amt', label: '贷方金额', visible: true },
+  { prop: 'operator_info', label: '经办信息', visible: true },
+  { prop: 'status', label: '状态', visible: true },
+]
+
+const visibleCols = ref<ColSetting[]>(baseVisibleCols.map(c => ({ ...c })))
+
+function restoreVisibleCols() {
+  const saved = JSON.parse(localStorage.getItem(VIS_COL_KEY) || 'null')
+  if (!saved || !Array.isArray(saved)) return
+  for (const s of saved) {
+    const col = visibleCols.value.find(c => c.prop === s.prop)
+    if (col) col.visible = s.visible
+  }
+  const operatorCol = visibleCols.value.find(c => c.prop === 'operator_info')
+  if (operatorCol && !saved.some((s: { prop: string }) => s.prop === 'operator_info')) {
+    operatorCol.visible = ['maker_name', 'auditor_name', 'poster_name'].some(
+      prop => saved.find((s: { prop: string }) => s.prop === prop)?.visible !== false
+    )
+  }
+}
+
+function saveVisibleCols() {
+  localStorage.setItem(
+    VIS_COL_KEY,
+    JSON.stringify(visibleCols.value.map(c => ({ prop: c.prop, visible: c.visible })))
+  )
+}
+
+function getColVisible(prop: string) {
+  return visibleCols.value.find(c => c.prop === prop)?.visible ?? true
+}
+
+const columnSettingsList = computed(() => visibleCols.value)
+
+const route = useRoute()
+const { addRecord } = useOperationHistory()
+
 const {
   filters,
   pagination,
@@ -298,106 +258,112 @@ const {
   loadVoucherTypes,
   loadAccounts,
   loadAuxItems,
+  searchAuxItems,
 } = useVoucherQuery({
   enableStatus: true,
   enableYearPeriod: true,
   enableVoucherType: true,
   enableAccount: true,
   enableAuxiliary: true,
+  enableSort: true,
   enableSearchMemory: true,
   searchMemoryKey: 'voucher-query-filters',
 })
 
-// 操作历史
-const { addRecord } = useOperationHistory()
+const { highlightText, searchKeyword } = useTableSearch(
+  () => flatList.value,
+  ['summary', 'account_code', 'account_name']
+)
 
-const tableRef = ref()
-const exporting = ref(false)
-const VIS_COL_KEY = 'voucher-query-cols-visible'
-const { onDragEnd, load, colWidth, bindTable } = useColumnWidthMemory('voucher_query')
-bindTable(tableRef)
-onActivated(() => load())
+watch(
+  () => filters.value.keyword,
+  kw => {
+    searchKeyword.value = kw
+  },
+  { immediate: true }
+)
 
-// 列可见性配置
-const visibleCols = ref([
-  { prop: 'voucher_no', label: '凭证号', visible: true },
-  { prop: 'voucher_date', label: '日期', visible: true },
-  { prop: 'summary', label: '摘要', visible: true },
-  { prop: 'account_code', label: '科目编码', visible: true },
-  { prop: 'account_name', label: '科目名称', visible: true },
-  { prop: 'debit_amt', label: '借方金额', visible: true },
-  { prop: 'credit_amt', label: '贷方金额', visible: true },
-  { prop: 'operator_info', label: '经办信息', visible: true },
-  { prop: 'status', label: '状态', visible: true },
-])
+const discoveredDynamicCols = computed<ColSetting[]>(() => {
+  const fixedCodes = new Set(['dept', 'project', 'supplier', 'person', 'func_class'])
+  const result: ColSetting[] = []
+  const seen = new Set<string>()
 
-// 恢复列可见性
-function restoreVisibleCols() {
-  const saved = JSON.parse(localStorage.getItem(VIS_COL_KEY) || 'null')
-  if (saved && Array.isArray(saved)) {
-    for (const s of saved) {
-      const col = visibleCols.value.find(c => c.prop === s.prop)
-      if (col) col.visible = s.visible
-    }
-    const operatorCol = visibleCols.value.find(c => c.prop === 'operator_info')
-    if (operatorCol && !saved.some((s: any) => s.prop === 'operator_info')) {
-      operatorCol.visible = ['maker_name', 'auditor_name', 'poster_name'].some(
-        prop => saved.find((s: any) => s.prop === prop)?.visible !== false
-      )
-    }
-  }
-}
-
-function saveVisibleCols() {
-  localStorage.setItem(
-    VIS_COL_KEY,
-    JSON.stringify(visibleCols.value.map(c => ({ prop: c.prop, visible: c.visible })))
+  const hasDept = flatList.value.some(
+    row => row.dept_name && String(row.dept_name).trim() !== ''
   )
-}
-
-function getColVisible(prop: string) {
-  return visibleCols.value.find(c => c.prop === prop)?.visible ?? true
-}
-
-// 动态辅助列：从 aux_data 中提取出现过的辅助类别和自定义字段
-const auxColumns = computed(() => {
-  const colMap = new Map<string, { name: string; order: number }>()
+  const hasProject = flatList.value.some(
+    row => row.project_name && String(row.project_name).trim() !== ''
+  )
+  if (hasDept && !seen.has('dept_name')) {
+    seen.add('dept_name')
+    result.push({ prop: 'dept_name', label: '部门', visible: true, dynamic: true })
+  }
+  if (hasProject && !seen.has('project_name')) {
+    seen.add('project_name')
+    result.push({ prop: 'project_name', label: '项目', visible: true, dynamic: true })
+  }
 
   for (const row of flatList.value) {
     for (const key of Object.keys(row)) {
-      if (key.startsWith('_aux_') && row[key]) {
-        if (!colMap.has(key)) {
-          const parts = key.slice(5).split('_') // 去掉 _aux_ 前缀后分割
-          const code = parts[0]
-          const cat = auxCategories.value.find(c => c.code === code)
-
-          if (parts.length === 1) {
-            // 辅助项目列：_aux_{code}
-            colMap.set(key, {
-              name: cat?.name || code,
-              order: (cat?.id || 0) * 1000,
-            })
-          } else {
-            // 自定义字段列：_aux_{code}_{fieldKey}
-            const fieldKey = parts.slice(1).join('_')
-            const field = cat?.fields?.find((f: any) => f.field_key === fieldKey)
-            colMap.set(key, {
-              name: field?.field_name || fieldKey,
-              order: (cat?.id || 0) * 1000 + (field?.id || 0),
-            })
-          }
-        }
-      }
+      if (!key.startsWith('_aux_') || !row[key]) continue
+      if (seen.has(key)) continue
+      const code = key.slice(5)
+      if (fixedCodes.has(code)) continue
+      const cat = auxCategories.value.find(c => c.code === code)
+      if (!cat) continue
+      seen.add(key)
+      result.push({ prop: key, label: cat.name || code, visible: true, dynamic: true })
     }
   }
-
-  // 按 order 排序，确保同一类别的列聚合在一起
-  return Array.from(colMap.entries())
-    .map(([prop, { name, order }]) => ({ prop, name, order }))
-    .sort((a, b) => a.order - b.order)
+  return result
 })
 
-function getRowClass({ row }: { row: any }) {
+watch(
+  discoveredDynamicCols,
+  dynamic => {
+    const kept = visibleCols.value.filter(c => !c.dynamic)
+    const merged = [...kept]
+    for (const col of dynamic) {
+      const existing = visibleCols.value.find(c => c.prop === col.prop)
+      merged.push(existing ? { ...existing } : { ...col })
+    }
+    visibleCols.value = merged
+  },
+  { immediate: true }
+)
+
+const voucherCount = computed(() => {
+  const voucherIds = new Set(flatList.value.map((row: { _voucherId: string }) => row._voucherId))
+  return voucherIds.size
+})
+
+const totalDebit = computed(() =>
+  flatList.value
+    .filter((row: { direction?: string }) => row.direction === 'debit')
+    .reduce((sum: number, row: { amount?: number }) => sum + (row.amount || 0), 0)
+)
+
+const totalCredit = computed(() =>
+  flatList.value
+    .filter((row: { direction?: string }) => row.direction === 'credit')
+    .reduce((sum: number, row: { amount?: number }) => sum + (row.amount || 0), 0)
+)
+
+const balanceDiff = computed(() => totalDebit.value - totalCredit.value)
+
+function formatAmount(value: number): string {
+  return value.toLocaleString('zh-CN', {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })
+}
+
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const { tryRestoreVoucherModal } = useVoucherModalRestore(entryDialogHostRef)
+const exporting = ref(false)
+const selectedVoucherId = ref('')
+
+function getRowClass({ row }: { row: { _stripeGroup?: number; _voucherId?: string } }) {
   const stripeClass = row._stripeGroup === 0 ? 'voucher-group-even' : 'voucher-group-odd'
   if (selectedVoucherId.value && row._voucherId === selectedVoucherId.value) {
     return `${stripeClass} voucher-selected`
@@ -405,19 +371,16 @@ function getRowClass({ row }: { row: any }) {
   return stripeClass
 }
 
-function getCellClassName({ row }: { row: any }) {
+function getCellClassName({ row }: { row: { _voucherId?: string } }) {
   return selectedVoucherId.value && row._voucherId === selectedVoucherId.value
     ? 'voucher-cell-selected'
     : ''
 }
 
-function voucherSpanMethod({ row, column }: { row: any; column: any }) {
-  if (['voucher_no', 'voucher_date', 'operator_info'].includes(column.property)) {
-    if (row._voucherRowIndex === 0) {
-      return { rowspan: row._voucherEntryCount, colspan: 1 }
-    }
-    return { rowspan: 0, colspan: 0 }
-  }
+function handleApplyScheme(schemeFilters: Partial<VoucherFilters>) {
+  applyVoucherFilters(filters.value, schemeFilters)
+  pagination.page = 1
+  fetchData()
 }
 
 function applyRouteFilters() {
@@ -430,7 +393,24 @@ function applyRouteFilters() {
   filters.value.keyword = keyword
 }
 
-function printVoucher(row: any) {
+function handleRowClick(row: { _voucherId?: string }) {
+  if (!row._voucherId) return
+  selectedVoucherId.value = selectedVoucherId.value === row._voucherId ? '' : row._voucherId
+}
+
+function handleRowDblclick(row: any) {
+  entryDialogHostRef.value?.open(row)
+}
+
+const printDialogVisible = ref(false)
+const printVoucherIds = ref<Array<string | number>>([])
+const printMode = ref<'single' | 'batch'>('batch')
+const directPrint = ref(false)
+const batchPrintVisible = ref(false)
+const batchPrintDateRange = ref<string[]>([])
+const batchPrintVoucherTypeIds = ref<string[]>([])
+
+function printVoucher(row: { _voucherId?: string; id?: string }) {
   const voucherId = row._voucherId || row.id
   if (!voucherId) return
   printVoucherIds.value = [voucherId]
@@ -438,30 +418,38 @@ function printVoucher(row: any) {
   printDialogVisible.value = true
 }
 
-const printDialogVisible = ref(false)
-const printVoucherIds = ref<number[]>([])
-const printMode = ref<'single' | 'batch'>('batch')
-const directPrint = ref(false)
-const batchPrintVisible = ref(false)
-const batchPrintDateRange = ref<string[]>([])
-const batchPrintVoucherTypeIds = ref<string[]>([])
+function handleBatchPrint() {
+  const vouchers = list.value
+  if (vouchers.length > 0) {
+    const dates = vouchers
+      .map((v: any) => v.voucher_date || v.date)
+      .filter(Boolean)
+      .sort() as string[]
+    if (dates.length >= 2) {
+      batchPrintDateRange.value = [dates[0], dates[dates.length - 1]]
+    } else if (dates.length === 1) {
+      batchPrintDateRange.value = [dates[0], dates[0]]
+    } else {
+      batchPrintDateRange.value = []
+    }
+    const typeIds = new Set<string>()
+    vouchers.forEach((v: any) => {
+      if (v.voucher_type_id) typeIds.add(v.voucher_type_id)
+    })
+    batchPrintVoucherTypeIds.value = Array.from(typeIds)
+  } else {
+    batchPrintDateRange.value = []
+    batchPrintVoucherTypeIds.value = []
+  }
+  batchPrintVisible.value = true
+}
 
-// 转模版相关
-const selectedVoucherId = ref('')
 const templateDialogVisible = ref(false)
 const templateForm = ref({
   template_no: '',
   template_name: '',
 })
 const templateSaving = ref(false)
-
-function handleRowClick(row: any) {
-  if (selectedVoucherId.value === row._voucherId) {
-    selectedVoucherId.value = ''
-  } else {
-    selectedVoucherId.value = row._voucherId
-  }
-}
 
 function handleTurnTemplate() {
   if (!selectedVoucherId.value) return
@@ -493,52 +481,6 @@ async function handleTemplateConfirm() {
   }
 }
 
-// 日期范围对话框相关
-const showDateDialog = ref(false)
-const tempDateRange = ref<string[]>([])
-
-function clearDateRange() {
-  tempDateRange.value = []
-  filters.value.dateRange = []
-  showDateDialog.value = false
-  fetchData()
-}
-
-function confirmDateRange() {
-  filters.value.dateRange = [...tempDateRange.value]
-  showDateDialog.value = false
-  fetchData()
-}
-
-function handleBatchPrint() {
-  // 从当前页面显示的凭证中提取日期范围和凭证类型
-  const vouchers = list.value
-  if (vouchers.length > 0) {
-    // 提取日期范围：取所有凭证的最小/最大日期
-    const dates = vouchers
-      .map((v: any) => v.voucher_date || v.date)
-      .filter(Boolean)
-      .sort()
-    if (dates.length >= 2) {
-      batchPrintDateRange.value = [dates[0], dates[dates.length - 1]]
-    } else if (dates.length === 1) {
-      batchPrintDateRange.value = [dates[0], dates[0]]
-    } else {
-      batchPrintDateRange.value = []
-    }
-    // 提取凭证类型ID：取页面上所有出现的凭证类型
-    const typeIds = new Set<string>()
-    vouchers.forEach((v: any) => {
-      if (v.voucher_type_id) typeIds.add(v.voucher_type_id)
-    })
-    batchPrintVoucherTypeIds.value = Array.from(typeIds)
-  } else {
-    batchPrintDateRange.value = []
-    batchPrintVoucherTypeIds.value = []
-  }
-  batchPrintVisible.value = true
-}
-
 async function exportData() {
   exporting.value = true
   try {
@@ -566,6 +508,9 @@ async function handleDelete(row: any) {
     await request.delete(`/voucher/vouchers/${row._voucherId}`)
     showSuccess('删除成功')
     addRecord('delete', '凭证查询', `删除凭证：${voucher.voucher_no}`)
+    if (selectedVoucherId.value === row._voucherId) {
+      selectedVoucherId.value = ''
+    }
     fetchData()
   } catch (error) {
     showOperationError('删除', error)
@@ -578,53 +523,20 @@ onMounted(async () => {
   const [, , paramsRes] = await Promise.all([
     loadAuxCategories(),
     loadVoucherTypes(),
-    request.get<any[]>('/system/params').catch(() => ({ data: [] })),
+    request.get<unknown[]>('/system/params').catch(() => ({ data: [] })),
   ])
-  const params = ((paramsRes as any).data || []) as any[]
-  const dp = params.find((p: any) => p.param_key === 'direct_print')
+  const params = ((paramsRes as { data?: Array<{ param_key: string; param_value: string }> }).data ||
+    []) as Array<{ param_key: string; param_value: string }>
+  const dp = params.find(p => p.param_key === 'direct_print')
   directPrint.value = dp ? dp.param_value === 'true' : false
   fetchData()
+  await tryRestoreVoucherModal()
+})
+
+onActivated(() => {
+  reloadColumnWidths()
+  void tryRestoreVoucherModal()
 })
 </script>
 
 <style src="./voucher.styles.css"></style>
-
-<style>
-/* 凭证查询表格斑马纹与选中 */
-.voucher-list-page .el-table__body tr.voucher-group-even td.el-table__cell {
-  background-color: #f0f5ff;
-}
-.voucher-list-page .el-table__body tr.voucher-group-odd td.el-table__cell {
-  background-color: #fff;
-}
-.voucher-list-page .el-table__body tr.voucher-selected td.el-table__cell,
-.voucher-list-page .el-table__body td.voucher-cell-selected {
-  background-color: #b3d8ff !important;
-  font-weight: 500;
-}
-.voucher-list-page .el-table__body tr.voucher-selected:hover td.el-table__cell,
-.voucher-list-page .el-table__body tr:hover td.voucher-cell-selected {
-  background-color: #b3d8ff !important;
-}
-
-/* 缩小日期选择器弹出面板 */
-.el-date-range-picker {
-  width: 450px !important;
-}
-.el-date-range-picker .el-picker-panel__body {
-  min-width: 400px !important;
-}
-.el-date-range-picker .el-date-table {
-  font-size: 12px !important;
-}
-.el-date-range-picker .el-date-table td {
-  width: 28px !important;
-  height: 28px !important;
-  padding: 2px !important;
-}
-.el-date-range-picker .el-date-table td span {
-  width: 24px !important;
-  height: 24px !important;
-  line-height: 24px !important;
-}
-</style>

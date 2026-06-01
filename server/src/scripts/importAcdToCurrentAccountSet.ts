@@ -7,6 +7,14 @@ import bcrypt from 'bcryptjs'
 import { ACD_TO_CW } from '../db/permissions.js'
 import { mapAcdCashFlowJd } from '../utils/acdCashFlow.js'
 import { parseKmbmRow } from '../utils/acdKmbmParse.js'
+import { buildVoucherNo, getMaxVoucherNoSeqInPeriod } from '../services/voucherEntry.js'
+import {
+  applyAccountCodeConfigToDb,
+  syncAccountSetStartDate,
+  isValidAccountSetStartDate,
+  resolveAccountSetStartDate,
+} from '../services/accountSetDefaults.js'
+import { importCashierTables, importFixedAssetTables } from './importAcdCashierAsset.js'
 
 type AcdRow = string[]
 
@@ -18,10 +26,10 @@ type AcdUser = {
 }
 
 type AcdRight = {
-  userCode: string    // 用户代码
-  rightCode: string   // 权限代码（如 '401', 'A03'）
-  rightName: string   // 权限名称
-  status: string      // 状态标志
+  userCode: string // 用户代码
+  rightCode: string // 权限代码（如 '401', 'A03'）
+  rightName: string // 权限名称
+  status: string // 状态标志
 }
 
 type ParsedTables = {
@@ -38,14 +46,28 @@ type ParsedTables = {
   reportTemplates: Map<string, string>
   reportTemplateBuffers: Map<string, Buffer>
   users: AcdUser[]
-  rights: AcdRight[]  // 用户权限数据
+  rights: AcdRight[] // 用户权限数据
   // 辅助核算主数据表
-  auxProjects: AcdRow[]      // xmk - 项目
-  auxCustomers: AcdRow[]     // dwk - 往来单位
-  auxDepts: AcdRow[]         // bmk - 部门
-  auxPersons: AcdRow[]       // grk - 个人
-  auxCashFlows: AcdRow[]     // xjll_xm - 现金流量项目
-  auxFundSources: AcdRow[]   // zjly - 资金来源
+  auxProjects: AcdRow[] // xmk - 项目
+  auxCustomers: AcdRow[] // dwk - 往来单位
+  auxDepts: AcdRow[] // bmk - 部门
+  auxPersons: AcdRow[] // grk - 个人
+  auxCashFlows: AcdRow[] // xjll_xm - 现金流量项目
+  auxFundSources: AcdRow[] // zjly - 资金来源
+  // 出纳模块原始表
+  cashierJournal: AcdRow[] // cn_mx - 出纳日记账明细
+  cashierInitBalances: AcdRow[] // cn_nc - 出纳期初
+  bankStatements: AcdRow[] // yhdzd - 银行对账单
+  settleTypes: AcdRow[] // jslb - 结算方式
+  // 固定资产模块原始表
+  fixedAssets: AcdRow[] // zc_gdzc - 卡片主表
+  fixedAssetDepr: AcdRow[] // zc_yzjb - 月折旧
+  fixedAssetOrigChanges: AcdRow[] // zc_yzzj - 原值增减
+  fixedAssetMods: AcdRow[] // zc_sbbd - 变动流水
+  fixedAssetCategories: AcdRow[] // zc_sblb - 类别
+  fixedAssetStatuses: AcdRow[] // zc_sbzt - 状态
+  fixedAssetPurposes: AcdRow[] // zc_sbyt - 用途
+  fixedAssetDepts: AcdRow[] // zc_sydw - 使用部门
 }
 
 type ReportDefinitionSeed = {
@@ -114,7 +136,12 @@ type ImportStats = {
     inserted: number
     skipped: number
   }
-  users: number  // 导入的用户数量
+  users: number // 导入的用户数量
+  periodClosing: {
+    closedCount: number
+    from: string // "YYYY-MM"
+    to: string // "YYYY-MM"（最后一个 closed 期间）
+  }
   reportTemplates: {
     definitions: number
     sheets: number
@@ -130,9 +157,23 @@ type ImportStats = {
     cashFlows: number
     fundSources: number
   }
+  cashier: {
+    journal: number
+    initBalances: number
+    bankStatements: number
+    settleTypes: number
+  }
+  fixedAsset: {
+    assets: number
+    depr: number
+    changes: number
+    categories: number
+    statuses: number
+    purposes: number
+    depts: number
+  }
   warnings: string[]
 }
-
 
 type Options = {
   acdFilePath?: string
@@ -164,7 +205,7 @@ function splitTableRows(content: string): AcdRow[] {
 
 /**
  * 严格的 ACD 文件解析器 - 基于定长头结构迭代
- * 
+ *
  * ACD 格式规范：
  * - 文件名字段：32字节（null结尾，0x20填充）
  * - 元数据头：12字节
@@ -173,9 +214,21 @@ function splitTableRows(content: string): AcdRow[] {
  *   - compressed_size: 4字节 (uint32 LE)
  * - zlib压缩数据：compressed_size字节
  */
-function parseAcdFileTables(filePath: string): { texts: Map<string, string>; buffers: Map<string, Buffer>; audit: AcdParseAudit }
-function parseAcdFileTables(buffer: Buffer): { texts: Map<string, string>; buffers: Map<string, Buffer>; audit: AcdParseAudit }
-function parseAcdFileTables(input: string | Buffer): { texts: Map<string, string>; buffers: Map<string, Buffer>; audit: AcdParseAudit } {
+function parseAcdFileTables(filePath: string): {
+  texts: Map<string, string>
+  buffers: Map<string, Buffer>
+  audit: AcdParseAudit
+}
+function parseAcdFileTables(buffer: Buffer): {
+  texts: Map<string, string>
+  buffers: Map<string, Buffer>
+  audit: AcdParseAudit
+}
+function parseAcdFileTables(input: string | Buffer): {
+  texts: Map<string, string>
+  buffers: Map<string, Buffer>
+  audit: AcdParseAudit
+} {
   const buffer = typeof input === 'string' ? fs.readFileSync(input) : input
   const texts = new Map<string, string>()
   const buffers = new Map<string, Buffer>()
@@ -219,7 +272,7 @@ function parseAcdFileTables(input: string | Buffer): { texts: Map<string, string
     // 跳过 null 和填充空格，找到元数据头起始位置
     const nullPos = buffer.indexOf(0x00, pos)
     if (nullPos === -1) break
-    
+
     let fieldEnd = nullPos + 1
     while (fieldEnd < buffer.length && buffer[fieldEnd] === 0x20) {
       fieldEnd++
@@ -262,10 +315,12 @@ function parseAcdFileTables(input: string | Buffer): { texts: Map<string, string
     const zlibData = buffer.subarray(zlibStart, zlibStart + compressedSize)
     try {
       const decompressed = zlib.inflateSync(zlibData)
-      
+
       // 验证解压后大小
       if (decompressed.length !== uncompressedSize) {
-        audit.warnings.push(`${fileName}: 解压后大小不匹配 (期望 ${uncompressedSize}, 实际 ${decompressed.length})`)
+        audit.warnings.push(
+          `${fileName}: 解压后大小不匹配 (期望 ${uncompressedSize}, 实际 ${decompressed.length})`
+        )
       }
 
       // 文本文件解码为 GBK
@@ -299,20 +354,20 @@ function parseDataStru(content: string): Map<string, string[]> {
 
   // data_stru.txt 格式：每行一个 CREATE TABLE 语句
   const lines = content.split(/\r?\n/).filter(line => line.trim())
-  
+
   for (const line of lines) {
     const match = line.match(/Create table (\w+) \((.*)\)/)
     if (!match) continue
-    
+
     const tableName = match[1].toLowerCase()
     const columnDefs = match[2]
       .split(',')
       .map(col => col.trim().split(/\s+/)[0].replace(/"/g, ''))
       .filter(Boolean)
-    
+
     result.set(tableName, columnDefs)
   }
-  
+
   return result
 }
 
@@ -368,7 +423,11 @@ function discoverAcdTables(tables: Map<string, string>): {
 function parseAcdTables(acdFilePath: string): ParsedTables
 function parseAcdTables(acdBuffer: Buffer): ParsedTables
 function parseAcdTables(acdFilePathOrBuffer: string | Buffer, acdBuffer?: Buffer): ParsedTables {
-  const { texts: tables, buffers: tableBuffers, audit } = typeof acdFilePathOrBuffer === 'string' && !acdBuffer
+  const {
+    texts: tables,
+    buffers: tableBuffers,
+    audit,
+  } = typeof acdFilePathOrBuffer === 'string' && !acdBuffer
     ? parseAcdFileTables(acdFilePathOrBuffer)
     : parseAcdFileTables(acdBuffer || (acdFilePathOrBuffer as Buffer))
 
@@ -384,15 +443,17 @@ function parseAcdTables(acdFilePathOrBuffer: string | Buffer, acdBuffer?: Buffer
   // 解析 data_stru.txt 做结构校验
   const dataStruContent = tables.get('data_stru.txt') || tables.get('rhsj\\data_stru.txt') || ''
   const dataStruTables = parseDataStru(dataStruContent)
-  
+
   // 对核心表做列数校验
   const getTable = (name: string) => {
     // 尝试多种可能的键格式
     const lowerName = name.toLowerCase()
-    return tables.get(lowerName) ||
-           tables.get(`rhsj\\${lowerName}`) ||
-           tables.get(`rhsj/${lowerName}`) ||
-           ''
+    return (
+      tables.get(lowerName) ||
+      tables.get(`rhsj\\${lowerName}`) ||
+      tables.get(`rhsj/${lowerName}`) ||
+      ''
+    )
   }
   const validateTableColumns = (tableName: string, content: string) => {
     if (!content || dataStruTables.size === 0) return
@@ -479,7 +540,21 @@ function parseAcdTables(acdFilePathOrBuffer: string | Buffer, acdBuffer?: Buffer
     reportTemplates: reportTemplates.size,
     b_user: parsedUsers.length,
     b_rights: parsedRights.length,
-    available: Array.from(tables.keys()).filter(key => ['xt.txt', 'pzlx.txt', 'kmbm.txt', 'nc.txt', 'jzlx.txt', 'pz.txt', 'pzdj.txt', 'bbml.txt', 'bbml_gs.txt', 'b_user.txt', 'b_rights.txt'].includes(key)),
+    available: Array.from(tables.keys()).filter(key =>
+      [
+        'xt.txt',
+        'pzlx.txt',
+        'kmbm.txt',
+        'nc.txt',
+        'jzlx.txt',
+        'pz.txt',
+        'pzdj.txt',
+        'bbml.txt',
+        'bbml_gs.txt',
+        'b_user.txt',
+        'b_rights.txt',
+      ].includes(key)
+    ),
   })
 
   // 对核心表做列数校验（与 data_stru.txt 对比）
@@ -496,6 +571,26 @@ function parseAcdTables(acdFilePathOrBuffer: string | Buffer, acdBuffer?: Buffer
   const auxPersonsContent = getTable('grk.txt')
   const auxCashFlowsContent = getTable('xjll_xm.txt')
   const auxFundSourcesContent = getTable('zjly.txt')
+
+  // 出纳模块表
+  const cashierJournalContent = getTable('cn_mx.txt')
+  const cashierInitBalanceContent = getTable('cn_nc.txt')
+  const bankStatementContent = getTable('yhdzd.txt')
+  const settleTypeContent = getTable('jslb.txt')
+  // 固定资产模块表
+  const fixedAssetContent = getTable('zc_gdzc.txt')
+  const fixedAssetDeprContent = getTable('zc_yzjb.txt')
+  const fixedAssetOrigChangeContent = getTable('zc_yzzj.txt')
+  const fixedAssetModContent = getTable('zc_sbbd.txt')
+  const fixedAssetCategoryContent = getTable('zc_sblb.txt')
+  const fixedAssetStatusContent = getTable('zc_sbzt.txt')
+  const fixedAssetPurposeContent = getTable('zc_sbyt.txt')
+  const fixedAssetDeptContent = getTable('zc_sydw.txt')
+
+  // 列数校验（对照 data_stru.txt，防止 \t 切分错位）
+  validateTableColumns('cn_mx', cashierJournalContent)
+  validateTableColumns('zc_gdzc', fixedAssetContent)
+  validateTableColumns('zc_yzjb', fixedAssetDeprContent)
 
   return {
     xt: parseXtTable(xtContent),
@@ -518,6 +613,18 @@ function parseAcdTables(acdFilePathOrBuffer: string | Buffer, acdBuffer?: Buffer
     auxPersons: splitTableRows(auxPersonsContent),
     auxCashFlows: splitTableRows(auxCashFlowsContent),
     auxFundSources: splitTableRows(auxFundSourcesContent),
+    cashierJournal: splitTableRows(cashierJournalContent),
+    cashierInitBalances: splitTableRows(cashierInitBalanceContent),
+    bankStatements: splitTableRows(bankStatementContent),
+    settleTypes: splitTableRows(settleTypeContent),
+    fixedAssets: splitTableRows(fixedAssetContent),
+    fixedAssetDepr: splitTableRows(fixedAssetDeprContent),
+    fixedAssetOrigChanges: splitTableRows(fixedAssetOrigChangeContent),
+    fixedAssetMods: splitTableRows(fixedAssetModContent),
+    fixedAssetCategories: splitTableRows(fixedAssetCategoryContent),
+    fixedAssetStatuses: splitTableRows(fixedAssetStatusContent),
+    fixedAssetPurposes: splitTableRows(fixedAssetPurposeContent),
+    fixedAssetDepts: splitTableRows(fixedAssetDeptContent),
   }
 }
 
@@ -650,8 +757,8 @@ function inferAccountCodeLengths(rows: AcdRow[]): number[] {
 
     // 取该级最常见的长度
     const lengthArray = Array.from(lengths)
-    const mostCommonLength = lengthArray.sort((a, b) =>
-      lengthArray.filter(x => x === b).length - lengthArray.filter(x => x === a).length
+    const mostCommonLength = lengthArray.sort(
+      (a, b) => lengthArray.filter(x => x === b).length - lengthArray.filter(x => x === a).length
     )[0]
 
     // 计算该级的增量长度
@@ -667,6 +774,15 @@ function inferAccountCodeLengths(rows: AcdRow[]): number[] {
 
   console.log(`[ACD] 推断科目编码长度: [${codeLengths.join(',')}]`)
   return codeLengths
+}
+
+function inferAccountLevelsFromAccounts(rows: AcdRow[]): number {
+  let maxLevel = 0
+  for (const row of rows) {
+    const level = Number.parseInt((row[2] || '0').trim(), 10)
+    if (level > maxLevel) maxLevel = level
+  }
+  return maxLevel > 0 ? Math.min(10, maxLevel) : 6
 }
 
 /**
@@ -735,8 +851,14 @@ function isLikelyVtsNoise(value: string): boolean {
   if (!trimmed) return true
   if (trimmed.length <= 1 && !/[\u4e00-\u9fff]/.test(trimmed)) return true
   if (/^[A-Za-z]:\\/.test(trimmed)) return true
-  if (/^(Arial|Times New Roman|MS Sans Serif|System|Fixedsys|Courier New|宋体|仿宋|黑体|楷体|华文[\u4e00-\u9fff]+)\d*$/i.test(trimmed)) return true
-  if (/^(True|False|Printer|Print|Preview|Setup|System|Object|VB\.|Begin|End)$/i.test(trimmed)) return true
+  if (
+    /^(Arial|Times New Roman|MS Sans Serif|System|Fixedsys|Courier New|宋体|仿宋|黑体|楷体|华文[\u4e00-\u9fff]+)\d*$/i.test(
+      trimmed
+    )
+  )
+    return true
+  if (/^(True|False|Printer|Print|Preview|Setup|System|Object|VB\.|Begin|End)$/i.test(trimmed))
+    return true
   if (/^(Left|Right|Top|Bottom|Center|General|Landscape|Portrait)$/i.test(trimmed)) return true
   if (/^(mm|cm|pt|inch|inches|dpi)$/i.test(trimmed)) return true
   if (/^[A-Za-z0-9_\-]{1,3}$/.test(trimmed) && !/\d/.test(trimmed)) return true
@@ -756,7 +878,11 @@ function normalizeVtsToken(value: string): string {
     .trim()
 }
 
-function resolvePreferredSheetName(tokens: string[], fallbackSheetName: string, sheetIndex: number): string {
+function resolvePreferredSheetName(
+  tokens: string[],
+  fallbackSheetName: string,
+  sheetIndex: number
+): string {
   const preferred = tokens.find(token => {
     if (isSheetMarker(token) || isFormulaToken(token)) return false
     if (token === fallbackSheetName || token === `${fallbackSheetName}(定义)`) return false
@@ -779,7 +905,9 @@ function shouldKeepVtsToken(value: string, fallbackSheetName: string): boolean {
   if (isSheetMarker(normalized) || isFormulaToken(normalized)) return true
   if (isLikelyVtsNoise(normalized)) return false
   if (isMeaningfulChineseToken(normalized)) return true
-  return /^(单位[:：]?元|本月数|本年累计数|本期发生额|累计发生额|累计完成数|项 目|项目|合 计|总 计)$/u.test(normalized)
+  return /^(单位[:：]?元|本月数|本年累计数|本期发生额|累计发生额|累计完成数|项 目|项目|合 计|总 计)$/u.test(
+    normalized
+  )
 }
 
 function extractVtsStrings(content: string, fallbackSheetName: string): VtsStringMatch[] {
@@ -826,7 +954,10 @@ function normalizeSheetName(value: string, fallback: string): string {
   return trimmed
 }
 
-function buildVtsCellsFromStrings(matches: VtsStringMatch[], fallbackSheetName: string): ParsedVtsSheet[] {
+function buildVtsCellsFromStrings(
+  matches: VtsStringMatch[],
+  fallbackSheetName: string
+): ParsedVtsSheet[] {
   const sheets: ParsedVtsSheet[] = []
   let pendingSheetMarker: string | null = null
   let pendingSheetMarkerIndex = -1
@@ -848,7 +979,8 @@ function buildVtsCellsFromStrings(matches: VtsStringMatch[], fallbackSheetName: 
     return cell.cellType === 'text' && /\(定义\)$/.test(cell.textValue || '')
   }
 
-  const isHeaderValue = (value: string) => /^(单位[:：]?元|本月数|本年累计数|本期发生额|累计发生额|累计完成数|上年数|本年数)$/u.test(value)
+  const isHeaderValue = (value: string) =>
+    /^(单位[:：]?元|本月数|本年累计数|本期发生额|累计发生额|累计完成数|上年数|本年数)$/u.test(value)
   const isSectionTitle = (value: string) => /^[一二三四五六七八九十]+[、，.．].+/u.test(value)
   const isIndentedProject = (value: string) => /^[（(][一二三四五六七八九十]+[）)].+/u.test(value)
   const isProjectLabel = (value: string) => isSectionTitle(value) || isIndentedProject(value)
@@ -872,7 +1004,8 @@ function buildVtsCellsFromStrings(matches: VtsStringMatch[], fallbackSheetName: 
         if (previous === '本年' && token === '归') return '本年归'
         if (previous === '本年归' && token === '单位内部') return '本年归还单位内部款'
         if (previous === '本年财政' && token === '本年财政') return '本年财政拨款'
-        if (previous === '本年财政拨款' && token === '年末财政拨款') return '本年财政拨款和年末财政拨款'
+        if (previous === '本年财政拨款' && token === '年末财政拨款')
+          return '本年财政拨款和年末财政拨款'
         if (previous === '财政拨款' && token === '归集') return '财政拨款归集'
         if (previous === '财政拨款归集' && token === '集上缴') return '财政拨款归集上缴'
         if (previous === '结转' && token === '结余') return '结转结余'
@@ -937,9 +1070,16 @@ function buildVtsCellsFromStrings(matches: VtsStringMatch[], fallbackSheetName: 
   }
 
   const rowHasCol = (targetRowIndex: number, targetColIndex: number) =>
-    currentSheet.cells.some(cell => cell.rowIndex === targetRowIndex && cell.colIndex === targetColIndex)
+    currentSheet.cells.some(
+      cell => cell.rowIndex === targetRowIndex && cell.colIndex === targetColIndex
+    )
 
-  const pushCell = (value: string, cellType: ParsedVtsCell['cellType'], targetColIndex: number, targetRowIndex = rowIndex) => {
+  const pushCell = (
+    value: string,
+    cellType: ParsedVtsCell['cellType'],
+    targetColIndex: number,
+    targetRowIndex = rowIndex
+  ) => {
     currentSheetTokens.push(value)
     currentSheet.cells.push({
       rowIndex: targetRowIndex,
@@ -1208,7 +1348,12 @@ function parsePastedGridTemplate(content: string, fallbackSheetName: string): Pa
     return false
   }
 
-  type RowPlacement = { sourceRowIndex: number; targetRowIndex: number; cols: string[]; isHeader: boolean }
+  type RowPlacement = {
+    sourceRowIndex: number
+    targetRowIndex: number
+    cols: string[]
+    isHeader: boolean
+  }
 
   const occupiedRows = new Set<number>()
   const placements: RowPlacement[] = []
@@ -1245,7 +1390,9 @@ function parsePastedGridTemplate(content: string, fallbackSheetName: string): Pa
     bodyCursor += 1
   })
 
-  placements.sort((a, b) => a.targetRowIndex - b.targetRowIndex || a.sourceRowIndex - b.sourceRowIndex)
+  placements.sort(
+    (a, b) => a.targetRowIndex - b.targetRowIndex || a.sourceRowIndex - b.sourceRowIndex
+  )
 
   const cells: ParsedVtsCell[] = []
   const formulas = new Set<string>()
@@ -1315,7 +1462,10 @@ function extractFormulaFunctionNames(formulas: string[]): string[] {
   return Array.from(functions).sort((a, b) => a.localeCompare(b))
 }
 
-function buildReportDefinitionSeeds(rows: AcdRow[], reportTemplates: Map<string, string>): ReportDefinitionSeed[] {
+function buildReportDefinitionSeeds(
+  rows: AcdRow[],
+  reportTemplates: Map<string, string>
+): ReportDefinitionSeed[] {
   const seeds: ReportDefinitionSeed[] = []
 
   rows.forEach((row, index) => {
@@ -1342,7 +1492,12 @@ function buildReportDefinitionSeeds(rows: AcdRow[], reportTemplates: Map<string,
   return seeds
 }
 
-function importReportTemplates(accountSetId: string, tables: ParsedTables, stats: ImportStats, dryRun: boolean) {
+function importReportTemplates(
+  accountSetId: string,
+  tables: ParsedTables,
+  stats: ImportStats,
+  dryRun: boolean
+) {
   const db = getDb()
   const reportSeeds = buildReportDefinitionSeeds(tables.reportCatalog, tables.reportTemplates)
 
@@ -1369,9 +1524,9 @@ function importReportTemplates(accountSetId: string, tables: ParsedTables, stats
   for (const reportSeed of reportSeeds) {
     const rawBuffer = tables.reportTemplateBuffers.get(reportSeed.sourceFile.toLowerCase())
     const rawTemplate = tables.reportTemplates.get(reportSeed.sourceFile.toLowerCase()) || ''
-    
+
     // Use binary parsing if buffer is available, otherwise fall back to string parsing
-    const parsedTemplate = rawBuffer 
+    const parsedTemplate = rawBuffer
       ? parseBinaryVtsTemplate(rawBuffer, reportSeed.name)
       : parseVtsTemplate(rawTemplate, reportSeed.name)
 
@@ -1380,11 +1535,14 @@ function importReportTemplates(accountSetId: string, tables: ParsedTables, stats
       stats.warnings.push(`跳过空报表模板: ${reportSeed.name} (${reportSeed.sourceFile})`)
       continue
     }
-    
+
     parsedTemplates.set(reportSeed.code, parsedTemplate)
     stats.reportTemplates.definitions += 1
     stats.reportTemplates.sheets += parsedTemplate.sheets.length
-    stats.reportTemplates.cells += parsedTemplate.sheets.reduce((sum, sheet) => sum + sheet.cells.length, 0)
+    stats.reportTemplates.cells += parsedTemplate.sheets.reduce(
+      (sum, sheet) => sum + sheet.cells.length,
+      0
+    )
     allFormulaTexts.push(...parsedTemplate.formulas)
   }
 
@@ -1404,9 +1562,7 @@ function importReportTemplates(accountSetId: string, tables: ParsedTables, stats
     ON CONFLICT(account_set_id, code)
     DO UPDATE SET name = excluded.name, source = excluded.source, source_file = excluded.source_file, sort_order = excluded.sort_order, updated_at = datetime('now')
   `)
-  const deleteSheets = db.prepare(
-    `DELETE FROM report_sheets WHERE report_definition_id = ?`
-  )
+  const deleteSheets = db.prepare(`DELETE FROM report_sheets WHERE report_definition_id = ?`)
   const deleteSources = db.prepare(
     `DELETE FROM report_template_sources WHERE report_definition_id = ?`
   )
@@ -1467,7 +1623,9 @@ function importReportTemplates(accountSetId: string, tables: ParsedTables, stats
     for (const sheet of parsedTemplate.sheets) {
       const sheetId = uuidv4()
       const dedupedCells = sheet.cells.filter((cell, index, allCells) => {
-        const firstIndex = allCells.findIndex(candidate => candidate.rowIndex === cell.rowIndex && candidate.colIndex === cell.colIndex)
+        const firstIndex = allCells.findIndex(
+          candidate => candidate.rowIndex === cell.rowIndex && candidate.colIndex === cell.colIndex
+        )
         return firstIndex === index
       })
       insertSheet.run(sheetId, definitionId, sheet.key, sheet.name, sheet.index)
@@ -1496,7 +1654,7 @@ function resolveCurrentAccountSet() {
   return accountSet
 }
 
-function buildStats(accountSetId: string, accountSetName: string): ImportStats {
+export function buildStats(accountSetId: string, accountSetName: string): ImportStats {
   return {
     accountSetId,
     accountSetName,
@@ -1509,6 +1667,7 @@ function buildStats(accountSetId: string, accountSetName: string): ImportStats {
     vouchers: { vouchers: 0, entries: 0 },
     budgetSurplusAdjustments: { inserted: 0, skipped: 0 },
     users: 0,
+    periodClosing: { closedCount: 0, from: '', to: '' },
     reportTemplates: { definitions: 0, sheets: 0, cells: 0, formulas: 0 },
     auxiliaryData: {
       totalItems: 0,
@@ -1518,6 +1677,16 @@ function buildStats(accountSetId: string, accountSetName: string): ImportStats {
       persons: 0,
       cashFlows: 0,
       fundSources: 0,
+    },
+    cashier: { journal: 0, initBalances: 0, bankStatements: 0, settleTypes: 0 },
+    fixedAsset: {
+      assets: 0,
+      depr: 0,
+      changes: 0,
+      categories: 0,
+      statuses: 0,
+      purposes: 0,
+      depts: 0,
     },
     warnings: [],
   }
@@ -1541,9 +1710,9 @@ function ensureAuxCategories(accountSetId: string, db: any): Map<string, string>
 
   for (const cat of categories) {
     // 查找或创建类别
-    let existing = db.prepare(
-      'SELECT id FROM aux_categories WHERE account_set_id = ? AND code = ?'
-    ).get(accountSetId, cat.code) as { id: string } | undefined
+    const existing = db
+      .prepare('SELECT id FROM aux_categories WHERE account_set_id = ? AND code = ?')
+      .get(accountSetId, cat.code) as { id: string } | undefined
 
     if (!existing) {
       const id = uuidv4()
@@ -1576,17 +1745,15 @@ function ensureCashFlowCategoryFields(accountSetId: string, categoryId: string, 
       show_in_voucher, required_in_voucher, required_in_archive, sort_order, is_enabled,
       created_at, updated_at
     ) VALUES (?, ?, 'direction', '流向', 'select', ?, 0, 0, 0, 0, 1, datetime('now'), datetime('now'))`
-  ).run(
-    uuidv4(),
-    categoryId,
-    JSON.stringify(['流入', '流出', '中性'])
-  )
+  ).run(uuidv4(), categoryId, JSON.stringify(['流入', '流出', '中性']))
 }
 
 /**
  * 导入现金流量项目（xjll_xm）：含 jd 流向，双写 aux_items + cash_flow_items
  */
-function cashFlowItemsTableExists(db: { prepare: (sql: string) => { get: () => unknown } }): boolean {
+function cashFlowItemsTableExists(db: {
+  prepare: (sql: string) => { get: () => unknown }
+}): boolean {
   const row = db
     .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'cash_flow_items'")
     .get() as { name: string } | undefined
@@ -1667,9 +1834,7 @@ function importCashFlowAuxItems(
   }
 
   if (neutralJdCount > 0) {
-    stats.warnings.push(
-      `现金流量项目有 ${neutralJdCount} 条 jd 无法识别，已设为中性流向`
-    )
+    stats.warnings.push(`现金流量项目有 ${neutralJdCount} 条 jd 无法识别，已设为中性流向`)
   }
 
   if (imported > 0) {
@@ -1699,9 +1864,9 @@ function importAuxItems(
   if (rows.length === 0) return 0
 
   const db = getDb()
-  const existing = db.prepare(
-    'SELECT code FROM aux_items WHERE account_set_id = ? AND type = ?'
-  ).all(accountSetId, categoryId) as Array<{ code: string }>
+  const existing = db
+    .prepare('SELECT code FROM aux_items WHERE account_set_id = ? AND type = ?')
+    .all(accountSetId, categoryId) as Array<{ code: string }>
   const existingCodes = new Set(existing.map(item => item.code))
 
   const insertStmt = db.prepare(`
@@ -1852,7 +2017,12 @@ function importAuxiliaryData(
   }
 }
 
-function importSystemParams(accountSetId: string, xt: Map<string, string>, stats: ImportStats, dryRun: boolean) {
+function importSystemParams(
+  accountSetId: string,
+  xt: Map<string, string>,
+  stats: ImportStats,
+  dryRun: boolean
+) {
   const db = getDb()
   const candidates = [
     { key: 'import_acd:version', value: xt.get('xt_bbh') || '' },
@@ -1883,7 +2053,158 @@ function importSystemParams(accountSetId: string, xt: Map<string, string>, stats
   }
 }
 
-function importVoucherTypes(accountSetId: string, rows: AcdRow[], stats: ImportStats, dryRun: boolean) {
+/**
+ * 解析 ACD 的"年.月"形式字符串。
+ * 支持 "2026.01"、"2026.01.01"、"2026-01"、"2026-01-01"、"2026/01"。
+ */
+export function parseAcdYearMonth(
+  s: string | undefined | null
+): { year: number; month: number } | null {
+  if (!s) return null
+  const m = String(s)
+    .trim()
+    .match(/^(\d{4})[.\-\/](\d{1,2})/)
+  if (!m) return null
+  const year = Number(m[1])
+  const month = Number(m[2])
+  if (!Number.isInteger(year) || year < 1900 || year > 2999) return null
+  if (!Number.isInteger(month) || month < 1 || month > 12) return null
+  return { year, month }
+}
+
+/**
+ * 解析 ACD xt_kzrq（开账/建账日期），返回 YYYY-MM-DD。
+ * 支持 "2026.01.01"、"2026-01-01"、"2026.01"、"2026-01" 等格式。
+ */
+export function parseAcdStartDate(s: string | undefined | null): string | null {
+  if (!s) return null
+  const m = String(s)
+    .trim()
+    .match(/^(\d{4})[.\-\/](\d{1,2})(?:[.\-\/](\d{1,2}))?$/)
+  if (!m) return null
+  const year = Number(m[1])
+  const month = Number(m[2])
+  const day = m[3] ? Number(m[3]) : 1
+  if (!Number.isInteger(year) || year < 1900 || year > 2999) return null
+  if (!Number.isInteger(month) || month < 1 || month > 12) return null
+  if (!Number.isInteger(day) || day < 1 || day > 31) return null
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+}
+
+/** 从 ACD xt.txt 的 xt_kzrq 更新账套建账日期；若账套已有有效建账日期则保留（用户创建时填写） */
+export function updateAccountSetStartDateFromXt(
+  db: { prepare: (sql: string) => { run: (...args: unknown[]) => unknown; get: (...args: unknown[]) => unknown } },
+  accountSetId: string,
+  xt: Map<string, string>
+): string | null {
+  const accountSet = db
+    .prepare('SELECT start_date, fiscal_year FROM account_sets WHERE id = ?')
+    .get(accountSetId) as { start_date?: string; fiscal_year?: number } | undefined
+  const existing = String(accountSet?.start_date || '').trim()
+  if (isValidAccountSetStartDate(existing)) {
+    console.log(`[ACD] 保留账套已有建账日期: ${existing}`)
+    syncAccountSetStartDate(db as any, accountSetId, existing)
+    return existing
+  }
+
+  const startDateStr = parseAcdStartDate(xt.get('xt_kzrq'))
+  if (!startDateStr) {
+    console.log('[ACD] xt.txt 中未找到有效的 xt_kzrq（建账日期），保持账套原有建账日期')
+    if (existing) {
+      const fallback = resolveAccountSetStartDate(existing, accountSet?.fiscal_year)
+      syncAccountSetStartDate(db as any, accountSetId, fallback)
+      return fallback
+    }
+    return null
+  }
+  console.log(`[ACD] 从 xt_kzrq 读取到建账日期: ${startDateStr}`)
+  syncAccountSetStartDate(db as any, accountSetId, startDateStr)
+  return startDateStr
+}
+
+/**
+ * 根据 ACD 的 xt.txt 推导出"已结账期间"集合，写入 period_closing 表。
+ *
+ * 规则：用友 ACD 中
+ *   - xt_kzrq（开账日期）= 账套起始期
+ *   - xt_jzyf（当前未结期间）= 此期之前的所有期间都已结账
+ *
+ * 半开区间 [xt_kzrq, xt_jzyf) 内所有 (year, period) 写入 status='closed'。
+ * closed_by / closed_at 留空（NULL），表示"由 ACD 导入回填，无明确结账人"。
+ *
+ * 幂等：ON CONFLICT DO UPDATE 不覆盖已有的 closed_by / closed_at。
+ */
+export function importPeriodClosing(
+  accountSetId: string,
+  xt: Map<string, string>,
+  stats: ImportStats,
+  dryRun: boolean,
+  injectedDb?: any
+): { closedCount: number; from: string; to: string } {
+  const db = injectedDb ?? getDb()
+  const current = parseAcdYearMonth(xt.get('xt_jzyf'))
+  if (!current) {
+    stats.warnings.push('xt.txt 缺少有效 xt_jzyf，跳过期间结账状态导入')
+    return { closedCount: 0, from: '', to: '' }
+  }
+
+  // 起始期：优先 xt_kzrq，缺失则 fallback 到 xt_jzyf 同年 1 月
+  const startFromKzrq = parseAcdYearMonth(xt.get('xt_kzrq'))
+  const start = startFromKzrq ?? { year: current.year, month: 1 }
+
+  // 生成 [start, current) 半开区间所有 (year, period)
+  const periods: Array<{ year: number; month: number }> = []
+  let y = start.year
+  let m = start.month
+  while (y < current.year || (y === current.year && m < current.month)) {
+    periods.push({ year: y, month: m })
+    m += 1
+    if (m > 12) {
+      m = 1
+      y += 1
+    }
+    // 防止配置错乱导致死循环
+    if (periods.length > 12 * 200) break
+  }
+
+  const fmt = (p: { year: number; month: number }) =>
+    `${p.year}-${String(p.month).padStart(2, '0')}`
+
+  const from = periods.length > 0 ? fmt(periods[0]) : ''
+  const to = periods.length > 0 ? fmt(periods[periods.length - 1]) : ''
+
+  stats.periodClosing.closedCount = periods.length
+  stats.periodClosing.from = from
+  stats.periodClosing.to = to
+
+  if (periods.length === 0 || dryRun) {
+    return { closedCount: periods.length, from, to }
+  }
+
+  const upsert = db.prepare(`
+    INSERT INTO period_closing (id, account_set_id, year, period, status, closed_by, closed_at, created_at)
+    VALUES (?, ?, ?, ?, 'closed', NULL, NULL, datetime('now'))
+    ON CONFLICT(account_set_id, year, period) DO UPDATE SET
+      status = 'closed',
+      closed_by = COALESCE(period_closing.closed_by, excluded.closed_by),
+      closed_at = COALESCE(period_closing.closed_at, excluded.closed_at)
+  `)
+
+  for (const p of periods) {
+    upsert.run(uuidv4(), accountSetId, p.year, p.month)
+  }
+
+  stats.importedTables.push('period_closing(@xt)')
+
+  return { closedCount: periods.length, from, to }
+}
+
+function importVoucherTypes(
+  accountSetId: string,
+  rows: AcdRow[],
+  stats: ImportStats,
+  dryRun: boolean
+) {
   const db = getDb()
   if (rows.length === 0) {
     stats.warnings.push('pzlx.txt 没有可导入数据')
@@ -1940,10 +2261,14 @@ function importAccounts(accountSetId: string, rows: AcdRow[], stats: ImportStats
   stats.importedTables.push('kmbm.txt')
 
   // 读取科目编码长度配置
-  const codeLengthsParam = db.prepare(`
+  const codeLengthsParam = db
+    .prepare(
+      `
     SELECT param_value FROM system_params
     WHERE account_set_id = ? AND param_key = 'account_code_lengths'
-  `).get(accountSetId) as { param_value: string } | undefined
+  `
+    )
+    .get(accountSetId) as { param_value: string } | undefined
 
   let codeLengths = [4, 3, 3, 2, 2, 2] // 默认值
   if (codeLengthsParam) {
@@ -1966,7 +2291,9 @@ function importAccounts(accountSetId: string, rows: AcdRow[], stats: ImportStats
     .prepare('SELECT * FROM accounts WHERE account_set_id = ?')
     .all(accountSetId) as Array<any>
   const existingByCode = new Map(existing.map(item => [String(item.code || '').trim(), item]))
-  const accountIdByCode = new Map(existing.map(item => [String(item.code || '').trim(), String(item.id)]))
+  const accountIdByCode = new Map(
+    existing.map(item => [String(item.code || '').trim(), String(item.id)])
+  )
 
   const insertStmt = db.prepare(`
     INSERT INTO accounts (
@@ -2004,8 +2331,18 @@ function importAccounts(accountSetId: string, rows: AcdRow[], stats: ImportStats
       accountIdByCode.set(item.code, id)
       if (!dryRun) {
         insertStmt.run(
-          id, accountSetId, item.code, item.name, item.direction, level, parentId,
-          item.isCash ? 1 : 0, item.isBank ? 1 : 0, isAux, auxTypes, item.isCash || item.isBank ? 1 : 0
+          id,
+          accountSetId,
+          item.code,
+          item.name,
+          item.direction,
+          level,
+          parentId,
+          item.isCash ? 1 : 0,
+          item.isBank ? 1 : 0,
+          isAux,
+          auxTypes,
+          item.isCash || item.isBank ? 1 : 0
         )
       }
       continue
@@ -2015,15 +2352,27 @@ function importAccounts(accountSetId: string, rows: AcdRow[], stats: ImportStats
     accountIdByCode.set(item.code, String(existingRow.id))
     if (!dryRun) {
       updateStmt.run(
-        item.name, item.direction, level, parentId,
-        item.isCash ? 1 : 0, item.isBank ? 1 : 0, isAux, auxTypes, item.isCash || item.isBank ? 1 : 0,
+        item.name,
+        item.direction,
+        level,
+        parentId,
+        item.isCash ? 1 : 0,
+        item.isBank ? 1 : 0,
+        isAux,
+        auxTypes,
+        item.isCash || item.isBank ? 1 : 0,
         existingRow.id
       )
     }
   }
 }
 
-function importInitBalances(accountSetId: string, rows: AcdRow[], stats: ImportStats, dryRun: boolean) {
+function importInitBalances(
+  accountSetId: string,
+  rows: AcdRow[],
+  stats: ImportStats,
+  dryRun: boolean
+) {
   const db = getDb()
   if (rows.length === 0) {
     stats.warnings.push('nc.txt 没有可导入数据')
@@ -2076,11 +2425,16 @@ function importInitBalances(accountSetId: string, rows: AcdRow[], stats: ImportS
     if (existing) {
       existing.debit += debit
       existing.credit += credit
-      existing.balance = direction === 'debit'
-        ? existing.debit - existing.credit
-        : existing.credit - existing.debit
+      existing.balance =
+        direction === 'debit' ? existing.debit - existing.credit : existing.credit - existing.debit
     } else {
-      preparedByAccount.set(account.id, { accountId: account.id, direction, debit, credit, balance })
+      preparedByAccount.set(account.id, {
+        accountId: account.id,
+        direction,
+        debit,
+        credit,
+        balance,
+      })
     }
   }
 
@@ -2096,12 +2450,23 @@ function importInitBalances(accountSetId: string, rows: AcdRow[], stats: ImportS
 
   deleteStmt.run(accountSetId, importYear)
   for (const row of preparedRows) {
-    insertStmt.run(uuidv4(), accountSetId, row.accountId, row.direction, importYear, row.balance, row.debit, row.credit)
+    insertStmt.run(
+      uuidv4(),
+      accountSetId,
+      row.accountId,
+      row.direction,
+      importYear,
+      row.balance,
+      row.debit,
+      row.credit
+    )
   }
 }
 
 function parseAcdNumber(value: string | undefined): number {
-  const normalized = String(value || '').replace(/,/g, '').trim()
+  const normalized = String(value || '')
+    .replace(/,/g, '')
+    .trim()
   if (!normalized) return 0
   return Number.parseFloat(normalized) || 0
 }
@@ -2237,7 +2602,9 @@ function resolveAcdTransferVoucherTypeLabel(
     return pzlxNameByCode.get('2') || pickTransferLikeVoucherTypeName(pzlxNameByCode) || '结转'
   }
   if (code === '1') {
-    return pzlxNameByCode.get('1') || pickTransferLikeVoucherTypeName(pzlxNameByCode, '记账') || '记账'
+    return (
+      pzlxNameByCode.get('1') || pickTransferLikeVoucherTypeName(pzlxNameByCode, '记账') || '记账'
+    )
   }
 
   return pickTransferLikeVoucherTypeName(pzlxNameByCode) || code
@@ -2261,7 +2628,12 @@ function importTransferTypes(
 
   // 根据结转类型名称判断周期类型
   function determinePeriodType(typeName: string): 'monthly' | 'yearly' {
-    if (typeName.includes('年末') || typeName.includes('(年末)') || typeName.includes('年结') || typeName.includes('年度')) {
+    if (
+      typeName.includes('年末') ||
+      typeName.includes('(年末)') ||
+      typeName.includes('年结') ||
+      typeName.includes('年度')
+    ) {
       return 'yearly'
     }
     return 'monthly'
@@ -2310,9 +2682,10 @@ function importTransferTypes(
       // 优先使用 ACD 文件中的原始名称（如果长度 >= 4 且不为空）
       // 只有当原始名称太短或为空时，才使用硬编码的完整名称
       // 这样可以保留 ACD 文件中的"年末"、"年结"等关键字用于周期判断
-      const betterName = (typeName && typeName.length >= 4)
-        ? typeName
-        : (fullNames[typeCode] || typeName || `结转类型${typeCode}`)
+      const betterName =
+        typeName && typeName.length >= 4
+          ? typeName
+          : fullNames[typeCode] || typeName || `结转类型${typeCode}`
       const vTypeLabel = resolveAcdTransferVoucherTypeLabel(voucherType, pzlxNameByCode)
       typeGroups.set(typeCode, { rows: [], name: betterName, voucherType: vTypeLabel })
     }
@@ -2343,21 +2716,33 @@ function importTransferTypes(
 
   for (const [typeCode, group] of typeGroups) {
     // First pass: collect valid items for this type
-    const validItems: { summary: string; fromCode: string; toCode: string; ratio: number; sortOrder: number }[] = []
+    const validItems: {
+      summary: string
+      fromCode: string
+      toCode: string
+      ratio: number
+      sortOrder: number
+    }[] = []
     for (let i = 0; i < group.rows.length; i++) {
       const row = group.rows[i]
       const summary = (row[4] || '').trim()
       // ACD jzlx.txt format: col5 = to_code (转入科目), col6 = from_code (转出科目)
       const rawCol5 = (row[5] || '').trim()
       const rawCol6 = (row[6] || '').trim()
-      const fromCode = rawCol6  // col6 is the source (转出) account
-      const toCode = rawCol5    // col5 is the target (转入) account
+      const fromCode = rawCol6 // col6 is the source (转出) account
+      const toCode = rawCol5 // col5 is the target (转入) account
       const ratioStr = (row[7] || '1').trim()
       const ratio = parseFloat(ratioStr) || 1
 
       if (!fromCode && !toCode) continue
 
-      validItems.push({ summary: summary || group.name, fromCode, toCode, ratio, sortOrder: validItems.length })
+      validItems.push({
+        summary: summary || group.name,
+        fromCode,
+        toCode,
+        ratio,
+        sortOrder: validItems.length,
+      })
     }
 
     // Skip types with no valid items
@@ -2379,7 +2764,9 @@ function importTransferTypes(
       periodType
     )
 
-    console.log(`[ACD] 导入结转类型: ${typeCode}(${group.name}) - 周期: ${periodType === 'monthly' ? '月结' : '年结'}`)
+    console.log(
+      `[ACD] 导入结转类型: ${typeCode}(${group.name}) - 周期: ${periodType === 'monthly' ? '月结' : '年结'}`
+    )
 
     for (const item of validItems) {
       insertItem.run(
@@ -2393,7 +2780,7 @@ function importTransferTypes(
         accountNameMap.get(item.toCode) || item.toCode || null,
         item.ratio >= 1 ? 'all' : 'partial',
         item.ratio * 100,
-        item.sortOrder,
+        item.sortOrder
       )
       itemCount++
     }
@@ -2402,7 +2789,12 @@ function importTransferTypes(
   stats.transferTypes.items = itemCount
 }
 
-function importAcdUsers(accountSetId: string, tables: ParsedTables, stats: ImportStats, dryRun: boolean) {
+function importAcdUsers(
+  accountSetId: string,
+  tables: ParsedTables,
+  stats: ImportStats,
+  dryRun: boolean
+) {
   const db = getDb()
   const acdUsers = tables.users
   const acdRights = tables.rights
@@ -2423,12 +2815,43 @@ function importAcdUsers(accountSetId: string, tables: ParsedTables, stats: Impor
 
   // Get existing usernames for this account set
   const existingUsers = new Set(
-    (db.prepare('SELECT username FROM users WHERE account_set_id = ?').all(accountSetId) as any[])
-      .map(u => u.username.toLowerCase())
+    (
+      db.prepare('SELECT username FROM users WHERE account_set_id = ?').all(accountSetId) as any[]
+    ).map(u => u.username.toLowerCase())
   )
 
   let imported = 0
   let skipped = 0
+  const defaultPasswordHash = dryRun ? '' : bcrypt.hashSync('admin123', 10)
+
+  const persistUser = db.transaction(
+    (
+      roleId: string,
+      roleName: string,
+      roleCode: string,
+      permissions: string[],
+      isSystem: number,
+      userId: string,
+      username: string,
+      nickname: string,
+      roleIdForUser: string
+    ) => {
+      db.prepare(
+        `INSERT INTO roles (id, name, code, permissions, account_set_id, is_system, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))`
+      ).run(roleId, roleName, roleCode, JSON.stringify(permissions), accountSetId, isSystem)
+      db.prepare(
+        `
+      INSERT INTO users (id, account_set_id, username, password, nickname, role_id, status, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
+    `
+      ).run(userId, accountSetId, username, defaultPasswordHash, nickname, roleIdForUser)
+      db.prepare(
+        `INSERT OR IGNORE INTO user_roles (id, user_id, role_id, account_set_id)
+         VALUES (?, ?, ?, ?)`
+      ).run(uuidv4(), userId, roleIdForUser, accountSetId)
+    }
+  )
 
   for (const user of acdUsers) {
     // Skip if username already exists
@@ -2459,6 +2882,8 @@ function importAcdUsers(accountSetId: string, tables: ParsedTables, stats: Impor
     const roleId = uuidv4()
     const roleName = `${user.username}_导入角色`
     const permissions = Array.from(cwPermissions)
+    const userId = uuidv4()
+    const nickname = user.fullName || user.username
 
     // 如果用户是 MANAGER，给予所有权限
     if (user.username.toUpperCase() === 'MANAGER') {
@@ -2467,58 +2892,37 @@ function importAcdUsers(accountSetId: string, tables: ParsedTables, stats: Impor
     }
 
     if (!dryRun) {
-      db.prepare(
-        `INSERT INTO roles (id, name, code, permissions, account_set_id, is_system, created_at)
-         VALUES (?, ?, ?, ?, ?, 0, datetime('now'))`
-      ).run(roleId, roleName, `imported_${user.username}`, JSON.stringify(permissions), accountSetId)
-    }
-
-    // 创建用户并关联角色
-    const userId = uuidv4()
-    const nickname = user.fullName || user.username
-    const hashedPassword = bcrypt.hashSync('admin123', 10)
-
-    if (!dryRun) {
-      db.prepare(`
-        INSERT INTO users (id, account_set_id, username, password, nickname, role_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
-      `).run(userId, accountSetId, user.username, hashedPassword, nickname, roleId)
+      persistUser(
+        roleId,
+        roleName,
+        `imported_${user.username}`,
+        permissions,
+        0,
+        userId,
+        user.username,
+        nickname,
+        roleId
+      )
     }
 
     existingUsers.add(user.username.toLowerCase())
     imported++
-    console.log(`[ACD] 导入用户: ${user.username} (${nickname}), 权限数: ${permissions.length}, ACD权限数: ${userRights.length}`)
-  }
-
-  // 确保存在admin超管账号
-  if (!existingUsers.has('admin')) {
-    const adminUserId = uuidv4()
-    const adminRoleId = uuidv4()
-    const hashedPassword = bcrypt.hashSync('admin123', 10)
-
-    if (!dryRun) {
-      // 创建管理员角色
-      db.prepare(
-        `INSERT INTO roles (id, name, code, permissions, account_set_id, is_system, created_at)
-         VALUES (?, ?, ?, ?, ?, 1, datetime('now'))`
-      ).run(adminRoleId, '系统管理员', 'admin', JSON.stringify(['*']), accountSetId)
-
-      // 创建管理员用户
-      db.prepare(`
-        INSERT INTO users (id, account_set_id, username, password, nickname, role_id, status, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'active', datetime('now'), datetime('now'))
-      `).run(adminUserId, accountSetId, 'admin', hashedPassword, '系统管理员', adminRoleId)
-    }
-
-    console.log(`[ACD] 创建超管账号: admin (系统管理员)`)
-    imported++
+    console.log(
+      `[ACD] 导入用户: ${user.username} (${nickname}), 权限数: ${permissions.length}, ACD权限数: ${userRights.length}`
+    )
   }
 
   stats.users = imported
   stats.warnings.push(`ACD用户: 导入${imported}个, 跳过${skipped}个(已存在)`)
 }
 
-function importVouchers(accountSetId: string, tables: ParsedTables, stats: ImportStats, dryRun: boolean) {
+function importVouchers(
+  accountSetId: string,
+  tables: ParsedTables,
+  stats: ImportStats,
+  dryRun: boolean,
+  options?: { batched?: boolean; batchSize?: number }
+) {
   const db = getDb()
   const entries = tables.voucherEntries
   const headers = tables.voucherHeaders
@@ -2541,9 +2945,10 @@ function importVouchers(accountSetId: string, tables: ParsedTables, stats: Impor
 
   // Build voucher type code -> id map
   const voucherTypes = db
-    .prepare('SELECT id, code FROM voucher_types WHERE account_set_id = ?')
-    .all(accountSetId) as Array<{ id: string; code: string }>
+    .prepare('SELECT id, code, name FROM voucher_types WHERE account_set_id = ?')
+    .all(accountSetId) as Array<{ id: string; code: string; name: string }>
   const voucherTypeMap = new Map(voucherTypes.map(vt => [vt.code.trim(), vt.id]))
+  const voucherTypeNameMap = new Map(voucherTypes.map(vt => [vt.id, vt.name]))
 
   // Group entries by key: nf + yf + pzlx + pzbh
   const voucherGroups = new Map<string, AcdRow[]>()
@@ -2578,7 +2983,9 @@ function importVouchers(accountSetId: string, tables: ParsedTables, stats: Impor
   }
 
   // Get fiscal year from account set
-  const accountSet = db.prepare('SELECT fiscal_year FROM account_sets WHERE id = ?').get(accountSetId) as any
+  const accountSet = db
+    .prepare('SELECT fiscal_year FROM account_sets WHERE id = ?')
+    .get(accountSetId) as any
   const fiscalYear = accountSet?.fiscal_year || new Date().getFullYear()
 
   const insertVoucher = db.prepare(`
@@ -2589,9 +2996,7 @@ function importVouchers(accountSetId: string, tables: ParsedTables, stats: Impor
   const cashFlowItems = db
     .prepare('SELECT code, name FROM cash_flow_items WHERE account_set_id = ?')
     .all(accountSetId) as Array<{ code: string; name: string }>
-  const cashFlowNameByCode = new Map(
-    cashFlowItems.map(item => [item.code.trim(), item.name])
-  )
+  const cashFlowNameByCode = new Map(cashFlowItems.map(item => [item.code.trim(), item.name]))
 
   const insertEntry = db.prepare(`
     INSERT INTO voucher_entries (
@@ -2601,125 +3006,164 @@ function importVouchers(accountSetId: string, tables: ParsedTables, stats: Impor
   `)
 
   let entryCount = 0
-  let voucherNoCounter = 1
 
-  for (const [key, groupEntries] of voucherGroups) {
-    const [nf, yf, pzlx] = key.split('|')
-    const year = parseInt(nf) || fiscalYear
-    const period = parseInt(yf) || 1
-    const voucherTypeId = voucherTypeMap.get(pzlx) || null
-    const voucherDate = `${year}-${String(period).padStart(2, '0')}-${new Date(year, period, 0).getDate().toString().padStart(2, '0')}`
-    const voucherNo = String(voucherNoCounter++).padStart(4, '0')
+  // 按月按类型追踪凭证编号
+  const voucherNoMap = new Map<string, number>()
 
-    // Get header info
-    const headerRow = headerMap.get(key)
-    const makerName = headerRow ? (headerRow[6] || '').trim() : ''
-    const auditorName = headerRow ? (headerRow[7] || '').trim() : ''
-    const posterName = headerRow ? (headerRow[8] || '').trim() : ''
+  const persistVoucherBatch = (batch: Array<[string, AcdRow[]]>, startVoucherNo: number) => {
+    let localEntryCount = 0
 
-    // 确定凭证状态：根据审核人和记账人判断
-    // draft: 草稿（未审核）
-    // audited: 已审核（有审核人但无记账人）
-    // posted: 已记账（有记账人）
-    let status: 'draft' | 'audited' | 'posted' = 'draft'
-    if (posterName) {
-      status = 'posted'
-    } else if (auditorName) {
-      status = 'audited'
-    }
+    for (const [key, groupEntries] of batch) {
+      const [nf, yf, pzlx] = key.split('|')
+      const year = parseInt(nf) || fiscalYear
+      const period = parseInt(yf) || 1
+      const voucherTypeId = voucherTypeMap.get(pzlx) || null
+      const voucherDate = `${year}-${String(period).padStart(2, '0')}-${new Date(year, period, 0).getDate().toString().padStart(2, '0')}`
 
-    // Calculate total
-    let totalAmount = 0
+      // 按月按类型生成凭证编号
+      const periodKey = `${year}-${period}-${voucherTypeId || '__NULL__'}`
+      if (!voucherNoMap.has(periodKey)) {
+        const maxNo = getMaxVoucherNoSeqInPeriod({
+          db,
+          accountSetId,
+          year,
+          period,
+          voucherTypeId,
+        })
+        voucherNoMap.set(periodKey, maxNo)
+      }
 
-    const voucherId = uuidv4()
-    const preparedEntries: Array<{
-      seq: number
-      accountId: string | null
-      accountCode: string
-      accountName: string
-      direction: 'debit' | 'credit'
-      amount: number
-      summary: string
-      cashFlowCode: string | null
-      cashFlowName: string | null
-    }> = []
-
-    for (let i = 0; i < groupEntries.length; i++) {
-      const row = groupEntries[i]
-      const kmbm = (row[5] || '').trim()
-      const zy = (row[6] || '').trim()
-      const jf = parseFloat((row[7] || '0').replace(/,/g, '')) || 0
-      const df = parseFloat((row[8] || '0').replace(/,/g, '')) || 0
-      const xjbm = (row[26] || '').trim()
-
-      const account = accountMap.get(kmbm)
-      const direction: 'debit' | 'credit' = jf > 0 ? 'debit' : 'credit'
-      const amount = jf > 0 ? jf : df
-
-      if (amount <= 0) continue
-
-      const cashFlowCode = xjbm || null
-      const cashFlowName = cashFlowCode
-        ? cashFlowNameByCode.get(cashFlowCode) || cashFlowCode
-        : null
-
-      preparedEntries.push({
-        seq: i + 1,
-        accountId: account?.id || null,
-        accountCode: kmbm,
-        accountName: account?.name || kmbm,
-        direction,
-        amount,
-        summary: zy,
-        cashFlowCode,
-        cashFlowName,
+      const currentMax = voucherNoMap.get(periodKey)!
+      const typeName = voucherTypeId
+        ? voucherTypeNameMap.get(voucherTypeId) || undefined
+        : undefined
+      const voucherNo = buildVoucherNo({
+        maxNo: currentMax,
+        typeName,
       })
+      voucherNoMap.set(periodKey, currentMax + 1)
 
-      if (direction === 'debit') totalAmount += amount
-    }
+      // Get header info
+      const headerRow = headerMap.get(key)
+      const makerName = headerRow ? (headerRow[6] || '').trim() : ''
+      const auditorName = headerRow ? (headerRow[7] || '').trim() : ''
+      const posterName = headerRow ? (headerRow[8] || '').trim() : ''
 
-    if (preparedEntries.length === 0) continue
+      // 确定凭证状态：根据审核人和记账人判断
+      let status: 'draft' | 'audited' | 'posted' = 'draft'
+      if (posterName) {
+        status = 'posted'
+      } else if (auditorName) {
+        status = 'audited'
+      }
 
-    insertVoucher.run(
-      voucherId,
-      accountSetId,
-      voucherNo,
-      voucherTypeId,
-      voucherDate,
-      year,
-      period,
-      status,
-      totalAmount,
-      makerName || null,
-      auditorName || null,
-      posterName || null,
-      `ACD导入凭证`,
-    )
+      let totalAmount = 0
+      const voucherId = uuidv4()
+      const preparedEntries: Array<{
+        seq: number
+        accountId: string | null
+        accountCode: string
+        accountName: string
+        direction: 'debit' | 'credit'
+        amount: number
+        summary: string
+        cashFlowCode: string | null
+        cashFlowName: string | null
+      }> = []
 
-    for (const entry of preparedEntries) {
-      insertEntry.run(
-        uuidv4(),
-        accountSetId,
+      for (let i = 0; i < groupEntries.length; i++) {
+        const row = groupEntries[i]
+        const kmbm = (row[5] || '').trim()
+        const zy = (row[6] || '').trim()
+        const jf = parseFloat((row[7] || '0').replace(/,/g, '')) || 0
+        const df = parseFloat((row[8] || '0').replace(/,/g, '')) || 0
+        const xjbm = (row[26] || '').trim()
+
+        const account = accountMap.get(kmbm)
+        const direction: 'debit' | 'credit' = jf > 0 ? 'debit' : 'credit'
+        const amount = jf > 0 ? jf : df
+
+        if (amount <= 0) continue
+
+        const cashFlowCode = xjbm || null
+        const cashFlowName = cashFlowCode
+          ? cashFlowNameByCode.get(cashFlowCode) || cashFlowCode
+          : null
+
+        preparedEntries.push({
+          seq: i + 1,
+          accountId: account?.id || null,
+          accountCode: kmbm,
+          accountName: account?.name || kmbm,
+          direction,
+          amount,
+          summary: zy,
+          cashFlowCode,
+          cashFlowName,
+        })
+
+        if (direction === 'debit') totalAmount += amount
+      }
+
+      if (preparedEntries.length === 0) continue
+
+      insertVoucher.run(
         voucherId,
-        entry.seq,
-        entry.accountId,
-        entry.accountCode,
-        entry.accountName,
-        entry.direction,
-        entry.amount,
-        Math.round(entry.amount * 100),
-        entry.summary || null,
-        entry.cashFlowCode,
-        entry.cashFlowName,
+        accountSetId,
+        voucherNo,
+        voucherTypeId,
+        voucherDate,
+        year,
+        period,
+        status,
+        totalAmount,
+        makerName || null,
+        auditorName || null,
+        posterName || null,
+        `ACD导入凭证`
       )
-      entryCount++
+
+      for (const entry of preparedEntries) {
+        insertEntry.run(
+          uuidv4(),
+          accountSetId,
+          voucherId,
+          entry.seq,
+          entry.accountId,
+          entry.accountCode,
+          entry.accountName,
+          entry.direction,
+          entry.amount,
+          Math.round(entry.amount * 100),
+          entry.summary || null,
+          entry.cashFlowCode,
+          entry.cashFlowName
+        )
+        localEntryCount++
+      }
     }
+
+    return { entryCount: localEntryCount }
+  }
+
+  const groupedVouchers = Array.from(voucherGroups.entries())
+  const batchSize = options?.batchSize ?? 150
+
+  if (options?.batched) {
+    for (let i = 0; i < groupedVouchers.length; i += batchSize) {
+      const batch = groupedVouchers.slice(i, i + batchSize)
+      const result = db.transaction(() => persistVoucherBatch(batch, 0))()
+      entryCount += result.entryCount
+    }
+  } else {
+    const result = persistVoucherBatch(groupedVouchers, 0)
+    entryCount = result.entryCount
   }
 
   stats.vouchers.entries = entryCount
 }
 
-function runImport(options: Options): ImportStats {
+async function runImport(options: Options): Promise<ImportStats> {
   const db = getDb()
   const accountSet = resolveCurrentAccountSet()
   const tables = options.acdBuffer
@@ -2727,12 +3171,22 @@ function runImport(options: Options): ImportStats {
     : parseAcdTables(options.acdFilePath!)
   const stats = buildStats(accountSet.id, accountSet.name)
 
+  if (!options.dryRun) {
+    updateAccountSetStartDateFromXt(db, accountSet.id, tables.xt)
+  }
+
   const execute = () => {
     importSystemParams(accountSet.id, tables.xt, stats, options.dryRun)
+    importPeriodClosing(accountSet.id, tables.xt, stats, options.dryRun)
     importVoucherTypes(accountSet.id, tables.voucherTypes, stats, options.dryRun)
     importAccounts(accountSet.id, tables.accounts, stats, options.dryRun)
     importInitBalances(accountSet.id, tables.initBalances, stats, options.dryRun)
-    importBudgetSurplusAdjustments(accountSet.id, tables.budgetSurplusAdjustments, stats, options.dryRun)
+    importBudgetSurplusAdjustments(
+      accountSet.id,
+      tables.budgetSurplusAdjustments,
+      stats,
+      options.dryRun
+    )
     importTransferTypes(
       accountSet.id,
       tables.transferTypes,
@@ -2742,7 +3196,6 @@ function runImport(options: Options): ImportStats {
       options.dryRun
     )
     importVouchers(accountSet.id, tables, stats, options.dryRun)
-    importReportTemplates(accountSet.id, tables, stats, options.dryRun)
     importAcdUsers(accountSet.id, tables, stats, options.dryRun)
   }
 
@@ -2752,11 +3205,20 @@ function runImport(options: Options): ImportStats {
     db.transaction(execute)()
   }
 
+  // 报表模板不再随 ACD 导入自动加载（启发式识别会计准则不可靠）。
+  // 用户可在「报表 → 动态报表 → 导入 Excel」里按需手动上传所需模板。
+  stats.warnings.push(
+    'ACD 导入未自动加载报表模板：请在「报表 → 动态报表 → 导入 Excel」里手动上传所需模板'
+  )
+
   return stats
 }
 
 // Export for service layer usage — full import (includes vouchers & init balances)
-export function importAcdToAccountSet(accountSetId: string, acdBuffer: Buffer): ImportStats {
+export async function importAcdToAccountSet(
+  accountSetId: string,
+  acdBuffer: Buffer
+): Promise<ImportStats> {
   const db = getDb()
   const accountSet = db.prepare('SELECT * FROM account_sets WHERE id = ?').get(accountSetId) as any
   if (!accountSet) {
@@ -2766,11 +3228,14 @@ export function importAcdToAccountSet(accountSetId: string, acdBuffer: Buffer): 
   const tables = parseAcdTables(acdBuffer)
   const stats = buildStats(accountSet.id, accountSet.name)
 
+  updateAccountSetStartDateFromXt(db, accountSet.id, tables.xt)
+
   const execute = () => {
     // 标记账套来源为 ACD
     db.prepare('UPDATE account_sets SET import_source = ? WHERE id = ?').run('acd', accountSet.id)
 
     importSystemParams(accountSet.id, tables.xt, stats, false)
+    importPeriodClosing(accountSet.id, tables.xt, stats, false)
     importVoucherTypes(accountSet.id, tables.voucherTypes, stats, false)
     importAccounts(accountSet.id, tables.accounts, stats, false)
     importInitBalances(accountSet.id, tables.initBalances, stats, false)
@@ -2783,18 +3248,39 @@ export function importAcdToAccountSet(accountSetId: string, acdBuffer: Buffer): 
       stats,
       false
     )
-    importVouchers(accountSet.id, tables, stats, false)
-    importReportTemplates(accountSet.id, tables, stats, false)
-    importAcdUsers(accountSet.id, tables, stats, false)
+    // 出纳 / 固定资产模块数据（兼容 cn_* / zc_* 表）
+    importCashierTables(accountSet.id, tables, stats, false)
+    importFixedAssetTables(accountSet.id, tables, stats, false)
   }
 
   db.transaction(execute)()
+  importVouchers(accountSet.id, tables, stats, false, { batched: true, batchSize: 150 })
+  importAcdUsers(accountSet.id, tables, stats, false)
+
+  // 报表模板不再随 ACD 导入自动加载，提示用户手动上传
+  stats.warnings.push(
+    'ACD 导入未自动加载报表模板：请在「报表 → 动态报表 → 导入 Excel」里手动上传所需模板'
+  )
 
   return stats
 }
 
+export interface ImportTemplateOptions {
+  preserveStartDate?: boolean
+  preserveAux?: boolean
+  preserveVoucherTypes?: boolean
+  preserveTransfer?: boolean
+  preserveBusinessParams?: boolean
+  accountLevels?: number
+  accountCodeLengths?: number[]
+}
+
 // Template import — only presets (accounts, transfer types, voucher types, reports), no vouchers/init balances
-export function importAcdTemplateToAccountSet(accountSetId: string, acdBuffer: Buffer): ImportStats {
+export function importAcdTemplateToAccountSet(
+  accountSetId: string,
+  acdBuffer: Buffer,
+  options: ImportTemplateOptions = {}
+): ImportStats {
   const db = getDb()
   const accountSet = db.prepare('SELECT * FROM account_sets WHERE id = ?').get(accountSetId) as any
   if (!accountSet) {
@@ -2804,35 +3290,53 @@ export function importAcdTemplateToAccountSet(accountSetId: string, acdBuffer: B
   const tables = parseAcdTables(acdBuffer)
   const stats = buildStats(accountSet.id, accountSet.name)
 
-  // 优先从 ACD 的 xt.txt 中读取科目编码长度，如果没有则推断
-  let codeLengths = extractAccountCodeLengthsFromXt(tables.xt)
-  if (!codeLengths) {
-    console.log('[ACD] xt.txt 中未找到科目编码长度配置，使用推断算法')
-    codeLengths = inferAccountCodeLengths(tables.accounts)
+  let codeConfig: { accountLevels: number; accountCodeLengths: number[] }
+  if (options.accountLevels && options.accountCodeLengths?.length) {
+    codeConfig = applyAccountCodeConfigToDb(
+      db,
+      accountSet.id,
+      options.accountLevels,
+      options.accountCodeLengths
+    )
+  } else {
+    let codeLengths = extractAccountCodeLengthsFromXt(tables.xt)
+    if (!codeLengths) {
+      console.log('[ACD] xt.txt 中未找到科目编码长度配置，使用推断算法')
+      codeLengths = inferAccountCodeLengths(tables.accounts)
+    }
+    const inferredLevels = inferAccountLevelsFromAccounts(tables.accounts)
+    codeConfig = applyAccountCodeConfigToDb(db, accountSet.id, inferredLevels, codeLengths)
   }
 
-  // 设置到 system_params
-  db.prepare(`
-    INSERT INTO system_params (id, account_set_id, param_key, param_value, description, created_at, updated_at)
-    VALUES (?, ?, 'account_code_lengths', ?, '科目编码长度配置', datetime('now'), datetime('now'))
-    ON CONFLICT(account_set_id, param_key) DO UPDATE SET param_value = excluded.param_value, updated_at = datetime('now')
-  `).run(uuidv4(), accountSet.id, JSON.stringify(codeLengths))
+  console.log(
+    `[ACD] 科目级数 ${codeConfig.accountLevels}，编码长度 [${codeConfig.accountCodeLengths.slice(0, codeConfig.accountLevels).join(',')}]`
+  )
+
+  if (!options.preserveStartDate) {
+    updateAccountSetStartDateFromXt(db, accountSet.id, tables.xt)
+  }
 
   const execute = () => {
-    importSystemParams(accountSet.id, tables.xt, stats, false)
-    importVoucherTypes(accountSet.id, tables.voucherTypes, stats, false)
+    if (!options.preserveBusinessParams) {
+      importSystemParams(accountSet.id, tables.xt, stats, false)
+    }
+    if (!options.preserveVoucherTypes) {
+      importVoucherTypes(accountSet.id, tables.voucherTypes, stats, false)
+    }
     importAccounts(accountSet.id, tables.accounts, stats, false)
-    // 结转类型必须导入（用户强调很重要）
-    importTransferTypes(
-      accountSet.id,
-      tables.transferTypes,
-      tables.accounts,
-      tables.voucherTypes,
-      stats,
-      false
-    )
-    // 导入辅助核算主数据
-    importAuxiliaryData(accountSet.id, tables, stats, false)
+    if (!options.preserveTransfer) {
+      importTransferTypes(
+        accountSet.id,
+        tables.transferTypes,
+        tables.accounts,
+        tables.voucherTypes,
+        stats,
+        false
+      )
+    }
+    if (!options.preserveAux) {
+      importAuxiliaryData(accountSet.id, tables, stats, false)
+    }
     // Skip initBalances for template import
     // Skip vouchers for template import
     // Skip report templates from ACD (VTS parsing is unreliable, use Excel import instead)
@@ -2859,7 +3363,9 @@ function printStats(stats: ImportStats, dryRun: boolean) {
   console.log(`\n导入统计:`)
   const accountTotal = stats.accounts.inserted + stats.accounts.updated
   if (accountTotal > 0) {
-    console.log(`  ✓ 科目: ${accountTotal} 个 (新增 ${stats.accounts.inserted}, 更新 ${stats.accounts.updated})`)
+    console.log(
+      `  ✓ 科目: ${accountTotal} 个 (新增 ${stats.accounts.inserted}, 更新 ${stats.accounts.updated})`
+    )
   }
 
   if (stats.initBalances.inserted > 0) {
@@ -2879,7 +3385,9 @@ function printStats(stats: ImportStats, dryRun: boolean) {
   }
 
   if (stats.transferTypes.types > 0) {
-    console.log(`  ✓ 结转类型: ${stats.transferTypes.types} 个 (${stats.transferTypes.items} 条分录)`)
+    console.log(
+      `  ✓ 结转类型: ${stats.transferTypes.types} 个 (${stats.transferTypes.items} 条分录)`
+    )
   }
 
   if (stats.reportTemplates.definitions > 0) {
@@ -2906,7 +3414,9 @@ function parseArgs(): Options {
   const positional = args.filter(arg => arg !== '--dry-run')
 
   if (positional.length === 0) {
-    console.log('用法: node --import tsx/esm src/scripts/importAcdToCurrentAccountSet.ts <acd文件路径> [--dry-run]')
+    console.log(
+      '用法: node --import tsx/esm src/scripts/importAcdToCurrentAccountSet.ts <acd文件路径> [--dry-run]'
+    )
     process.exit(1)
   }
 
@@ -2916,13 +3426,19 @@ function parseArgs(): Options {
   }
 }
 
-function main() {
+async function main() {
   const options = parseArgs()
-  const stats = runImport({ acdFilePath: options.acdFilePath, dryRun: options.dryRun })
+  const stats = await runImport({ acdFilePath: options.acdFilePath, dryRun: options.dryRun })
   printStats(stats, options.dryRun)
 }
 
 // Only run main when executed directly (not when imported)
-if (process.argv[1]?.endsWith('importAcdToCurrentAccountSet.ts') || process.argv[1]?.endsWith('importAcdToCurrentAccountSet')) {
-  main()
+if (
+  process.argv[1]?.endsWith('importAcdToCurrentAccountSet.ts') ||
+  process.argv[1]?.endsWith('importAcdToCurrentAccountSet')
+) {
+  main().catch(err => {
+    console.error('[ACD] 导入失败:', err)
+    process.exit(1)
+  })
 }

@@ -8,6 +8,7 @@ import {
   calcInitBalanceFromAmounts,
   checkInitBalanceAuxCategoryConsistency,
   getInitBalanceAuxDetails,
+  resolveAuxItemIdInCategory,
   saveInitBalanceAuxDetails,
   upsertInitBalanceAuxLine,
 } from '../services/initBalanceAux.js'
@@ -35,6 +36,12 @@ function createTestDb() {
       init_balance REAL, init_debit REAL, init_credit REAL,
       aux_item_id TEXT NOT NULL DEFAULT '',
       opening_debit REAL, opening_credit REAL, pre_book_debit REAL, pre_book_credit REAL
+    );
+    CREATE TABLE vouchers (
+      id TEXT PRIMARY KEY, account_set_id TEXT, voucher_date TEXT, status TEXT
+    );
+    CREATE TABLE period_closing (
+      id TEXT PRIMARY KEY, account_set_id TEXT, year INTEGER, period INTEGER, status TEXT
     );
     INSERT INTO account_sets VALUES ('set1', '2026-04-01');
     INSERT INTO aux_categories VALUES ('cat-dept', 'set1', 'dept', '部门', 0);
@@ -352,6 +359,128 @@ describe('initBalanceAux', () => {
       const result = checkInitBalanceAuxCategoryConsistency(db, 'set1', 2026)
       expect(result.consistent).toBe(true)
       expect(result.mismatches).toHaveLength(0)
+    })
+
+    it('resolveAuxItemIdInCategory 支持编码录入', () => {
+      const items = [
+        { id: 'item-a', code: 'D01', name: '行政部', remark: '', field_values: {} },
+      ]
+      expect(resolveAuxItemIdInCategory(items, 'item-a')).toBe('item-a')
+      expect(resolveAuxItemIdInCategory(items, 'D01')).toBe('item-a')
+      expect(resolveAuxItemIdInCategory(items, 'missing')).toBeNull()
+    })
+
+    it('upsertInitBalanceAuxLine 可按项目编码保存', () => {
+      upsertInitBalanceAuxLine(db, 'set1', 'acc1', 2026, {
+        active_category_id: 'cat-dept',
+        selection: { 'cat-dept': 'D01' },
+        opening_debit: 500,
+        opening_credit: 0,
+      })
+      const details = getInitBalanceAuxDetails(db, 'set1', 'acc1', 2026)
+      expect(details.lines.some(l => l.aux_item_id === 'dept:item-a')).toBe(true)
+    })
+
+    it('科目仅启用部门时，不加载历史组合行中的项目类目', () => {
+      db.prepare(
+        `INSERT INTO init_balances
+         (id, account_set_id, account_id, direction, year, period,
+          init_balance, init_debit, init_credit, aux_item_id,
+          opening_debit, opening_credit, pre_book_debit, pre_book_credit)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'ib-combo',
+        'set1',
+        'acc1',
+        'debit',
+        2026,
+        1,
+        100,
+        100,
+        0,
+        'dept:item-a|proj:item-b',
+        100,
+        0,
+        0,
+        0
+      )
+      db.prepare(`UPDATE accounts SET aux_types=? WHERE id=?`).run(
+        '{"cat-dept":null}',
+        'acc1'
+      )
+
+      const details = getInitBalanceAuxDetails(db, 'set1', 'acc1', 2026)
+      expect(details.categories).toHaveLength(1)
+      expect(details.categories[0].id).toBe('cat-dept')
+      expect(details.items['cat-proj']).toBeUndefined()
+      expect(details.lines).toHaveLength(1)
+      expect(details.lines[0].selection).toEqual({ 'cat-dept': 'item-a' })
+      expect(details.lines[0].selection['cat-proj']).toBeUndefined()
+    })
+
+    it('不同科目 aux_types 互不影响', () => {
+      db.prepare(
+        `INSERT INTO accounts VALUES (
+          'acc2', 'set1', '5002', '其他支出', 'debit', NULL, 1,
+          '{"cat-proj":null}', 1
+        )`
+      ).run()
+      upsertInitBalanceAuxLine(db, 'set1', 'acc1', 2026, {
+        active_category_id: 'cat-dept',
+        selection: { 'cat-dept': 'item-a' },
+        opening_debit: 300,
+        opening_credit: 0,
+      })
+      upsertInitBalanceAuxLine(db, 'set1', 'acc2', 2026, {
+        active_category_id: 'cat-proj',
+        selection: { 'cat-proj': 'item-b' },
+        opening_debit: 700,
+        opening_credit: 0,
+      })
+
+      const d1 = getInitBalanceAuxDetails(db, 'set1', 'acc1', 2026)
+      const d2 = getInitBalanceAuxDetails(db, 'set1', 'acc2', 2026)
+
+      expect(d1.account.id).toBe('acc1')
+      expect(d1.categories.map(c => c.id)).toEqual(['cat-dept', 'cat-proj'])
+      expect(d1.items['cat-dept']?.some(i => i.id === 'item-a')).toBe(true)
+      expect(d1.lines).toHaveLength(1)
+      expect(d1.lines[0].selection).toEqual({ 'cat-dept': 'item-a' })
+
+      expect(d2.account.id).toBe('acc2')
+      expect(d2.categories.map(c => c.id)).toEqual(['cat-proj'])
+      expect(d2.items['cat-dept']).toBeUndefined()
+      expect(d2.items['cat-proj']?.some(i => i.id === 'item-b')).toBe(true)
+      expect(d2.lines).toHaveLength(1)
+      expect(d2.lines[0].selection).toEqual({ 'cat-proj': 'item-b' })
+    })
+
+    it('无效 aux_item_id 不返回明细行', () => {
+      db.prepare(
+        `INSERT INTO init_balances
+         (id, account_set_id, account_id, direction, year, period,
+          init_balance, init_debit, init_credit, aux_item_id,
+          opening_debit, opening_credit, pre_book_debit, pre_book_credit)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      ).run(
+        'ib-bad',
+        'set1',
+        'acc1',
+        'debit',
+        2026,
+        1,
+        50,
+        50,
+        0,
+        'dept:missing-item',
+        50,
+        0,
+        0,
+        0
+      )
+
+      const details = getInitBalanceAuxDetails(db, 'set1', 'acc1', 2026)
+      expect(details.lines).toHaveLength(0)
     })
   })
 })

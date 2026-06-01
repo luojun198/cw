@@ -1,28 +1,32 @@
 <template>
-  <div class="page">
+  <div class="page cash-flow-page">
     <div class="page-header">
       <h3>现金流量表（科目估算）</h3>
-      <div class="filter-row">
-        <el-select v-model="filters.year" style="width: 100px">
+      <div class="report-toolbar-row">
+        <el-select v-model="filters.year" size="small" style="width: 100px">
           <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
         </el-select>
-        <el-select v-model="filters.period" style="width: 100px">
+        <el-select v-model="filters.period" size="small" style="width: 100px">
           <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
         </el-select>
-        <el-select v-model="filters.scope" style="width: 120px">
+        <el-select v-model="filters.scope" size="small" style="width: 120px">
           <el-option label="本月" value="month" />
           <el-option label="本年累计" value="ytd" />
         </el-select>
-        <el-button type="primary" @click="fetchData">查询</el-button>
-        <el-button @click="exportData">导出 Excel</el-button>
-        <el-button @click="printData">打印</el-button>
+        <el-button type="primary" size="small" @click="fetchData">查询</el-button>
+        <el-button size="small" @click="exportData">导出 Excel</el-button>
+        <el-button size="small" @click="printData">打印</el-button>
       </div>
     </div>
 
-    <el-card v-if="reportData" class="report-card">
+    <AccountScopeAlert />
+
+    <div v-if="reportData" v-loading="loading" class="report-body">
       <div class="report-title-area">
         <h2 class="report-title">现金流量表</h2>
-        <p class="report-subtitle">{{ reportData.reportDate }} · {{ reportData.accountingStandardName }}</p>
+        <p class="report-subtitle">
+          {{ reportData.reportDate }} · {{ reportData.accountingStandardName }}
+        </p>
         <p v-if="reportData.reportSourceNote" class="report-note">{{ reportData.reportSourceNote }}</p>
       </div>
 
@@ -37,163 +41,6 @@
           style="margin-bottom: 8px"
         />
       </div>
-
-      <el-collapse v-if="reportData.indirectMethod" class="indirect-method-panel">
-        <el-collapse-item title="附注：间接法调节（净利润 → 经营活动现金流量）" name="indirect">
-          <p v-if="reportData.indirectMethod.scopeNote" class="compare-note">
-            {{ reportData.indirectMethod.scopeNote }}
-          </p>
-          <table class="compare-table">
-            <thead>
-              <tr>
-                <th>调节项目</th>
-                <th>金额</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>{{ reportData.indirectMethod.profitLabel }}</td>
-                <td class="amount">{{ fmt(reportData.indirectMethod.netProfit) }}</td>
-              </tr>
-              <tr v-for="(line, idx) in reportData.indirectMethod.adjustments" :key="idx">
-                <td style="padding-left: 16px">{{ line.label }}</td>
-                <td class="amount">{{ fmt(line.amount) }}</td>
-              </tr>
-              <tr class="subtotal-row">
-                <td><strong>经营活动产生的现金流量净额（间接法）</strong></td>
-                <td class="amount">
-                  <strong>{{ fmt(reportData.indirectMethod.operatingCashNet) }}</strong>
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <table
-            v-if="reportData.indirectComparison"
-            class="compare-table"
-            style="margin-top: 12px"
-          >
-            <thead>
-              <tr>
-                <th>对比项</th>
-                <th>差异</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>与主表直接法（科目估算）经营净额</td>
-                <td class="amount">
-                  {{ fmtDiff(reportData.indirectComparison.staticOperatingDiff) }}
-                </td>
-              </tr>
-              <tr v-if="reportData.directMethod">
-                <td>与分录直接法（@xj_je）经营净额</td>
-                <td class="amount">
-                  {{ fmtDiff(reportData.indirectComparison.directOperatingDiff) }}
-                </td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-if="reportData.indirectComparison?.note" class="compare-note">
-            {{ reportData.indirectComparison.note }}
-          </p>
-        </el-collapse-item>
-      </el-collapse>
-
-      <el-collapse v-if="reportData.dynamicMethod" class="dynamic-method-panel">
-        <el-collapse-item title="动态模板对比（正式现金流量表 @xj_je）" name="dynamic">
-          <p class="compare-meta">
-            模板：{{ reportData.dynamicMethod.templateName }} ·
-            {{ reportData.dynamicMethod.columnLabel }}
-          </p>
-          <table class="compare-table">
-            <thead>
-              <tr>
-                <th>项目</th>
-                <th>本表（估算）</th>
-                <th>动态模板</th>
-                <th>差异</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>经营活动净额</td>
-                <td class="amount">{{ fmt(reportData.operatingActivities?.['净额']) }}</td>
-                <td class="amount">{{ fmt(reportData.dynamicMethod.operating) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.operatingDiff) }}</td>
-              </tr>
-              <tr>
-                <td>投资活动净额</td>
-                <td class="amount">{{ fmt(reportData.investingActivities?.['净额']) }}</td>
-                <td class="amount">{{ fmt(reportData.dynamicMethod.investing) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.investingDiff) }}</td>
-              </tr>
-              <tr>
-                <td>筹资活动净额</td>
-                <td class="amount">{{ fmt(reportData.financingActivities?.['净额']) }}</td>
-                <td class="amount">{{ fmt(reportData.dynamicMethod.financing) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.financingDiff) }}</td>
-              </tr>
-              <tr>
-                <td>现金净增加额</td>
-                <td class="amount">{{ fmt(reportData.netCashChange) }}</td>
-                <td class="amount">{{ fmt(reportData.dynamicMethod.net) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.netDiff) }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-if="reportData.dynamicComparison?.note" class="compare-note">
-            {{ reportData.dynamicComparison.note }}
-          </p>
-        </el-collapse-item>
-      </el-collapse>
-
-      <el-collapse v-if="reportData.directMethod" class="direct-method-panel">
-        <el-collapse-item title="直接法对比（分录现金流量项目 @xj_je）" name="direct">
-          <table class="compare-table">
-            <thead>
-              <tr>
-                <th>项目</th>
-                <th>本表（估算）</th>
-                <th>直接法</th>
-                <th>差异</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td>经营活动净额</td>
-                <td class="amount">{{ fmt(reportData.operatingActivities?.['净额']) }}</td>
-                <td class="amount">{{ fmt(reportData.directMethod.operating) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.comparison?.operatingDiff) }}</td>
-              </tr>
-              <tr>
-                <td>投资活动净额</td>
-                <td class="amount">{{ fmt(reportData.investingActivities?.['净额']) }}</td>
-                <td class="amount">{{ fmt(reportData.directMethod.investing) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.comparison?.investingDiff) }}</td>
-              </tr>
-              <tr>
-                <td>筹资活动净额</td>
-                <td class="amount">{{ fmt(reportData.financingActivities?.['净额']) }}</td>
-                <td class="amount">{{ fmt(reportData.directMethod.financing) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.comparison?.financingDiff) }}</td>
-              </tr>
-              <tr>
-                <td>现金净增加额</td>
-                <td class="amount">{{ fmt(reportData.netCashChange) }}</td>
-                <td class="amount">{{ fmt(reportData.directMethod.net) }}</td>
-                <td class="amount">{{ fmtDiff(reportData.comparison?.netDiff) }}</td>
-              </tr>
-            </tbody>
-          </table>
-          <p v-if="reportData.comparison?.note" class="compare-note">{{ reportData.comparison.note }}</p>
-          <p class="compare-meta">
-            口径：{{ reportData.directMethod.scope === 'ytd' ? '本年累计' : '本月' }}
-            （{{ reportData.directMethod.fromPeriod }}–{{ reportData.directMethod.toPeriod }} 月）·
-            已有数据的分录项目：{{ reportData.directMethod.itemsWithData }} /
-            {{ reportData.directMethod.itemCount }}
-          </p>
-        </el-collapse-item>
-      </el-collapse>
 
       <table class="rpt-table">
         <thead>
@@ -278,34 +125,218 @@
           </tr>
         </tbody>
       </table>
-    </el-card>
+
+      <el-tabs v-if="hasCompareTabs" v-model="activeCompareTab" class="cash-flow-tabs" type="border-card">
+        <el-tab-pane
+          v-if="reportData.indirectMethod"
+          label="间接法附注"
+          name="indirect"
+        >
+          <p v-if="reportData.indirectMethod.scopeNote" class="compare-note">
+            {{ reportData.indirectMethod.scopeNote }}
+          </p>
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>调节项目</th>
+                <th>金额</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>{{ reportData.indirectMethod.profitLabel }}</td>
+                <td class="amount">{{ fmt(reportData.indirectMethod.netProfit) }}</td>
+              </tr>
+              <tr v-for="(line, idx) in reportData.indirectMethod.adjustments" :key="idx">
+                <td style="padding-left: 16px">{{ line.label }}</td>
+                <td class="amount">{{ fmt(line.amount) }}</td>
+              </tr>
+              <tr class="subtotal-row">
+                <td><strong>经营活动产生的现金流量净额（间接法）</strong></td>
+                <td class="amount">
+                  <strong>{{ fmt(reportData.indirectMethod.operatingCashNet) }}</strong>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <table
+            v-if="reportData.indirectComparison"
+            class="compare-table"
+            style="margin-top: 12px"
+          >
+            <thead>
+              <tr>
+                <th>对比项</th>
+                <th>差异</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>与主表直接法（科目估算）经营净额</td>
+                <td class="amount">
+                  {{ fmtDiff(reportData.indirectComparison.staticOperatingDiff) }}
+                </td>
+              </tr>
+              <tr v-if="reportData.directMethod">
+                <td>与分录直接法（@xj_je）经营净额</td>
+                <td class="amount">
+                  {{ fmtDiff(reportData.indirectComparison.directOperatingDiff) }}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="reportData.indirectComparison?.note" class="compare-note">
+            {{ reportData.indirectComparison.note }}
+          </p>
+        </el-tab-pane>
+
+        <el-tab-pane
+          v-if="reportData.dynamicMethod"
+          label="模板对比"
+          name="dynamic"
+        >
+          <p class="compare-meta">
+            模板：{{ reportData.dynamicMethod.templateName }} ·
+            {{ reportData.dynamicMethod.columnLabel }}
+          </p>
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>项目</th>
+                <th>本表（估算）</th>
+                <th>动态模板</th>
+                <th>差异</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>经营活动净额</td>
+                <td class="amount">{{ fmt(reportData.operatingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.operating) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.operatingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>投资活动净额</td>
+                <td class="amount">{{ fmt(reportData.investingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.investing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.investingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>筹资活动净额</td>
+                <td class="amount">{{ fmt(reportData.financingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.financing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.financingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>现金净增加额</td>
+                <td class="amount">{{ fmt(reportData.netCashChange) }}</td>
+                <td class="amount">{{ fmt(reportData.dynamicMethod.net) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.dynamicComparison?.netDiff) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="reportData.dynamicComparison?.note" class="compare-note">
+            {{ reportData.dynamicComparison.note }}
+          </p>
+        </el-tab-pane>
+
+        <el-tab-pane
+          v-if="reportData.directMethod"
+          label="直接法对比"
+          name="direct"
+        >
+          <table class="compare-table">
+            <thead>
+              <tr>
+                <th>项目</th>
+                <th>本表（估算）</th>
+                <th>直接法</th>
+                <th>差异</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>经营活动净额</td>
+                <td class="amount">{{ fmt(reportData.operatingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.operating) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.operatingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>投资活动净额</td>
+                <td class="amount">{{ fmt(reportData.investingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.investing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.investingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>筹资活动净额</td>
+                <td class="amount">{{ fmt(reportData.financingActivities?.['净额']) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.financing) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.financingDiff) }}</td>
+              </tr>
+              <tr>
+                <td>现金净增加额</td>
+                <td class="amount">{{ fmt(reportData.netCashChange) }}</td>
+                <td class="amount">{{ fmt(reportData.directMethod.net) }}</td>
+                <td class="amount">{{ fmtDiff(reportData.comparison?.netDiff) }}</td>
+              </tr>
+            </tbody>
+          </table>
+          <p v-if="reportData.comparison?.note" class="compare-note">{{ reportData.comparison.note }}</p>
+          <p class="compare-meta">
+            口径：{{ reportData.directMethod.scope === 'ytd' ? '本年累计' : '本月' }}
+            （{{ reportData.directMethod.fromPeriod }}–{{ reportData.directMethod.toPeriod }} 月）·
+            已有数据的分录项目：{{ reportData.directMethod.itemsWithData }} /
+            {{ reportData.directMethod.itemCount }}
+          </p>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
 
     <EmptyState v-else-if="!loading" type="data" description="请选择年月后点击查询" />
-    <el-skeleton v-if="loading" :rows="10" animated />
+    <el-skeleton v-if="loading && !reportData" :rows="10" animated />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import request from '@/api/request'
 import printJS from 'print-js'
 import EmptyState from '@/components/EmptyState.vue'
+import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
 import { showOperationError } from '@/composables/useMessage'
 import { formatAmount } from '@/utils/format'
 import { exportStyledAoa } from '@/utils/exportStyledExcel'
+import './report.styles.css'
 
 const route = useRoute()
 const reportData = ref<any>(null)
 const loading = ref(false)
+const activeCompareTab = ref('indirect')
 const filters = ref({
   year: new Date().getFullYear(),
   period: new Date().getMonth() + 1,
   scope: 'month' as 'month' | 'ytd',
 })
-const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
+const years = Array.from({ length: new Date().getFullYear() - 2000 + 1 }, (_, i) => new Date().getFullYear() - i)
 
 const validationWarnings = computed(() => reportData.value?.validation?.warnings || [])
+
+const hasCompareTabs = computed(
+  () =>
+    Boolean(
+      reportData.value?.indirectMethod ||
+        reportData.value?.dynamicMethod ||
+        reportData.value?.directMethod
+    )
+)
+
+watch(reportData, data => {
+  if (!data) return
+  if (data.indirectMethod) activeCompareTab.value = 'indirect'
+  else if (data.dynamicMethod) activeCompareTab.value = 'dynamic'
+  else if (data.directMethod) activeCompareTab.value = 'direct'
+})
 
 function alertType(severity: string) {
   if (severity === 'error') return 'error'
@@ -488,100 +519,20 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.page {
-  padding: 16px;
-}
-.page-header {
+.cash-flow-page .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-bottom: 16px;
+  flex-wrap: wrap;
+  gap: 12px;
 }
-.page-header h3 {
+
+.cash-flow-page .page-header h3 {
   margin: 0;
 }
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-.report-card {
-  max-width: 100%;
-  overflow-x: auto;
-}
-.report-title-area {
-  text-align: center;
-  margin-bottom: 16px;
-}
-.report-title {
-  font-size: 20px;
-  margin: 0 0 4px;
-}
-.report-subtitle {
-  color: #666;
-  margin: 0;
-}
-.report-note {
-  font-size: 12px;
-  color: #909399;
-  margin: 8px 0 0;
-}
-.validation-block {
-  margin-bottom: 12px;
-}
-.indirect-method-panel,
-.dynamic-method-panel,
-.direct-method-panel {
-  margin-bottom: 16px;
-}
-.compare-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.compare-table th,
-.compare-table td {
-  border: 1px solid #ebeef5;
-  padding: 6px 10px;
-}
-.compare-note,
-.compare-meta {
-  font-size: 12px;
-  color: #909399;
-  margin-top: 8px;
-}
-.rpt-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 13px;
-}
-.rpt-table th,
-.rpt-table td {
-  border: 1px solid #dcdfe6;
-  padding: 6px 10px;
-}
-.rpt-table th {
-  background: #f5f7fa;
-  font-weight: bold;
-  text-align: center;
-}
-.section-header td {
-  background: #f0f0f0;
-  font-weight: bold;
-}
-.amount {
-  text-align: right;
-  font-family: 'Courier New', monospace;
-}
-.center {
-  text-align: center;
-}
-.subtotal-row td {
-  background: #fafafa;
-  font-weight: bold;
-}
-.total-row td {
-  background: #ecf5ff;
-  font-weight: bold;
+
+.rpt-table .total-row td {
+  background: var(--el-color-primary-light-9, #ecf5ff);
+  font-weight: 600;
 }
 </style>

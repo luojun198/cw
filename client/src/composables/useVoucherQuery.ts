@@ -18,6 +18,53 @@ export interface VoucherFilters {
   auxFields: Record<string, string>
   sortField: string
   sortOrder: 'asc' | 'desc'
+  makerName?: string
+  auditorName?: string
+  posterName?: string
+}
+
+/** 深拷贝凭证筛选条件（用于查询方案保存） */
+export function cloneVoucherFilters(filters: VoucherFilters): VoucherFilters {
+  return {
+    keyword: filters.keyword ?? '',
+    status: filters.status ?? '',
+    year: filters.year ?? null,
+    period: filters.period ?? null,
+    dateRange: [...(filters.dateRange || [])],
+    voucherTypeIds: [...(filters.voucherTypeIds || [])],
+    accountIds: [...(filters.accountIds || [])],
+    auxItems: Object.fromEntries(
+      Object.entries(filters.auxItems || {}).map(([k, v]) => [k, [...(v || [])]])
+    ),
+    auxFields: { ...(filters.auxFields || {}) },
+    sortField: filters.sortField ?? 'voucher_date',
+    sortOrder: filters.sortOrder ?? 'asc',
+    makerName: filters.makerName ?? '',
+    auditorName: filters.auditorName ?? '',
+    posterName: filters.posterName ?? '',
+  }
+}
+
+/** 将查询方案条件应用到当前筛选（覆盖嵌套字段） */
+export function applyVoucherFilters(target: VoucherFilters, source: Partial<VoucherFilters>) {
+  if (source.keyword !== undefined) target.keyword = source.keyword
+  if (source.status !== undefined) target.status = source.status
+  if (source.year !== undefined) target.year = source.year
+  if (source.period !== undefined) target.period = source.period
+  if (source.dateRange !== undefined) target.dateRange = [...source.dateRange]
+  if (source.voucherTypeIds !== undefined) target.voucherTypeIds = [...source.voucherTypeIds]
+  if (source.accountIds !== undefined) target.accountIds = [...source.accountIds]
+  if (source.auxItems !== undefined) {
+    target.auxItems = Object.fromEntries(
+      Object.entries(source.auxItems).map(([k, v]) => [k, [...(v || [])]])
+    )
+  }
+  if (source.auxFields !== undefined) target.auxFields = { ...source.auxFields }
+  if (source.sortField !== undefined) target.sortField = source.sortField
+  if (source.sortOrder !== undefined) target.sortOrder = source.sortOrder
+  if (source.makerName !== undefined) target.makerName = source.makerName
+  if (source.auditorName !== undefined) target.auditorName = source.auditorName
+  if (source.posterName !== undefined) target.posterName = source.posterName
 }
 
 export interface UseVoucherQueryOptions {
@@ -50,19 +97,33 @@ export function useVoucherQuery(options: UseVoucherQueryOptions = {}) {
     defaultFilters = {},
   } = options
 
+  // 获取当月日期范围
+  function getCurrentMonthRange(): string[] {
+    const today = new Date()
+    const year = today.getFullYear()
+    const month = today.getMonth()
+    const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
+    const lastDay = new Date(year, month + 1, 0).getDate()
+    const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+    return [startDate, endDate]
+  }
+
   // 默认筛选条件
   const defaultFilterValues: VoucherFilters = {
     keyword: '',
     status: '',
     year: null,
     period: null,
-    dateRange: [],
+    dateRange: getCurrentMonthRange(),
     voucherTypeIds: [],
     accountIds: [],
     auxItems: {},
     auxFields: {},
     sortField: 'voucher_date',
     sortOrder: 'asc',
+    makerName: '',
+    auditorName: '',
+    posterName: '',
     ...defaultFilters,
   }
 
@@ -152,6 +213,17 @@ export function useVoucherQuery(options: UseVoucherQueryOptions = {}) {
       params.sortOrder = filters.value.sortOrder
     }
 
+    // 经办人筛选
+    if (filters.value?.makerName) {
+      params.maker_name = filters.value.makerName
+    }
+    if (filters.value?.auditorName) {
+      params.auditor_name = filters.value.auditorName
+    }
+    if (filters.value?.posterName) {
+      params.poster_name = filters.value.posterName
+    }
+
     return params
   }
 
@@ -205,16 +277,24 @@ export function useVoucherQuery(options: UseVoucherQueryOptions = {}) {
     await baseDataStore.loadAccounts()
   }
 
-  async function loadAuxItems(categoryId: string) {
-    if (auxItemsMap.value[categoryId]) return
+  async function loadAuxItems(categoryId: string, keyword?: string) {
     try {
       const res = await request.get<any[]>('/base/aux-items', {
-        params: { category_id: categoryId, status: 'active' },
+        params: {
+          category_id: categoryId,
+          limit: 80,
+          status: 'active',
+          ...(keyword?.trim() ? { keyword: keyword.trim() } : {}),
+        },
       })
       auxItemsMap.value[categoryId] = res.data
     } catch (error) {
       console.error('加载辅助核算项目失败', error)
     }
+  }
+
+  async function searchAuxItems(categoryId: string, keyword: string) {
+    await loadAuxItems(categoryId, keyword)
   }
 
   // 凭证类型简称映射
@@ -252,7 +332,8 @@ export function useVoucherQuery(options: UseVoucherQueryOptions = {}) {
 
     const result: Record<string, string> = {}
     try {
-      const auxData = typeof entry.aux_data === 'string' ? JSON.parse(entry.aux_data) : entry.aux_data
+      const auxData =
+        typeof entry.aux_data === 'string' ? JSON.parse(entry.aux_data) : entry.aux_data
       for (const [code, val] of Object.entries(auxData)) {
         if (val && typeof val === 'object') {
           if ((val as any).name) {
@@ -330,6 +411,7 @@ export function useVoucherQuery(options: UseVoucherQueryOptions = {}) {
     loadVoucherTypes,
     loadAccounts,
     loadAuxItems,
+    searchAuxItems,
     clearCache,
 
     // 工具方法

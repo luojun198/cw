@@ -24,7 +24,7 @@
       stripe
       border
       size="small"
-      height="calc(100vh - 108px)"
+      height="100%"
       row-key="id"
       @header-dragend="onDragEnd"
     >

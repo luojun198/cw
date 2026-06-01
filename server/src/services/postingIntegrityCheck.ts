@@ -10,6 +10,7 @@ import {
   getAccountRealtimeAuxBalance,
   getAccountRealtimeBalance,
 } from './accountRealtimeBalance.js'
+import { applyEntryToSignedBalance } from '../utils/accountBalance.js'
 
 /**
  * 记账前数据完整性检查
@@ -179,7 +180,11 @@ export function checkPostingIntegrity(
     const account = getAccount(entry.account_id)
 
     if (!account) {
-      errors.push(`科目ID ${entry.account_id} 不存在`)
+      const accountLabel =
+        entry.account_name?.trim() ||
+        entry.account_code?.trim() ||
+        '未知科目'
+      errors.push(`科目「${accountLabel}」不存在`)
       continue
     }
 
@@ -260,7 +265,12 @@ export function checkPostingIntegrity(
         balance: readAccountRealtimeBalance(entry.account_id),
       }
       if (!entriesAlreadyPersisted) {
-        current.balance += entry.direction === 'debit' ? entry.amount : -entry.amount
+        current.balance = applyEntryToSignedBalance(
+          current.balance,
+          entry.amount,
+          entry.direction,
+          account.direction
+        )
       }
       cashBankImpactMap.set(entry.account_id, current)
     }
@@ -311,8 +321,8 @@ export function checkPostingIntegrity(
   for (const { account, balance } of cashBankImpactMap.values()) {
     if (balance < -0.01) {
       const accountType = account.is_cash === 1 ? '现金' : '银行存款'
-      warnings.push(
-        `${accountType}科目"${account.name}"余额将为负数：${balance.toFixed(2)} 元`
+      errors.push(
+        `${accountType}科目"${account.name}"余额不允许为负数，记账后余额将为 ${balance.toFixed(2)} 元`
       )
     }
   }

@@ -23,6 +23,62 @@ import {
   up as initBalancesAuxUniqueUp,
   down as initBalancesAuxUniqueDown,
 } from './migrations/20260518_init_balances_aux_unique.js'
+import {
+  up as normalizeReportDefinitionsSortOrderUp,
+  down as normalizeReportDefinitionsSortOrderDown,
+} from './migrations/20260523_normalize_report_definitions_sort_order.js'
+import {
+  up as addPermissionAssignmentModesUp,
+  down as addPermissionAssignmentModesDown,
+} from './migrations/20260524_add_permission_assignment_modes.js'
+import {
+  up as addMultiRoleSupportUp,
+  down as addMultiRoleSupportDown,
+} from './migrations/20260525_add_multi_role_support.js'
+import {
+  up as fixVoucherNullTypeUniqueUp,
+  down as fixVoucherNullTypeUniqueDown,
+} from './migrations/20260524_fix_voucher_null_type_unique.js'
+import {
+  up as addInitBalanceSourceUp,
+  down as addInitBalanceSourceDown,
+} from './migrations/20260525_add_init_balance_source.js'
+import {
+  up as addDashboardPermissionUp,
+  down as addDashboardPermissionDown,
+} from './migrations/20260525_add_dashboard_permission.js'
+import {
+  up as addAccountScopesUp,
+  down as addAccountScopesDown,
+} from './migrations/20260526_add_account_scopes.js'
+import {
+  up as addLicenseActivationUp,
+  down as addLicenseActivationDown,
+} from './migrations/20260526_add_license_activation.js'
+import {
+  up as addAsyncTasksUp,
+  down as addAsyncTasksDown,
+} from './migrations/20260530_add_async_tasks.js'
+import {
+  up as addLargeScalePerformanceIndexesUp,
+  down as addLargeScalePerformanceIndexesDown,
+} from './migrations/20260531_add_large_scale_performance_indexes.js'
+import {
+  up as fixBalanceSheetTemplateFormulasUp,
+  down as fixBalanceSheetTemplateFormulasDown,
+} from './migrations/20260531_fix_balance_sheet_template_formulas.js'
+import {
+  up as fixBalanceSheetLiabSumUp,
+  down as fixBalanceSheetLiabSumDown,
+} from './migrations/20260531_fix_balance_sheet_liab_sum.js'
+import {
+  up as addCashierUp,
+  down as addCashierDown,
+} from './migrations/20260601_add_cashier.js'
+import {
+  up as addFixedAssetUp,
+  down as addFixedAssetDown,
+} from './migrations/20260601_add_fixed_asset.js'
 
 /**
  * 迁移示例：添加新字段
@@ -1102,5 +1158,89 @@ export const migrations: Migration[] = [
     name: 'init_balances_aux_unique',
     up: initBalancesAuxUniqueUp,
     down: initBalancesAuxUniqueDown,
+  },
+  {
+    version: 26,
+    name: 'normalize_report_definitions_sort_order',
+    up: normalizeReportDefinitionsSortOrderUp,
+    down: normalizeReportDefinitionsSortOrderDown,
+  },
+  {
+    version: 27,
+    name: 'add_permission_assignment_modes',
+    up: addPermissionAssignmentModesUp,
+    down: addPermissionAssignmentModesDown,
+  },
+  {
+    version: 28,
+    name: 'add_multi_role_support',
+    up: addMultiRoleSupportUp,
+    down: addMultiRoleSupportDown,
+  },
+  {
+    version: 29,
+    name: 'fix_voucher_null_type_unique',
+    up: fixVoucherNullTypeUniqueUp,
+    down: fixVoucherNullTypeUniqueDown,
+  },
+  {
+    version: 30,
+    name: 'add_init_balance_source',
+    up: addInitBalanceSourceUp,
+    down: addInitBalanceSourceDown,
+  },
+  {
+    version: 31,
+    name: 'add_dashboard_permission',
+    up: addDashboardPermissionUp,
+    down: addDashboardPermissionDown,
+  },
+  {
+    version: 32,
+    name: 'add_account_scopes',
+    up: addAccountScopesUp,
+    down: addAccountScopesDown,
+  },
+  {
+    version: 33,
+    name: 'add_license_activation',
+    up: addLicenseActivationUp,
+    down: addLicenseActivationDown,
+  },
+  {
+    version: 34,
+    name: 'add_async_tasks',
+    up: addAsyncTasksUp,
+    down: addAsyncTasksDown,
+  },
+  {
+    version: 35,
+    name: 'add_large_scale_performance_indexes',
+    up: addLargeScalePerformanceIndexesUp,
+    down: addLargeScalePerformanceIndexesDown,
+  },
+  {
+    version: 36,
+    name: 'fix_balance_sheet_template_formulas',
+    up: fixBalanceSheetTemplateFormulasUp,
+    down: fixBalanceSheetTemplateFormulasDown,
+  },
+  {
+    version: 37,
+    name: 'fix_balance_sheet_liab_sum',
+    up: fixBalanceSheetLiabSumUp,
+    down: fixBalanceSheetLiabSumDown,
+  },
+  {
+    version: 38,
+    name: 'add_cashier',
+    up: addCashierUp,
+    down: addCashierDown,
+  },
+  {
+    version: 39,
+    name: 'add_fixed_asset',
+    up: addFixedAssetUp,
+    down: addFixedAssetDown,
   },
 ]

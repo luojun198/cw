@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>macOS Simulator</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      overflow: hidden;
+      width: 100vw;
+      height: 100vh;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      position: relative;
+    }
+
+    /* 菜单栏 */
+    .menu-bar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 24px;
+      background: rgba(255, 255, 255, 0.8);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      font-size: 13px;
+      z-index: 1000;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+    }
+
+    .menu-bar-left {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+    }
+
+    .menu-bar-right {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .menu-item {
+      cursor: pointer;
+      padding: 2px 8px;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+
+    .menu-item:hover {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    .apple-logo {
+      font-size: 16px;
+      font-weight: bold;
+    }
+
+    /* 桌面图标 */
+    .desktop {
+      position: absolute;
+      top: 24px;
+      left: 0;
+      right: 0;
+      bottom: 80px;
+      padding: 20px;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, 80px);
+      grid-auto-rows: 100px;
+      gap: 20px;
+      align-content: start;
+    }
+
+    .desktop-icon {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+      padding: 8px;
+      border-radius: 8px;
+      transition: background 0.2s;
+    }
+
+    .desktop-icon:hover {
+      background: rgba(255, 255, 255, 0.2);
+    }
+
+    .desktop-icon-image {
+      width: 56px;
+      height: 56px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    .desktop-icon-name {
+      color: white;
+      font-size: 11px;
+      text-align: center;
+      text-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+      max-width: 80px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    /* Dock */
+    .dock {
+      position: fixed;
+      bottom: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(255, 255, 255, 0.3);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      border-radius: 16px;
+      padding: 8px 16px;
+      display: flex;
+      align-items: flex-end;
+      gap: 8px;
+      box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+      border: 1px solid rgba(255, 255, 255, 0.2);
+    }
+
+    .dock-separator {
+      width: 1px;
+      height: 48px;
+      background: rgba(255, 255, 255, 0.3);
+      margin: 0 4px;
+    }
+
+    .dock-icon {
+      width: 56px;
+      height: 56px;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      border-radius: 12px;
+      cursor: pointer;
+      transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 28px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      position: relative;
+    }
+
+    .dock-icon:hover {
+      transform: translateY(-12px) scale(1.2);
+    }
+
+    .dock-icon.active::before {
+      content: '';
+      position: absolute;
+      bottom: -12px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 4px;
+      height: 4px;
+      background: rgba(0, 0, 0, 0.5);
+      border-radius: 50%;
+    }
+
+    /* 窗口 */
+    .window {
+      position: absolute;
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      overflow: hidden;
+      display: none;
+    }
+
+    .window.active {
+      display: block;
+      z-index: 100;
+    }
+
+    .window-header {
+      height: 40px;
+      background: rgba(246, 246, 246, 0.95);
+      display: flex;
+      align-items: center;
+      padding: 0 12px;
+      cursor: move;
+      border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    }
+
+    .window-controls {
+      display: flex;
+      gap: 8px;
+    }
+
+    .window-control {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      cursor: pointer;
+      transition: opacity 0.2s;
+    }
+
+    .window-control:hover {
+      opacity: 0.7;
+    }
+
+    .window-control.close {
+      background: #ff5f57;
+    }
+
+    .window-control.minimize {
+      background: #ffbd2e;
+    }
+
+    .window-control.maximize {
+      background: #28ca42;
+    }
+
+    .window-title {
+      flex: 1;
+      text-align: center;
+      font-size: 13px;
+      font-weight: 500;
+      color: #333;
+    }
+
+    .window-content {
+      padding: 20px;
+      height: calc(100% - 40px);
+      overflow: auto;
+    }
+
+    /* Finder 窗口样式 */
+    .finder-sidebar {
+      width: 180px;
+      background: rgba(246, 246, 246, 0.5);
+      padding: 12px;
+      border-right: 1px solid rgba(0, 0, 0, 0.1);
+      float: left;
+      height: 100%;
+    }
+
+    .finder-item {
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 13px;
+      margin-bottom: 2px;
+      transition: background 0.2s;
+    }
+
+    .finder-item:hover {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    .finder-item.active {
+      background: #007aff;
+      color: white;
+    }
+
+    .finder-main {
+      margin-left: 180px;
+      padding: 20px;
+      height: 100%;
+    }
+
+    /* 通知中心 */
+    .notification-center {
+      position: fixed;
+      top: 24px;
+      right: -320px;
+      width: 320px;
+      height: calc(100vh - 24px);
+      background: rgba(255, 255, 255, 0.9);
+      backdrop-filter: blur(30px);
+      -webkit-backdrop-filter: blur(30px);
+      box-shadow: -2px 0 20px rgba(0, 0, 0, 0.2);
+      transition: right 0.3s ease;
+      z-index: 999;
+      padding: 20px;
+      overflow-y: auto;
+    }
+
+    .notification-center.show {
+      right: 0;
+    }
+
+    .notification {
+      background: white;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .notification-title {
+      font-weight: 600;
+      margin-bottom: 4px;
+      font-size: 14px;
+    }
+
+    .notification-body {
+      font-size: 13px;
+      color: #666;
+    }
+
+    /* 时间显示 */
+    .time-display {
+      font-size: 12px;
+      font-weight: 500;
+    }
+
+    /* 响应式 */
+    @media (max-width: 768px) {
+      .dock {
+        padding: 6px 12px;
+      }
+
+      .dock-icon {
+        width: 48px;
+        height: 48px;
+        font-size: 24px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <!-- 菜单栏 -->
+  <div class="menu-bar">
+    <div class="menu-bar-left">
+      <div class="menu-item apple-logo">🍎</div>
+      <div class="menu-item"><strong>Finder</strong></div>
+      <div class="menu-item">文件</div>
+      <div class="menu-item">编辑</div>
+      <div class="menu-item">显示</div>
+      <div class="menu-item">前往</div>
+      <div class="menu-item">窗口</div>
+      <div class="menu-item">帮助</div>
+    </div>
+    <div class="menu-bar-right">
+      <div class="menu-item">🔋</div>
+      <div class="menu-item">📶</div>
+      <div class="menu-item">🔍</div>
+      <div class="menu-item" onclick="toggleNotificationCenter()">🔔</div>
+      <div class="menu-item time-display" id="time"></div>
+    </div>
+  </div>
+
+  <!-- 桌面图标 -->
+  <div class="desktop">
+    <div class="desktop-icon" ondblclick="openWindow('finder')">
+      <div class="desktop-icon-image">📁</div>
+      <div class="desktop-icon-name">文稿</div>
+    </div>
+    <div class="desktop-icon" ondblclick="openWindow('safari')">
+      <div class="desktop-icon-image">🧭</div>
+      <div class="desktop-icon-name">下载</div>
+    </div>
+    <div class="desktop-icon">
+      <div class="desktop-icon-image">🖼️</div>
+      <div class="desktop-icon-name">图片</div>
+    </div>
+    <div class="desktop-icon">
+      <div class="desktop-icon-image">🎵</div>
+      <div class="desktop-icon-name">音乐</div>
+    </div>
+  </div>
+
+  <!-- Finder 窗口 -->
+  <div class="window" id="finder-window" style="width: 800px; height: 500px; top: 100px; left: 100px;">
+    <div class="window-header">
+      <div class="window-controls">
+        <div class="window-control close" onclick="closeWindow('finder')"></div>
+        <div class="window-control minimize"></div>
+        <div class="window-control maximize"></div>
+      </div>
+      <div class="window-title">文稿</div>
+      <div style="width: 60px;"></div>
+    </div>
+    <div class="window-content" style="padding: 0;">
+      <div class="finder-sidebar">
+        <div style="font-size: 11px; color: #999; margin-bottom: 8px; padding-left: 12px;">个人收藏</div>
+        <div class="finder-item active">📁 文稿</div>
+        <div class="finder-item">⬇️ 下载</div>
+        <div class="finder-item">🖼️ 图片</div>
+        <div class="finder-item">🎵 音乐</div>
+        <div class="finder-item">🎬 视频</div>
+        <div style="font-size: 11px; color: #999; margin: 16px 0 8px 12px;">位置</div>
+        <div class="finder-item">💻 我的 Mac</div>
+        <div class="finder-item">☁️ iCloud Drive</div>
+      </div>
+      <div class="finder-main">
+        <h3 style="margin-bottom: 16px;">文稿</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fill, 100px); gap: 16px;">
+          <div class="desktop-icon">
+            <div class="desktop-icon-image" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">📄</div>
+            <div class="desktop-icon-name" style="color: #333; text-shadow: none;">报告.docx</div>
+          </div>
+          <div class="desktop-icon">
+            <div class="desktop-icon-image" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">📊</div>
+            <div class="desktop-icon-name" style="color: #333; text-shadow: none;">数据.xlsx</div>
+          </div>
+          <div class="desktop-icon">
+            <div class="desktop-icon-image" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">📁</div>
+            <div class="desktop-icon-name" style="color: #333; text-shadow: none;">项目文件</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Safari 窗口 -->
+  <div class="window" id="safari-window" style="width: 900px; height: 600px; top: 80px; left: 150px;">
+    <div class="window-header">
+      <div class="window-controls">
+        <div class="window-control close" onclick="closeWindow('safari')"></div>
+        <div class="window-control minimize"></div>
+        <div class="window-control maximize"></div>
+      </div>
+      <div class="window-title">Safari</div>
+      <div style="width: 60px;"></div>
+    </div>
+    <div class="window-content">
+      <div style="background: #f5f5f5; padding: 12px; border-radius: 8px; margin-bottom: 20px; display: flex; align-items: center; gap: 12px;">
+        <div style="font-size: 18px;">◀️ ▶️</div>
+        <div style="flex: 1; background: white; padding: 8px 16px; border-radius: 6px; font-size: 14px;">
+          🔒 www.apple.com
+        </div>
+      </div>
+      <div style="text-align: center; padding: 60px 20px;">
+        <h1 style="font-size: 48px; margin-bottom: 20px;">欢迎使用 Safari</h1>
+        <p style="color: #666; font-size: 18px;">快速、高效、私密的浏览体验</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- 通知中心 -->
+  <div class="notification-center" id="notification-center">
+    <h2 style="margin-bottom: 20px; font-size: 20px;">通知中心</h2>
+    <div class="notification">
+      <div class="notification-title">📧 邮件</div>
+      <div class="notification-body">您有 3 封新邮件</div>
+    </div>
+    <div class="notification">
+      <div class="notification-title">📅 日历</div>
+      <div class="notification-body">下午 3:00 - 团队会议</div>
+    </div>
+    <div class="notification">
+      <div class="notification-title">💬 信息</div>
+      <div class="notification-body">张三: 项目进展如何？</div>
+    </div>
+  </div>
+
+  <!-- Dock -->
+  <div class="dock">
+    <div class="dock-icon active" onclick="openWindow('finder')" title="Finder">📁</div>
+    <div class="dock-icon" title="启动台">🚀</div>
+    <div class="dock-icon" onclick="openWindow('safari')" title="Safari">🧭</div>
+    <div class="dock-icon" title="邮件">📧</div>
+    <div class="dock-icon" title="信息">💬</div>
+    <div class="dock-icon" title="日历">📅</div>
+    <div class="dock-icon" title="照片">🖼️</div>
+    <div class="dock-icon" title="音乐">🎵</div>
+    <div class="dock-separator"></div>
+    <div class="dock-icon" title="系统偏好设置">⚙️</div>
+    <div class="dock-icon" title="废纸篓">🗑️</div>
+  </div>
+
+  <script>
+    // 更新时间
+    function updateTime() {
+      const now = new Date();
+      const hours = String(now.getHours()).padStart(2, '0');
+      const minutes = String(now.getMinutes()).padStart(2, '0');
+      const month = now.getMonth() + 1;
+      const day = now.getDate();
+      document.getElementById('time').textContent = `${month}月${day}日 ${hours}:${minutes}`;
+    }
+    updateTime();
+    setInterval(updateTime, 1000);
+
+    // 打开窗口
+    function openWindow(windowId) {
+      const window = document.getElementById(windowId + '-window');
+      if (window) {
+        window.classList.add('active');
+        makeWindowDraggable(window);
+      }
+    }
+
+    // 关闭窗口
+    function closeWindow(windowId) {
+      const window = document.getElementById(windowId + '-window');
+      if (window) {
+        window.classList.remove('active');
+      }
+    }
+
+    // 切换通知中心
+    function toggleNotificationCenter() {
+      const nc = document.getElementById('notification-center');
+      nc.classList.toggle('show');
+    }
+
+    // 点击其他地方关闭通知中心
+    document.addEventListener('click', function(e) {
+      const nc = document.getElementById('notification-center');
+      const notificationBtn = e.target.closest('.menu-item');
+      if (!nc.contains(e.target) && (!notificationBtn || notificationBtn.textContent !== '🔔')) {
+        nc.classList.remove('show');
+      }
+    });
+
+    // 窗口拖拽功能
+    function makeWindowDraggable(windowElement) {
+      const header = windowElement.querySelector('.window-header');
+      let isDragging = false;
+      let currentX;
+      let currentY;
+      let initialX;
+      let initialY;
+
+      header.addEventListener('mousedown', dragStart);
+
+      function dragStart(e) {
+        if (e.target.classList.contains('window-control')) return;
+
+        initialX = e.clientX - windowElement.offsetLeft;
+        initialY = e.clientY - windowElement.offsetTop;
+        isDragging = true;
+
+        document.addEventListener('mousemove', drag);
+        document.addEventListener('mouseup', dragEnd);
+      }
+
+      function drag(e) {
+        if (isDragging) {
+          e.preventDefault();
+          currentX = e.clientX - initialX;
+          currentY = e.clientY - initialY;
+
+          windowElement.style.left = currentX + 'px';
+          windowElement.style.top = currentY + 'px';
+        }
+      }
+
+      function dragEnd() {
+        isDragging = false;
+        document.removeEventListener('mousemove', drag);
+        document.removeEventListener('mouseup', dragEnd);
+      }
+    }
+
+    // Dock 图标悬停效果增强
+    const dockIcons = document.querySelectorAll('.dock-icon');
+    dockIcons.forEach((icon, index) => {
+      icon.addEventListener('mouseenter', function() {
+        // 相邻图标也有轻微放大效果
+        if (dockIcons[index - 1]) {
+          dockIcons[index - 1].style.transform = 'translateY(-6px) scale(1.1)';
+        }
+        if (dockIcons[index + 1]) {
+          dockIcons[index + 1].style.transform = 'translateY(-6px) scale(1.1)';
+        }
+      });
+
+      icon.addEventListener('mouseleave', function() {
+        if (dockIcons[index - 1]) {
+          dockIcons[index - 1].style.transform = '';
+        }
+        if (dockIcons[index + 1]) {
+          dockIcons[index + 1].style.transform = '';
+        }
+      });
+    });
+
+    // 桌面点击取消选中
+    document.querySelector('.desktop').addEventListener('click', function(e) {
+      if (e.target === this) {
+        document.querySelectorAll('.desktop-icon').forEach(icon => {
+          icon.style.background = '';
+        });
+      }
+    });
+  </script>
+</body>
+</html>

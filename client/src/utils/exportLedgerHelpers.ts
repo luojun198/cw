@@ -23,12 +23,27 @@ export function formatEndBalanceDirection(row: {
   return row.direction === 'debit' ? '贷' : '借'
 }
 
+/** 金额保留两位小数（导出/计算用） */
+export function roundAmount(value: number): number {
+  return Math.round(value * 100) / 100
+}
+
 export function formatSignedBalanceAmount(
   balance: number,
   hideZero = false
 ): number | '' {
   if (balance === 0) return hideZero ? '' : 0
-  return Math.abs(balance)
+  return roundAmount(Math.abs(balance))
+}
+
+/** 带符号余额的界面展示（两位小数 + 千分位，取绝对值） */
+export function formatSignedBalanceDisplay(
+  balance: number | null | undefined,
+  hideZero = false
+): string {
+  const raw = balance ?? 0
+  if (raw === 0) return hideZero ? '' : formatAmount(0)
+  return formatAmount(Math.abs(raw))
 }
 
 export function formatPositiveAmount(
@@ -37,7 +52,7 @@ export function formatPositiveAmount(
 ): number | '' {
   const value = amount || 0
   if (value <= 0) return hideZero ? '' : 0
-  return value
+  return roundAmount(value)
 }
 
 export function splitBalanceToDebitCredit(balance: number, direction: string) {
@@ -45,6 +60,16 @@ export function splitBalanceToDebitCredit(balance: number, direction: string) {
   const onDebitSide =
     balance === 0 ? direction === 'debit' : balance > 0 ? direction === 'debit' : direction !== 'debit'
   return onDebitSide ? { debit: amount, credit: 0 } : { debit: 0, credit: amount }
+}
+
+export function applyEntryToSignedBalance(
+  balance: number,
+  amount: number,
+  entryDirection: 'debit' | 'credit',
+  accountDirection: 'debit' | 'credit'
+): number {
+  const isSameDirection = accountDirection === entryDirection
+  return balance + (isSameDirection ? amount : -amount)
 }
 
 export function sumBalanceSides(
@@ -62,16 +87,14 @@ export function sumBalanceSides(
   )
 }
 
-/** 合计行应参与的科目：有限定级次时取顶层，否则取叶节点 */
+/** 合计行应参与的科目：优先取一级科目（已含下级汇总），否则取当前数据集叶节点 */
 export function getSummaryAccountRows<T extends { level: number; account_code: string }>(
   data: T[],
-  accountLevel?: number | null
+  _accountLevel?: number | null
 ): T[] {
   if (!data.length) return []
-  if (accountLevel) {
-    const topLevel = Math.min(...data.map(r => r.level))
-    return data.filter(row => row.level === topLevel)
-  }
+  const level1Rows = data.filter(row => row.level === 1)
+  if (level1Rows.length > 0) return level1Rows
   return data.filter(
     row =>
       !data.some(

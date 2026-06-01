@@ -7,7 +7,7 @@
           v-model="filters.year"
           placeholder="年份"
           clearable
-          style="width: 100px"
+          class="filter-ctl--xs"
           @change="onYearPeriodChange"
         >
           <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
@@ -16,7 +16,7 @@
           v-model="filters.period"
           placeholder="月份"
           clearable
-          style="width: 100px"
+          class="filter-ctl--xs"
           @change="onYearPeriodChange"
         >
           <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
@@ -26,7 +26,7 @@
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="开始日期"
-          style="width: 140px"
+          class="filter-ctl--md"
           clearable
           @change="onDateRangeChange"
         />
@@ -35,7 +35,7 @@
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="结束日期"
-          style="width: 140px"
+          class="filter-ctl--md"
           clearable
           @change="onDateRangeChange"
         />
@@ -62,58 +62,61 @@
           打印
         </el-button>
       </div>
-      <div v-if="showAdvancedFilter" class="filter-row" style="margin-top: 8px">
+      <div v-if="showAdvancedFilter" class="filter-row filter-row--advanced">
         <el-input
           v-model="filters.summary_keyword"
           placeholder="摘要关键词"
           clearable
-          style="width: 160px"
+          class="filter-ctl--md"
         />
         <el-input
           v-model="filters.min_amount"
           placeholder="最小金额"
           type="number"
           clearable
-          style="width: 120px"
+          class="filter-ctl--sm"
         />
         <el-input
           v-model="filters.max_amount"
           placeholder="最大金额"
           type="number"
           clearable
-          style="width: 120px"
+          class="filter-ctl--sm"
         />
         <el-input
           v-model="filters.maker_name"
           placeholder="制单人"
           clearable
-          style="width: 120px"
+          class="filter-ctl--sm"
         />
         <el-input
           v-model="filters.auditor_name"
           placeholder="审核人"
           clearable
-          style="width: 120px"
+          class="filter-ctl--sm"
         />
       </div>
     </div>
+
+    <AccountScopeAlert />
 
     <div class="print-title-row">
       <h2 class="print-title">序时账</h2>
       <p class="print-date-range">{{ printDateLabel }}</p>
     </div>
 
-    <div class="table-summary-scroll table-summary-scroll--wide">
+    <div ref="tableContainerRef" class="table-summary-scroll table-summary-scroll--wide">
     <el-table
       ref="tableRef"
+      :height="tableHeight"
       :data="list"
       :style="{ width: `${ledgerTableWidth}px` }"
       :fit="false"
-      stripe
       border
       size="small"
       class="compact-data-table"
       highlight-current-row
+      :row-class-name="getRowClassName"
       @header-dragend="handleHeaderDragEnd"
       @row-dblclick="handleLedgerRowDblClick"
     >
@@ -136,14 +139,24 @@
       />
       <el-table-column prop="summary" label="摘要" :width="colWidth('summary', 180)" />
       <el-table-column column-key="借方金额" label="借方金额" :width="colWidth('借方金额', 140)" align="right">
-        <template #default="{ row }">{{
-          row.direction === 'debit' ? formatAmount(row.amount) : ''
-        }}</template>
+        <template #default="{ row }">
+          <template v-if="row.is_monthly_subtotal">
+            {{ formatAmount(row.monthly_debit) }}
+          </template>
+          <template v-else>
+            {{ row.direction === 'debit' ? formatAmount(row.amount) : '' }}
+          </template>
+        </template>
       </el-table-column>
       <el-table-column column-key="贷方金额" label="贷方金额" :width="colWidth('贷方金额', 140)" align="right">
-        <template #default="{ row }">{{
-          row.direction === 'credit' ? formatAmount(row.amount) : ''
-        }}</template>
+        <template #default="{ row }">
+          <template v-if="row.is_monthly_subtotal">
+            {{ formatAmount(row.monthly_credit) }}
+          </template>
+          <template v-else>
+            {{ row.direction === 'credit' ? formatAmount(row.amount) : '' }}
+          </template>
+        </template>
       </el-table-column>
       <el-table-column prop="maker_name" label="制单人" :width="colWidth('maker_name', 80)" />
     </el-table>
@@ -160,19 +173,27 @@
         @current-change="fetchData"
       />
     </div>
+
+    <VoucherEntryDialogHost ref="entryDialogHostRef" @saved="fetchData" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onActivated, onBeforeUnmount } from 'vue'
 import { Printer, Search, Download } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
 import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
-import { useLedgerVoucherNavigate } from '@/composables/useLedgerVoucherNavigate'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import {
+  useLedgerVoucherNavigate,
+  resolveLedgerVoucherId,
+} from '@/composables/useLedgerVoucherNavigate'
+import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 import { formatAmount } from '@/utils/format'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
 
-const { handleLedgerRowDblClick } = useLedgerVoucherNavigate()
 const list = ref<any[]>([])
 const total = ref(0)
 const currentPage = ref(1)
@@ -190,7 +211,34 @@ const filters = ref<any>({
   maker_name: '',
   auditor_name: '',
 })
-const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
+const years = Array.from({ length: new Date().getFullYear() - 2000 + 1 }, (_, i) => new Date().getFullYear() - i)
+
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const { tryRestoreVoucherModal } = useVoucherModalRestore(entryDialogHostRef)
+
+const { handleLedgerRowDblClick } = useLedgerVoucherNavigate({
+  returnLabel: '序时账',
+  getReturnQuery: () => ({
+    year: filters.value.year ? String(filters.value.year) : '',
+    period: filters.value.period ? String(filters.value.period) : '',
+    start_date: filters.value.start_date || '',
+    end_date: filters.value.end_date || '',
+  }),
+  openVoucherModal: row => {
+    // 忽略小计行
+    if (row.is_monthly_subtotal) {
+      return
+    }
+    
+    const voucherId = resolveLedgerVoucherId(row)
+    if (!voucherId) return
+    entryDialogHostRef.value?.open({
+      _voucherId: voucherId,
+      id: voucherId,
+      status: row.voucher_status,
+    })
+  },
+})
 
 const printDateLabel = computed(() => {
   if (filters.value.start_date || filters.value.end_date) {
@@ -255,6 +303,7 @@ const ledgerColumnDefs = computed(() => [
 
 const { tableRef, colWidth, ledgerTableWidth, handleHeaderDragEnd, afterTableLayout } =
   useLedgerWideTable('ledger_chronological', ledgerColumnDefs)
+const { containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
 
 function isDateFilterActive() {
   return Boolean(filters.value.start_date || filters.value.end_date)
@@ -272,6 +321,73 @@ function onDateRangeChange() {
     filters.value.year = null
     filters.value.period = null
   }
+}
+
+function insertMonthlySubtotals(entries: any[]): any[] {
+  if (entries.length === 0) return entries
+  
+  const result: any[] = []
+  let currentMonth = ''
+  let monthlyDebit = 0
+  let monthlyCredit = 0
+  
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    const entryMonth = entry.voucher_date.substring(0, 7)
+    
+    if (currentMonth && entryMonth !== currentMonth) {
+      result.push({
+        id: `__monthly_subtotal_${currentMonth}__`,
+        voucher_date: currentMonth + '-31',
+        voucher_type_name: '',
+        voucher_no: '',
+        account_code: '',
+        account_name: '',
+        summary: '本月合计',
+        amount: 0,
+        maker_name: '',
+        is_monthly_subtotal: true,
+        monthly_debit: monthlyDebit,
+        monthly_credit: monthlyCredit,
+      })
+      
+      monthlyDebit = 0
+      monthlyCredit = 0
+    }
+    
+    if (entry.direction === 'debit') {
+      monthlyDebit += entry.amount
+    } else if (entry.direction === 'credit') {
+      monthlyCredit += entry.amount
+    }
+    
+    currentMonth = entryMonth
+    result.push(entry)
+  }
+  
+  if (currentMonth && entries.length > 0) {
+    result.push({
+      id: `__monthly_subtotal_${currentMonth}__`,
+      voucher_date: currentMonth + '-31',
+      voucher_type_name: '',
+      voucher_no: '',
+      account_code: '',
+      account_name: '',
+      summary: '本月合计',
+      amount: 0,
+      maker_name: '',
+      is_monthly_subtotal: true,
+      monthly_debit: monthlyDebit,
+      monthly_credit: monthlyCredit,
+    })
+  }
+  
+  return result
+}
+
+function getRowClassName({ row }: { row: any }) {
+  if (row.is_monthly_subtotal) return 'monthly-subtotal-row'
+  return ''
 }
 
 function buildQueryParams(page: number, size: number) {
@@ -297,7 +413,9 @@ function buildQueryParams(page: number, size: number) {
 async function fetchData() {
   const params = buildQueryParams(currentPage.value, pageSize.value)
   const res = await request.get<any>('/ledger/chronological', { params })
-  list.value = res.data || []
+  const entries = res.data || []
+  const entriesWithSubtotals = insertMonthlySubtotals(entries)
+  list.value = entriesWithSubtotals
   total.value = res.total || 0
   await afterTableLayout()
 }
@@ -305,7 +423,9 @@ async function fetchData() {
 async function exportData() {
   const params = buildQueryParams(1, 10000)
   const res = await request.get<any>('/ledger/chronological', { params })
-  const allData = res.data || []
+  const entries = res.data || []
+  const entriesWithSubtotals = insertMonthlySubtotals(entries)
+  const allData = entriesWithSubtotals
   const dateRange = isDateFilterActive()
     ? `${filters.value.start_date || '不限'}_${filters.value.end_date || '不限'}`
     : `${filters.value.year || new Date().getFullYear()}_${filters.value.period || new Date().getMonth() + 1}`
@@ -326,14 +446,20 @@ async function exportData() {
       width: colWidth('借方金额', 140),
       align: 'right',
       type: 'amount',
-      value: row => (row.direction === 'debit' ? row.amount : ''),
+      value: row => {
+        if (row.is_monthly_subtotal) return row.monthly_debit
+        return row.direction === 'debit' ? row.amount : ''
+      },
     },
     {
       label: '贷方金额',
       width: colWidth('贷方金额', 140),
       align: 'right',
       type: 'amount',
-      value: row => (row.direction === 'credit' ? row.amount : ''),
+      value: row => {
+        if (row.is_monthly_subtotal) return row.monthly_credit
+        return row.direction === 'credit' ? row.amount : ''
+      },
     },
     { label: '制单人', width: colWidth('maker_name', 80), value: row => row.maker_name || '' },
   ]
@@ -351,9 +477,18 @@ async function exportData() {
 onMounted(async () => {
   await fetchData()
 })
+
+onActivated(() => {
+  void tryRestoreVoucherModal()
+})
 </script>
 
 <style scoped>
+:deep(.monthly-subtotal-row) {
+  background-color: #e0f2fe !important;
+  font-weight: 600;
+}
+
 .page {
   padding: 16px;
 }
@@ -366,13 +501,11 @@ onMounted(async () => {
 .page-header h3 {
   margin: 0;
 }
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
+.filter-row--advanced {
+  margin-top: 8px;
 }
 .pagination {
-  margin-top: 16px;
+  margin-top: 4px;
   display: flex;
   justify-content: flex-end;
 }

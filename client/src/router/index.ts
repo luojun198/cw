@@ -1,6 +1,13 @@
 import { createRouter, createWebHistory, RouteRecordRaw } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useSystemParamsStore } from '@/stores/systemParams'
+import { useLicenseStore } from '@/stores/license'
+import {
+  canAccessRoute,
+  getDefaultLandingPath,
+  normalizePath,
+  resolveAccessiblePath,
+} from '@/config/navigation'
 
 const routes: RouteRecordRaw[] = [
   {
@@ -8,6 +15,12 @@ const routes: RouteRecordRaw[] = [
     name: 'Login',
     component: () => import('@/views/Login.vue'),
     meta: { title: '登录', requiresAuth: false },
+  },
+  {
+    path: '/activate',
+    name: 'LicenseActivate',
+    component: () => import('@/views/LicenseActivate.vue'),
+    meta: { title: '软件激活', requiresAuth: false },
   },
   {
     path: '/',
@@ -20,6 +33,12 @@ const routes: RouteRecordRaw[] = [
         name: 'Dashboard',
         component: () => import('@/views/Dashboard.vue'),
         meta: { title: '工作台', icon: 'Odometer' },
+      },
+      {
+        path: 'forbidden',
+        name: 'Forbidden',
+        component: () => import('@/views/Forbidden.vue'),
+        meta: { title: '无权限', icon: 'Warning' },
       },
       // 系统管理
       {
@@ -182,6 +201,17 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '日记账', icon: 'Wallet', parent: '账簿管理' },
       },
       {
+        path: 'ledger/cash-flow-trial-balance',
+        name: 'CashFlowTrialBalance',
+        component: () => import('@/views/ledger/CashFlowTrialBalance.vue'),
+        meta: {
+          title: '现金流量试算平衡表',
+          icon: 'Money',
+          parent: '账簿管理',
+          requiresCashFlow: true,
+        },
+      },
+      {
         path: 'ledger/chronological',
         name: 'Chronological',
         component: () => import('@/views/ledger/Chronological.vue'),
@@ -230,6 +260,19 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/_aux/FuncClass.vue'),
         meta: { title: '功能分类', icon: 'Collection', parent: '辅助核算' },
       },
+      // 出纳管理
+      {
+        path: 'cashier/journal',
+        name: 'CashierJournal',
+        component: () => import('@/views/cashier/Journal.vue'),
+        meta: { title: '出纳日记账', icon: 'CreditCard', parent: '出纳管理' },
+      },
+      {
+        path: 'cashier/init-balance',
+        name: 'CashierInitBalance',
+        component: () => import('@/views/cashier/InitBalance.vue'),
+        meta: { title: '出纳期初', icon: 'Wallet', parent: '出纳管理' },
+      },
       // 数据安全
       {
         path: 'security/backup',
@@ -253,16 +296,33 @@ const router = createRouter({
 
 router.beforeEach(async (to, from, next) => {
   const userStore = useUserStore()
+  const systemParamsStore = useSystemParamsStore()
+  const licenseStore = useLicenseStore()
+
+  await licenseStore.ensureStatus()
+
+  if (to.path !== '/activate' && licenseStore.needsActivation) {
+    next('/activate')
+    return
+  }
+  if (to.path === '/activate' && licenseStore.isValid) {
+    next('/login')
+    return
+  }
+
+  await userStore.bootstrapAuth()
   // 带 targetAccountSetId 参数的登录请求，跳转前先清除 token
   if (to.path === '/login' && to.query.targetAccountSetId && userStore.token) {
     userStore.token = ''
     userStore.userInfo = null
     userStore.accountSetId = ''
     userStore.accountSetName = ''
+    userStore.authBootstrapped = false
     localStorage.removeItem('token')
     localStorage.removeItem('userInfo')
     localStorage.removeItem('accountSetId')
     localStorage.removeItem('accountSetName')
+    systemParamsStore.reset()
     next()
   } else if (to.meta.requiresAuth !== false && !userStore.token) {
     // 如果不记住密码，清除保存的登录信息
@@ -272,15 +332,35 @@ router.beforeEach(async (to, from, next) => {
     }
     next('/login')
   } else if (to.path === '/login' && userStore.token) {
-    next('/dashboard')
+    await systemParamsStore.load()
+    next(getDefaultLandingPath(userStore.permissions, systemParamsStore.enableCashFlow))
   } else if (to.meta.requiresCashFlow) {
-    const systemParamsStore = useSystemParamsStore()
     await systemParamsStore.load()
     if (!systemParamsStore.enableCashFlow) {
       next('/system/param')
+    } else if (!canAccessRoute(to.path, userStore.permissions)) {
+      const landing = resolveAccessiblePath(
+        to.path,
+        userStore.permissions,
+        systemParamsStore.enableCashFlow
+      )
+      next(landing === normalizePath(to.path) ? '/forbidden' : { path: landing, replace: true })
     } else {
       next()
     }
+  } else if (
+    to.meta.requiresAuth !== false &&
+    userStore.token &&
+    to.path !== '/forbidden' &&
+    !canAccessRoute(to.path, userStore.permissions)
+  ) {
+    await systemParamsStore.load()
+    const landing = resolveAccessiblePath(
+      to.path,
+      userStore.permissions,
+      systemParamsStore.enableCashFlow
+    )
+    next(landing === normalizePath(to.path) ? '/forbidden' : { path: landing, replace: true })
   } else {
     next()
   }

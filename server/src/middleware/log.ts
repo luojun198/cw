@@ -1,6 +1,8 @@
+import type { Response } from 'express'
 import { AuthRequest } from './auth.js'
 import { v4 as uuidv4 } from 'uuid'
 import { logQueue } from '../utils/logQueue.js'
+import { getRequestIp } from '../utils/requestIp.js'
 
 export function operationLog(action: string, module?: string) {
   return (req: AuthRequest, res: Response, next: any) => {
@@ -16,7 +18,7 @@ export function operationLog(action: string, module?: string) {
           action,
           module: module || '',
           detail: typeof body === 'string' ? body : JSON.stringify(body?.message || ''),
-          ip_address: req.ip || req.socket.remoteAddress || '',
+          ip_address: getRequestIp(req),
           user_agent: req.headers['user-agent'] || '',
         })
       } catch (e) {
@@ -27,5 +29,3 @@ export function operationLog(action: string, module?: string) {
     next()
   }
 }
-
-import type { Response } from 'express'

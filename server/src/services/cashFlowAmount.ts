@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3'
+import { appendAccountScopeCondition, type AccountScopeContext } from './accountAuthorization.js'
 import type { BalanceQueryDb } from './reportBalance.js'
 
 /**
@@ -11,24 +12,37 @@ export function getCashFlowAmount(
   cashFlowCode: string,
   year: number,
   fromPeriod: number,
-  toPeriod: number
+  toPeriod: number,
+  accountScope?: AccountScopeContext
 ): number {
+  const conditions = [
+    'v.account_set_id = ?',
+    'v.year = ?',
+    'v.period >= ?',
+    'v.period <= ?',
+    "v.status = 'posted'",
+    've.cash_flow_code = ?',
+  ]
+  const params: Array<string | number> = [
+    accountSetId,
+    year,
+    fromPeriod,
+    toPeriod,
+    cashFlowCode,
+  ]
+  appendAccountScopeCondition(accountScope, 've.account_id', conditions, params)
+
   const rows = db
     .prepare(
       `
       SELECT ve.direction, SUM(ve.amount) as amount
       FROM voucher_entries ve
       JOIN vouchers v ON v.id = ve.voucher_id
-      WHERE v.account_set_id = ?
-        AND v.year = ?
-        AND v.period >= ?
-        AND v.period <= ?
-        AND v.status = 'posted'
-        AND ve.cash_flow_code = ?
+      WHERE ${conditions.join(' AND ')}
       GROUP BY ve.direction
       `
     )
-    .all(accountSetId, year, fromPeriod, toPeriod, cashFlowCode) as Array<{
+    .all(...params) as Array<{
     direction: 'debit' | 'credit'
     amount: number | null
   }>
@@ -62,9 +76,18 @@ export function getSignedCashFlowAmount(
   cashFlowCode: string,
   year: number,
   fromPeriod: number,
-  toPeriod: number
+  toPeriod: number,
+  accountScope?: AccountScopeContext
 ): number {
-  const magnitude = getCashFlowAmount(db, accountSetId, cashFlowCode, year, fromPeriod, toPeriod)
+  const magnitude = getCashFlowAmount(
+    db,
+    accountSetId,
+    cashFlowCode,
+    year,
+    fromPeriod,
+    toPeriod,
+    accountScope
+  )
   if (magnitude < 0.0001) return 0
 
   const item = db
@@ -93,7 +116,8 @@ export function getDirectMethodActivityTotals(
   accountSetId: string,
   year: number,
   fromPeriod: number,
-  toPeriod: number
+  toPeriod: number,
+  accountScope?: AccountScopeContext
 ): DirectMethodActivityTotals {
   const items = db
     .prepare(
@@ -107,7 +131,15 @@ export function getDirectMethodActivityTotals(
   let itemsWithData = 0
 
   for (const { code } of items) {
-    const signed = getSignedCashFlowAmount(db, accountSetId, code, year, fromPeriod, toPeriod)
+    const signed = getSignedCashFlowAmount(
+      db,
+      accountSetId,
+      code,
+      year,
+      fromPeriod,
+      toPeriod,
+      accountScope
+    )
     if (Math.abs(signed) < 0.0001) continue
     itemsWithData++
     const segment = code.trim().charAt(0)

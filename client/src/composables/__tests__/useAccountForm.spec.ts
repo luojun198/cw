@@ -2,7 +2,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { ref } from 'vue'
 import { useAccountForm } from '@/composables/useAccountForm'
 
-// Mock request module
 vi.mock('@/api/request', () => ({
   default: {
     get: vi.fn(),
@@ -14,16 +13,30 @@ describe('useAccountForm', () => {
     { id: 'dept', name: '部门' },
     { id: 'project', name: '项目' },
   ])
-  const auxItems = ref([
-    { id: 'dept1', type: 'dept', name: '财务部' },
-    { id: 'dept2', type: 'dept', name: '行政部' },
-    { id: 'proj1', type: 'project', name: '项目A' },
-  ])
+  const auxItemById = ref(
+    new Map([
+      ['dept1', { id: 'dept1', type: 'dept', name: '财务部' }],
+      ['dept2', { id: 'dept2', type: 'dept', name: '行政部' }],
+      ['proj1', { id: 'proj1', type: 'project', name: '项目A' }],
+    ])
+  )
+  const auxItemsByCategory = ref(
+    new Map([
+      [
+        'dept',
+        [
+          { id: 'dept1', type: 'dept', name: '财务部' },
+          { id: 'dept2', type: 'dept', name: '行政部' },
+        ],
+      ],
+      ['project', [{ id: 'proj1', type: 'project', name: '项目A' }]],
+    ])
+  )
 
   let composable: ReturnType<typeof useAccountForm>
 
   beforeEach(() => {
-    composable = useAccountForm(auxCategories, auxItems)
+    composable = useAccountForm(auxCategories, { auxItemById, auxItemsByCategory })
   })
 
   it('should initialize with default form', () => {
@@ -93,5 +106,12 @@ describe('useAccountForm', () => {
     expect(payload.code).toBe('1001')
     expect(payload.aux_types).toEqual({ dept: 'dept1', project: null })
     expect(payload.aux_list).toBeUndefined()
+  })
+
+  it('getAuxNames 使用 Map 查找默认项目', () => {
+    const names = composable.getAuxNames({
+      aux_types: { dept: 'dept1', project: null },
+    })
+    expect(names).toEqual(['部门:财务部', '项目'])
   })
 })

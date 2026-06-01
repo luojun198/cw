@@ -3,6 +3,7 @@ import { normalizePrintTemplateElements } from '../utils/printTemplateNormalize.
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db/index.js'
 import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
+import { ensureDefaultPrintTemplateForAccountSet } from '../services/printTemplateDefaults.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -258,77 +259,21 @@ router.delete(
   }
 )
 
-// 初始化默认打印模版（仅在没有模版时创建）
+// 初始化默认打印模版（仅在没有默认模版时创建）
 router.post(
   '/print-templates/init-default',
   operationLog('初始化默认打印模版', '基础设置'),
   (req: AuthRequest, res) => {
     const db = getDb()
+    const accountSetId = req.accountSetId || ''
 
-    // 检查是否已有模版
-    const existingCount = db
-      .prepare('SELECT COUNT(*) as count FROM print_templates WHERE account_set_id = ?')
-      .get(req.accountSetId || '') as any
+    const result = ensureDefaultPrintTemplateForAccountSet(db, accountSetId)
 
-    if (existingCount.count > 0) {
-      return res.json({ code: 0, message: '已存在打印模版，无需初始化' })
+    if (!result.created) {
+      return res.json({ code: 0, message: '已存在默认打印模版，无需初始化' })
     }
 
-    // 创建默认模版
-    const defaultTemplate = {
-      id: uuidv4(),
-      account_set_id: req.accountSetId || '',
-      name: '标准凭证打印模版',
-      paper_size: 'custom',
-      paper_width: 220,
-      paper_height: 140,
-      margin_top: 15,
-      margin_bottom: 15,
-      margin_left: 10,
-      margin_right: 10,
-      elements: JSON.stringify([
-        { id: uuidv4(), type: 'title', x: 200, y: 10, width: 400, height: 40, fontSize: 24, fontWeight: 'bold', align: 'center', text: '记账凭证' },
-        { id: uuidv4(), type: 'voucher_no', x: 20, y: 60, width: 200, height: 30, fontSize: 14, fontWeight: 'normal', align: 'left' },
-        { id: uuidv4(), type: 'date', x: 600, y: 60, width: 180, height: 30, fontSize: 14, fontWeight: 'normal', align: 'right', dateFormat: 'YYYY-MM-DD' },
-        { id: uuidv4(), type: 'table', x: 20, y: 100, width: 760, height: 300, fontSize: 12, fontWeight: 'normal', align: 'left', borderWidth: 1, showHeader: true, rowHeight: 40, numberFormat: 'thousand', columns: [
-          { field: 'summary', label: '摘要', width: '200', align: 'left', visible: true },
-          { field: 'account_code', label: '科目代码', width: '100', align: 'center', visible: true },
-          { field: 'account_name', label: '科目名称', width: '180', align: 'left', visible: true },
-          { field: 'debit', label: '借方', width: '140', align: 'right', visible: true },
-          { field: 'credit', label: '贷方', width: '140', align: 'right', visible: true }
-        ]},
-        { id: uuidv4(), type: 'total_label', x: 20, y: 420, width: 100, height: 30, fontSize: 14, fontWeight: 'bold', align: 'center', text: '合计' },
-        { id: uuidv4(), type: 'total_debit', x: 500, y: 420, width: 140, height: 30, fontSize: 14, fontWeight: 'normal', align: 'right', numberFormat: 'thousand' },
-        { id: uuidv4(), type: 'total_credit', x: 640, y: 420, width: 140, height: 30, fontSize: 14, fontWeight: 'normal', align: 'right', numberFormat: 'thousand' },
-        { id: uuidv4(), type: 'signature_maker', x: 20, y: 470, width: 180, height: 30, fontSize: 12, fontWeight: 'normal', align: 'center' },
-        { id: uuidv4(), type: 'signature_auditor', x: 220, y: 470, width: 180, height: 30, fontSize: 12, fontWeight: 'normal', align: 'center' },
-        { id: uuidv4(), type: 'signature_poster', x: 420, y: 470, width: 180, height: 30, fontSize: 12, fontWeight: 'normal', align: 'center' },
-        { id: uuidv4(), type: 'signature_supervisor', x: 620, y: 470, width: 180, height: 30, fontSize: 12, fontWeight: 'normal', align: 'center' }
-      ]),
-      is_default: 1,
-    }
-
-    db.prepare(
-      `INSERT INTO print_templates
-       (id, account_set_id, name, paper_size, paper_width, paper_height,
-        margin_top, margin_bottom, margin_left, margin_right, elements, is_default)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(
-      defaultTemplate.id,
-      defaultTemplate.account_set_id,
-      defaultTemplate.name,
-      defaultTemplate.paper_size,
-      defaultTemplate.paper_width,
-      defaultTemplate.paper_height,
-      defaultTemplate.margin_top,
-      defaultTemplate.margin_bottom,
-      defaultTemplate.margin_left,
-      defaultTemplate.margin_right,
-      defaultTemplate.elements,
-      defaultTemplate.is_default
-    )
-
-    res.json({ code: 0, message: '默认模版初始化成功', data: { id: defaultTemplate.id } })
+    res.json({ code: 0, message: '默认模版初始化成功', data: { id: result.id } })
   }
 )
 

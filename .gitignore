@@ -3,6 +3,7 @@ node_modules/
 
 # Build output
 dist/
+client/public/version.json
 *.tsbuildinfo
 
 # Environment
@@ -58,6 +59,11 @@ __MACOSX/
 temp_*.tar.gz
 temp_*.zip
 
+# 软件授权私钥（不入库）
+tools/license-keys/*.pem
+注册机/license-private.pem
+注册机/generate-license.exe
+
 # 临时 / 一次性脚本（连字符 + 下划线 + 多扩展名）
 test-*.js
 test-*.mjs
@@ -103,3 +109,46 @@ node-v*-win-x64/
 node-v*-win-x64.zip
 login_result.json
 *.tar.gz
+
+# 临时文件和备份
+*.bak
+tmp_*/
+temp_*/
+*_backup_*/
+手动备份_*/
+backups/
+uploads/
+server/uploads/
+优化日志.txt
+优化日志.xlsx
+功能评审报告.json
+test/
+tools/
+upgrade-output/
+stdout
+tmp_xlsx_bak/
+
+# AI 工具本地配置
+.reasonix/
+.claude/launch.json
+.claude/settings.local.json
+
+# 百度云上传配置
+*.baiduyun.uploading.cfg
+
+# 产品入库单（数据文件）
+产品入库单/
+
+# 压缩部署相关
+压缩部署包.bat
+一键打包.bat
+
+# 注册机（已排除私钥，但排除整个目录）
+注册机/
+
+# Claude/Codex 工作树（不应提交）
+.claude/worktrees/
+
+# 其他临时脚本
+start-openclaw-gateway.ps1
+buildSheetRows_new.ts

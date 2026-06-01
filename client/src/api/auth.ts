@@ -1,4 +1,4 @@
-import request from './request'
+import request, { type RequestConfig } from './request'
 import type { ApiResponse, LoginResponse, CaptchaResponse, UserInfo } from '@cw/shared-types'
 
 export interface AccountSetItem {
@@ -36,14 +36,16 @@ export interface LoginForm {
   captchaId?: string
   targetAccountSetId?: string
   forceLogin?: boolean
+  /** 记住登录：JWT 与 Session 有效期延长至 7 天 */
+  rememberMe?: boolean
 }
 
 export function login(data: LoginForm): Promise<LoginResponse> {
   return request.post('/auth/login', data) as unknown as Promise<LoginResponse>
 }
 
-export function getUserInfo(): Promise<ApiResponse<UserInfo>> {
-  return request.get('/auth/userinfo')
+export function getUserInfo(config?: RequestConfig): Promise<ApiResponse<UserInfo>> {
+  return request.get('/auth/userinfo', config)
 }
 
 export function getCaptcha(): Promise<CaptchaResponse> {
@@ -92,6 +94,8 @@ export interface BackupImportResult {
     accounts: number
     vouchers: number
     entries: number
+    initBalances?: number
+    users?: number
   }
 }
 

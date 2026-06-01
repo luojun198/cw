@@ -3,6 +3,8 @@ import {
   buildVoucherEntryPayloads,
   calculateNewBalance,
   getNextVoucherNo,
+  findVoucherNoConflict,
+  parseVoucherNoSeq,
   validateVoucherEntriesNoNegativeBalance,
   validateVoucherEntriesCashFlow,
   VOUCHER_ENTRY_INSERT_PARAM_COUNT,
@@ -224,6 +226,79 @@ describe('voucherEntry automatic voucher type selection', () => {
     expect(result.effectiveTypeId).toBe('type-1')
     expect(result.voucherNo).toBe('记-001')
   })
+
+  it('不同年月应从 1 重新开始编号', () => {
+    const db = createNextNoDb({
+      lastVoucherTypeId: 'type-1',
+      types: {
+        'type-1': { id: 'type-1', name: '记账', code: '1' },
+      },
+      maxNoByPeriod: {
+        '2026-5': 8,
+        '2026-6': null,
+      },
+    })
+
+    const may = getNextVoucherNo({
+      db,
+      accountSetId: 'account-set',
+      year: 2026,
+      period: 5,
+      voucherTypeId: 'type-1',
+    })
+    expect(may.voucherNo).toBe('记-009')
+
+    const june = getNextVoucherNo({
+      db,
+      accountSetId: 'account-set',
+      year: 2026,
+      period: 6,
+      voucherTypeId: 'type-1',
+    })
+    expect(june.voucherNo).toBe('记-001')
+  })
+})
+
+describe('voucher number helpers', () => {
+  it('parseVoucherNoSeq 兼容带前缀与纯数字格式', () => {
+    expect(parseVoucherNoSeq('记-008')).toBe(8)
+    expect(parseVoucherNoSeq('16')).toBe(16)
+    expect(parseVoucherNoSeq('bad')).toBeNull()
+  })
+
+  it('findVoucherNoConflict 限定同年同月同类型', () => {
+    const db = createConflictDb()
+    expect(
+      findVoucherNoConflict({
+        db,
+        accountSetId: 'as1',
+        year: 2026,
+        period: 5,
+        voucherTypeId: 'type-1',
+        voucherNo: '记-001',
+      })
+    ).toBeUndefined()
+    expect(
+      findVoucherNoConflict({
+        db,
+        accountSetId: 'as1',
+        year: 2026,
+        period: 6,
+        voucherTypeId: 'type-1',
+        voucherNo: '记-001',
+      })
+    ).toBeUndefined()
+    expect(
+      findVoucherNoConflict({
+        db,
+        accountSetId: 'as1',
+        year: 2026,
+        period: 5,
+        voucherTypeId: 'type-1',
+        voucherNo: '记-002',
+      })?.id
+    ).toBe('v2')
+  })
 })
 
 function buildEntry(params: Partial<VoucherEntryInput>): VoucherEntryInput {
@@ -241,7 +316,8 @@ function createNextNoDb(params: {
   lastVoucherTypeId: string | null
   firstTypeId?: string
   types: Record<string, { id: string; name: string; code: string }>
-  maxNo: number | null
+  maxNo?: number | null
+  maxNoByPeriod?: Record<string, number | null>
 }) {
   return {
     prepare(sql: string) {
@@ -258,9 +334,38 @@ function createNextNoDb(params: {
             return params.types[String(args[0])] || undefined
           }
           if (sql.includes('SELECT MAX(')) {
-            return { max_no: params.maxNo }
+            if (params.maxNoByPeriod) {
+              const year = args[1]
+              const period = args[2]
+              const key = `${year}-${period}`
+              return { max_no: params.maxNoByPeriod[key] ?? null }
+            }
+            return { max_no: params.maxNo ?? null }
           }
           return undefined
+        },
+      }
+    },
+  }
+}
+
+function createConflictDb() {
+  const rows = [
+    { id: 'v2', account_set_id: 'as1', year: 2026, period: 5, voucher_type_id: 'type-1', voucher_no: '记-002' },
+  ]
+  return {
+    prepare(sql: string) {
+      return {
+        get(...args: any[]) {
+          const [accountSetId, year, period, voucherNo, typeId, , excludeId] = args
+          return rows.find(row =>
+            row.account_set_id === accountSetId &&
+            row.year === year &&
+            row.period === period &&
+            row.voucher_no === voucherNo &&
+            row.voucher_type_id === typeId &&
+            row.id !== excludeId
+          )
         },
       }
     },

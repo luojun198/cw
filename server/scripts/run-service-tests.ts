@@ -313,6 +313,7 @@ function testSystemQueryBuilders() {
     userId: 'user-9',
     action: '删除',
     module: '系统管理',
+    ipAddress: '192.168',
     startDate: '2026-04-01',
     endDate: '2026-04-30',
   })
@@ -324,6 +325,7 @@ function testSystemQueryBuilders() {
     'user-9',
     '%删除%',
     '系统管理',
+    '%192.168%',
     '2026-04-01',
     '2026-04-30 23:59:59',
   ])
@@ -573,8 +575,8 @@ function testVoucherEntryHelpers() {
   }
   assert.equal(getEffectiveVoucherTypeId({ db: voucherTypeDb, accountSetId: 'set-1', voucherTypeId: 'type-1' }), 'type-1')
   assert.equal(getEffectiveVoucherTypeId({ db: voucherTypeDb, accountSetId: 'set-1' }), 'type-default')
-  assert.equal(buildVoucherNo({ year: 2026, period: 4, maxNo: 9 }), '202604-0010')
-  assert.equal(buildVoucherNo({ year: 2026, period: 11, maxNo: undefined }), '202611-0001')
+  assert.equal(buildVoucherNo({ maxNo: 9 }), '10')
+  assert.equal(buildVoucherNo({ maxNo: undefined }), '1')
 
   const nextVoucherNoDb = {
     prepare(sql: string) {

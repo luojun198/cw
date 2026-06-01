@@ -1,19 +1,23 @@
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
 import type { Ref } from 'vue'
 import request from '@/api/request'
 import { isAuxCategoryExcludedFromAccount } from '@/utils/accountCashFlow'
 
-export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) {
+export interface AccountAuxLookupRefs {
+  auxItemById: Ref<Map<string, any>>
+  auxItemsByCategory: Ref<Map<string, any[]>>
+  ensureAuxItemsForCategory?: (catId: string) => Promise<void>
+}
+
+export function useAccountForm(auxCategories: Ref<any[]>, auxLookup: AccountAuxLookupRefs) {
   const form = ref<any>({ is_enabled: 1, no_negative: 0 })
   const parentUsage = ref<any>(null)
 
-  // 根据类别ID获取项目列表
   function getAuxItemsByCat(catId: string) {
     if (!catId) return []
-    return auxItems.value.filter(i => i.type === catId)
+    return auxLookup.auxItemsByCategory.value.get(catId) || []
   }
 
-  // 获取可选的类别（排除已选）
   function getAvailableCats(item: any) {
     return auxCategories.value.filter(cat => {
       if (isAuxCategoryExcludedFromAccount(cat.code)) return false
@@ -28,8 +32,8 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
 
   function onAuxCatChange(item: any, val: string) {
     item.item_id = null
-    // 选择类别后自动带出该类别的默认项目
     if (val) {
+      void auxLookup.ensureAuxItemsForCategory?.(val)
       const cat = auxCategories.value.find(c => c.id === val)
       if (cat?.default_item_id) {
         item.item_id = cat.default_item_id
@@ -47,7 +51,6 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
     }
   }
 
-  // 获取科目关联的核算项目名称列表
   function getAuxNames(row: any): string[] {
     if (!row.aux_types) return []
     try {
@@ -58,7 +61,7 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
         const cat = auxCategories.value.find(c => c.id === catId)
         if (!cat) continue
         if (itemId) {
-          const item = auxItems.value.find(i => i.id === itemId)
+          const item = auxLookup.auxItemById.value.get(String(itemId))
           names.push(item ? `${cat.name}:${item.name}` : cat.name)
         } else {
           names.push(cat.name)
@@ -70,7 +73,6 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
     }
   }
 
-  // 上级科目变化时：自动补全编码 + 检查是否被使用
   async function onParentChange(parentId: string, treeData: any[], flattenRows: (nodes: any[]) => any[]) {
     parentUsage.value = null
     if (!parentId) {
@@ -99,8 +101,8 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
       if (res.code === 0 && res.data.voucherCount > 0) {
         parentUsage.value = res.data
       }
-    } catch (e) {
-      // ignore
+    } catch {
+      /* ignore */
     }
   }
 
@@ -170,4 +172,27 @@ export function useAccountForm(auxCategories: Ref<any[]>, auxItems: Ref<any[]>) 
     createEditForm,
     buildSavePayload,
   }
+}
+
+/** 将扁平 auxItems 数组适配为 Map 查找结构（凭证录入等仍全量加载的场景） */
+export function createFlatAuxLookupRefs(auxItems: Ref<any[]>): AccountAuxLookupRefs {
+  const auxItemById = computed(() => {
+    const map = new Map<string, any>()
+    for (const item of auxItems.value) {
+      map.set(item.id, item)
+    }
+    return map
+  })
+  const auxItemsByCategory = computed(() => {
+    const map = new Map<string, any[]>()
+    for (const item of auxItems.value) {
+      const catId = item.type
+      if (!catId) continue
+      const list = map.get(catId) || []
+      list.push(item)
+      map.set(catId, list)
+    }
+    return map
+  })
+  return { auxItemById, auxItemsByCategory }
 }

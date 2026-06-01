@@ -2,7 +2,28 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db/index.js'
 import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
-import { buildWhereClause, normalizePunctuation, SqlParam } from '../services/baseValidation.js'
+import { buildWhereClause, normalizeImportCode, normalizeImportText, SqlParam } from '../services/baseValidation.js'
+import {
+  assertAuxCategoryDeletable,
+  getAuxItemDeleteBlockReason,
+  formatAuxItemDisplayLabel,
+  getAuxItemDisplayLabelById,
+} from '../services/auxDeleteGuard.js'
+import {
+  batchAuxItemsDeleteAsync,
+  batchAuxItemsDeleteByCategoryAsync,
+  batchAuxItemsImportAsync,
+} from '../services/baseBatchAsync.js'
+import { lookupAuxItemsForImport } from '../services/auxImportMatch.js'
+import {
+  DEFAULT_LIST_LIMIT,
+  isAllRequested,
+  MAX_LIST_ALL,
+  MAX_LIST_LIMIT,
+  MAX_SYNC_BATCH_ROWS,
+  parseLimitParam,
+  parseOffsetParam,
+} from '../utils/listLimits.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -157,45 +178,13 @@ router.delete(
   (req: AuthRequest, res) => {
     const { id } = req.params
     const db = getDb()
-    
-    // 检查是否有项目
-    const items = db.prepare('SELECT id, code, name FROM aux_items WHERE type=?').all(id) as any[]
-    if (items.length > 0) {
-      // 检查这些项目是否被凭证使用
-      const itemIds = items.map(item => item.id)
-      const usedInVoucher = db.prepare(`
-        SELECT COUNT(*) as count FROM voucher_entries
-        WHERE account_set_id=? AND (
-          dept_id IN (${itemIds.map(() => '?').join(',')}) OR
-          project_id IN (${itemIds.map(() => '?').join(',')}) OR
-          supplier_id IN (${itemIds.map(() => '?').join(',')}) OR
-          person_id IN (${itemIds.map(() => '?').join(',')}) OR
-          func_class_id IN (${itemIds.map(() => '?').join(',')})
-        )
-      `).get(req.accountSetId, ...itemIds, ...itemIds, ...itemIds, ...itemIds, ...itemIds) as any
-      
-      if (usedInVoucher?.count > 0) {
-        return res.status(400).json({
-          code: 400,
-          message: `该类别下有 ${items.length} 个核算项目，其中部分已被 ${usedInVoucher.count} 条凭证分录使用，无法删除`,
-          data: {
-            itemCount: items.length,
-            usedCount: usedInVoucher.count,
-            solution: '请先删除或修改相关凭证，再删除核算项目，最后删除类别'
-          }
-        })
-      }
-      
-      return res.status(400).json({
-        code: 400,
-        message: `该类别下有 ${items.length} 个核算项目，请先删除这些项目`,
-        data: {
-          items: items.map(item => ({ code: item.code, name: item.name })),
-          solution: '请先在"核算项目"页面删除这些项目，然后再删除类别'
-        }
-      })
+
+    try {
+      assertAuxCategoryDeletable(db, req.accountSetId || '', id)
+    } catch (error: any) {
+      return res.status(400).json({ code: 400, message: error.message || '无法删除该辅助类目' })
     }
-    
+
     // ON DELETE CASCADE 会自动删除 aux_category_fields
     db.prepare('DELETE FROM aux_categories WHERE id=?').run(id)
     res.json({ code: 0, message: '删除成功' })
@@ -270,23 +259,59 @@ router.delete(
 
 // ===================== 辅助核算项目 =====================
 
+router.get('/aux-items/stats', (req: AuthRequest, res) => {
+  const db = getDb()
+  const { type, category_id } = req.query
+  const categoryId = (category_id || type) as string | undefined
+  if (!categoryId) {
+    return res.status(400).json({ code: 400, message: '请提供类别 type 或 category_id' })
+  }
+  const rows = db
+    .prepare(
+      `SELECT status, COUNT(*) as count FROM aux_items
+       WHERE account_set_id=? AND type=? GROUP BY status`
+    )
+    .all(req.accountSetId || '', categoryId) as Array<{ status: string; count: number }>
+  let total = 0
+  let active = 0
+  let closed = 0
+  for (const row of rows) {
+    total += row.count
+    if (row.status === 'active') active += row.count
+    else if (row.status === 'closed') closed += row.count
+  }
+  res.json({ code: 0, data: { total, active, closed } })
+})
+
 router.get('/aux-items', (req: AuthRequest, res) => {
   const db = getDb()
-  const { type, category_id, keyword, status } = req.query
+  const { type, category_id, keyword, status, limit, offset, ids, order, all, page, pageSize } = req.query
   const conditions = ['ai.account_set_id = ?']
   const params: SqlParam[] = [req.accountSetId || '']
 
-  // 支持 type 或 category_id 参数（两者等价）
   const categoryIdParam = category_id || type
   if (typeof categoryIdParam === 'string' && categoryIdParam) {
     conditions.push('ai.type = ?')
     params.push(categoryIdParam)
   }
 
+  const idList =
+    typeof ids === 'string' && ids.trim()
+      ? ids
+          .split(',')
+          .map(s => s.trim())
+          .filter(Boolean)
+      : []
+
+  if (idList.length > 0) {
+    conditions.push(`ai.id IN (${idList.map(() => '?').join(',')})`)
+    params.push(...idList)
+  }
+
   if (typeof keyword === 'string' && keyword) {
-    conditions.push('(ai.name LIKE ? OR ai.code LIKE ?)')
+    conditions.push('(ai.name LIKE ? OR ai.code LIKE ? OR ai.field_values LIKE ?)')
     const keywordPattern = `%${keyword}%`
-    params.push(keywordPattern, keywordPattern)
+    params.push(keywordPattern, keywordPattern, keywordPattern)
   }
 
   if (typeof status === 'string' && status) {
@@ -295,21 +320,56 @@ router.get('/aux-items', (req: AuthRequest, res) => {
   }
 
   const where = buildWhereClause(conditions)
+  const orderDir = order === 'desc' ? 'DESC' : 'ASC'
+
+  const countRow = db
+    .prepare(`SELECT COUNT(*) as count FROM aux_items ai${where}`)
+    .get(...params) as { count: number }
+  const total = countRow?.count ?? 0
+
+  let limitNum: number | null
+  let offsetNum = 0
+
+  if (idList.length > 0) {
+    limitNum = null
+  } else if (isAllRequested(all)) {
+    limitNum = MAX_LIST_ALL
+    offsetNum = 0
+  } else if (page != null && page !== '' && (pageSize != null && pageSize !== '')) {
+    const pageNum = Math.max(1, Number.parseInt(String(page), 10) || 1)
+    const sizeNum = parseLimitParam(pageSize, { defaultLimit: DEFAULT_LIST_LIMIT, maxLimit: MAX_LIST_LIMIT }) ?? DEFAULT_LIST_LIMIT
+    limitNum = sizeNum
+    offsetNum = (pageNum - 1) * sizeNum
+  } else {
+    limitNum = parseLimitParam(limit, {
+      defaultLimit: DEFAULT_LIST_LIMIT,
+      maxLimit: MAX_LIST_LIMIT,
+      allowUnlimited: false,
+    })
+    offsetNum = parseOffsetParam(offset)
+  }
+
+  let limitClause = ''
+  if (limitNum != null) {
+    limitClause = ` LIMIT ${limitNum} OFFSET ${offsetNum}`
+  }
+
   const sql = `
     SELECT ai.*, ac.name as category_name, ac.code as category_code
     FROM aux_items ai
     LEFT JOIN aux_categories ac ON ac.id = ai.type${where}
-    ORDER BY ai.code
+    ORDER BY ai.code ${orderDir}${limitClause}
   `
   const list = db.prepare(sql).all(...params)
 
-  res.json({ code: 0, data: list })
+  res.json({ code: 0, data: list, total })
 })
 
 router.post('/aux-items', operationLog('新增核算项目', '基础设置'), (req: AuthRequest, res) => {
   const { type, code, name, remark, field_values } = req.body
-  const normalizedName = normalizePunctuation((name || '').trim())
-  if (!type || !code || !normalizedName) {
+  const normalizedCode = normalizeImportCode(String(code || ''))
+  const normalizedName = normalizeImportText(String(name || ''))
+  if (!type || !normalizedCode || !normalizedName) {
     return res.status(400).json({ code: 400, message: '类别、编码、名称不能为空' })
   }
   const db = getDb()
@@ -327,7 +387,7 @@ router.post('/aux-items', operationLog('新增核算项目', '基础设置'), (r
 
   const duplicatedCode = db
     .prepare('SELECT id, code, name FROM aux_items WHERE account_set_id=? AND type=? AND code=?')
-    .get(req.accountSetId, type, code) as any
+    .get(req.accountSetId, type, normalizedCode) as any
   if (duplicatedCode) {
     return res.status(400).json({
       code: 400,
@@ -347,14 +407,15 @@ router.post('/aux-items', operationLog('新增核算项目', '基础设置'), (r
   const fieldValuesJson = JSON.stringify(fv)
   db.prepare(
     'INSERT INTO aux_items (id, account_set_id, type, code, name, remark, field_values) VALUES (?, ?, ?, ?, ?, ?, ?)'
-  ).run(id, req.accountSetId, type, code, normalizedName, remark || '', fieldValuesJson)
+  ).run(id, req.accountSetId, type, normalizedCode, normalizedName, remark || '', fieldValuesJson)
   res.json({ code: 0, message: '创建成功', data: { id } })
 })
 
 router.put('/aux-items/:id', operationLog('修改核算项目', '基础设置'), (req: AuthRequest, res) => {
   const { id } = req.params
   const { code, name, status, remark, field_values } = req.body
-  const normalizedName = normalizePunctuation((name || '').trim())
+  const normalizedName = normalizeImportText(String(name || ''))
+  const normalizedCode = code != null ? normalizeImportCode(String(code)) : undefined
   const db = getDb()
 
   // 校验自定义字段必填
@@ -375,7 +436,7 @@ router.put('/aux-items/:id', operationLog('修改核算项目', '基础设置'),
     .prepare(
       'SELECT id, code, name FROM aux_items WHERE account_set_id=? AND type=(SELECT type FROM aux_items WHERE id=?) AND id<>? AND code=?'
     )
-    .get(req.accountSetId, id, id, code) as any
+    .get(req.accountSetId, id, id, normalizedCode ?? code) as any
   if (duplicatedCode) {
     return res.status(400).json({
       code: 400,
@@ -396,7 +457,7 @@ router.put('/aux-items/:id', operationLog('修改核算项目', '基础设置'),
   const fieldValuesJson = JSON.stringify(field_values || {})
   db.prepare(
     "UPDATE aux_items SET code=?, name=?, status=?, remark=?, field_values=?, updated_at=datetime('now') WHERE id=?"
-  ).run(code, normalizedName, status, remark || '', fieldValuesJson, id)
+  ).run(normalizedCode ?? code, normalizedName, status, remark || '', fieldValuesJson, id)
   res.json({ code: 0, message: '更新成功' })
 })
 
@@ -407,37 +468,286 @@ router.delete(
     const { id } = req.params
     const db = getDb()
 
-    // 检查是否被科目使用
-    const rows = db
-      .prepare('SELECT aux_types FROM accounts WHERE account_set_id=? AND aux_types IS NOT NULL')
-      .all(req.accountSetId) as any[]
-    for (const row of rows) {
-      try {
-        const data = JSON.parse(row.aux_types)
-        if (Array.isArray(data) && data.includes(id)) {
-          return res.status(400).json({ code: 400, message: '该核算项目已被科目使用，无法删除' })
-        }
-        if (typeof data === 'object' && Object.values(data).includes(id)) {
-          return res.status(400).json({ code: 400, message: '该核算项目已被科目使用，无法删除' })
-        }
-      } catch {
-        /* ignore */
+    try {
+      const check = getAuxItemDeleteBlockReason(db, req.accountSetId || '', id)
+      if (check.blocked) {
+        return res.status(400).json({
+          code: 400,
+          message: check.message || '无法删除该辅助项目',
+          data: check,
+        })
       }
-    }
-
-    // 检查是否被凭证分录使用
-    const usedEntry = db.prepare(`
-      SELECT id FROM voucher_entries
-      WHERE account_set_id=? AND (dept_id=? OR project_id=? OR supplier_id=? OR person_id=? OR func_class_id=?)
-      LIMIT 1
-    `).get(req.accountSetId, id, id, id, id, id) as any
-    if (usedEntry) {
-      return res.status(400).json({ code: 400, message: '该核算项目已被凭证使用，无法删除' })
+    } catch (error: any) {
+      return res.status(400).json({ code: 400, message: error.message || '无法删除该辅助项目' })
     }
 
     db.prepare('DELETE FROM aux_items WHERE id=?').run(id)
     res.json({ code: 0, message: '删除成功' })
   }
 )
+
+// 批量删除核算项目
+router.post(
+  '/aux-items/batch-delete',
+  operationLog('批量删除核算项目', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { ids } = req.body
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ code: 400, message: '请提供要删除的项目ID列表' })
+    }
+    if (ids.length > MAX_SYNC_BATCH_ROWS) {
+      return res.status(400).json({
+        code: 400,
+        message: `同步删除最多 ${MAX_SYNC_BATCH_ROWS} 条，请使用 /aux-items/batch-delete-async`,
+      })
+    }
+
+    const db = getDb()
+    let successCount = 0
+    let failCount = 0
+    const failedItems: Array<{
+      id: string
+      label: string
+      reason: string
+      block?: ReturnType<typeof getAuxItemDeleteBlockReason>
+    }> = []
+
+    const deleteStmt = db.prepare('DELETE FROM aux_items WHERE id=?')
+    for (const id of ids) {
+      const check = getAuxItemDeleteBlockReason(db, req.accountSetId || '', id)
+      const label = check.item
+        ? formatAuxItemDisplayLabel(check.item)
+        : getAuxItemDisplayLabelById(db, id)
+      if (check.blocked) {
+        failCount++
+        failedItems.push({ id, label, reason: check.message || '无法删除', block: check })
+        continue
+      }
+
+      try {
+        deleteStmt.run(id)
+        successCount++
+      } catch {
+        failCount++
+        failedItems.push({ id, label, reason: '删除失败' })
+      }
+    }
+
+    res.json({
+      code: 0,
+      message: `批量删除完成：成功 ${successCount} 个，跳过 ${failCount} 个`,
+      data: {
+        successCount,
+        failCount,
+        failedItems: failedItems.slice(0, 10), // 只返回前10个失败项
+      },
+    })
+  }
+)
+
+// 批量导入核算项目
+router.post(
+  '/aux-items/batch-import',
+  operationLog('批量导入核算项目', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { items, type } = req.body
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ code: 400, message: '请提供要导入的项目列表' })
+    }
+    if (items.length > MAX_SYNC_BATCH_ROWS) {
+      return res.status(400).json({
+        code: 400,
+        message: `同步导入最多 ${MAX_SYNC_BATCH_ROWS} 条，请使用 /aux-items/batch-import-async`,
+      })
+    }
+    if (!type) {
+      return res.status(400).json({ code: 400, message: '请提供项目类别' })
+    }
+
+    const db = getDb()
+    let successCount = 0
+    let failCount = 0
+    const errors: Array<{ code: string; name: string; reason: string }> = []
+
+    // 获取类别的字段配置
+    const category = db.prepare('SELECT * FROM aux_categories WHERE id=?').get(type) as any
+    if (!category) {
+      return res.status(400).json({ code: 400, message: '项目类别不存在' })
+    }
+
+    const fields = db
+      .prepare('SELECT * FROM aux_category_fields WHERE category_id=? AND is_enabled=1')
+      .all(type) as any[]
+
+    // 获取现有项目（用于检查重复）
+    const existingItems = db
+      .prepare('SELECT code, name FROM aux_items WHERE account_set_id=? AND type=?')
+      .all(req.accountSetId, type) as any[]
+    const existingCodes = new Set(existingItems.map(i => normalizeImportCode(String(i.code))))
+    const existingNames = new Set(existingItems.map(i => normalizeImportText(i.name)))
+
+    const insertStmt = db.prepare(
+      'INSERT INTO aux_items (id, account_set_id, type, code, name, remark, field_values, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+    )
+
+    try {
+      for (const item of items) {
+        try {
+          // 验证必填字段
+          const itemCode = normalizeImportCode(String(item.code || ''))
+          const normalizedName = normalizeImportText(String(item.name || '').trim())
+          if (!itemCode || !normalizedName) {
+            failCount++
+            errors.push({ code: item.code || '', name: item.name || '', reason: '编码和名称不能为空' })
+            continue
+          }
+
+          // 检查编码重复
+          if (existingCodes.has(itemCode)) {
+            failCount++
+            errors.push({ code: item.code, name: item.name, reason: '项目编码已存在' })
+            continue
+          }
+
+          // 检查名称重复
+          if (existingNames.has(normalizedName)) {
+            failCount++
+            errors.push({ code: item.code, name: item.name, reason: '项目名称已存在' })
+            continue
+          }
+
+          // 验证自定义字段必填
+          const fieldValues = item.field_values || {}
+          let hasFieldError = false
+          for (const field of fields) {
+            if (field.required_in_archive && !fieldValues[field.field_key]) {
+              failCount++
+              errors.push({
+                code: item.code,
+                name: item.name,
+                reason: `字段「${field.field_name}」为必填项`,
+              })
+              hasFieldError = true
+              break
+            }
+          }
+          if (hasFieldError) continue
+
+          // 插入项目
+          const id = uuidv4()
+          const fieldValuesJson = JSON.stringify(fieldValues)
+          insertStmt.run(
+            id,
+            req.accountSetId,
+            type,
+            itemCode,
+            normalizedName,
+            item.remark || '',
+            fieldValuesJson,
+            item.status || 'active'
+          )
+
+          successCount++
+          existingCodes.add(itemCode)
+          existingNames.add(normalizedName)
+        } catch (error: any) {
+          failCount++
+          errors.push({
+            code: item.code || '',
+            name: item.name || '',
+            reason: error.message || '导入失败',
+          })
+        }
+      }
+
+      res.json({
+        code: 0,
+        message: `批量导入完成：成功 ${successCount} 个，失败 ${failCount} 个`,
+        data: {
+          successCount,
+          failCount,
+          errors: errors.slice(0, 10), // 只返回前10个错误
+        },
+      })
+    } catch (error: any) {
+      return res.status(500).json({ code: 500, message: error.message || '批量导入失败' })
+    }
+  }
+)
+
+router.post(
+  '/aux-items/batch-delete-async',
+  operationLog('异步批量删除核算项目', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { ids, type, category_id, status } = req.body
+    if (type || category_id) {
+      try {
+        const taskId = batchAuxItemsDeleteByCategoryAsync(
+          getDb(),
+          req.accountSetId || '',
+          String(type || category_id),
+          typeof status === 'string' && status ? status : undefined
+        )
+        return res.json({ code: 0, message: '批量删除任务已创建', data: { taskId } })
+      } catch (error: any) {
+        return res.status(400).json({ code: 400, message: error.message || '创建任务失败' })
+      }
+    }
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ code: 400, message: '请提供要删除的项目ID列表或类别 type' })
+    }
+    try {
+      const taskId = batchAuxItemsDeleteAsync(getDb(), req.accountSetId || '', ids)
+      res.json({ code: 0, message: '批量删除任务已创建', data: { taskId } })
+    } catch (error: any) {
+      res.status(400).json({ code: 400, message: error.message || '创建任务失败' })
+    }
+  }
+)
+
+router.post(
+  '/aux-items/batch-import-async',
+  operationLog('异步批量导入核算项目', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { items, type } = req.body
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ code: 400, message: '请提供要导入的项目列表' })
+    }
+    if (!type) {
+      return res.status(400).json({ code: 400, message: '请提供项目类别' })
+    }
+    try {
+      const taskId = batchAuxItemsImportAsync(getDb(), req.accountSetId || '', type, items)
+      res.json({ code: 0, message: '批量导入任务已创建', data: { taskId } })
+    } catch (error: any) {
+      res.status(400).json({ code: 400, message: error.message || '创建任务失败' })
+    }
+  }
+)
+
+/** 辅助期初导入：按文件中出现的编码/名称批量查库，避免前端全量加载十万级项目 */
+router.post('/aux-items/import-match-index', (req: AuthRequest, res) => {
+  const { type, category_id, codes, names } = req.body
+  const categoryId = String(type || category_id || '')
+  if (!categoryId) {
+    return res.status(400).json({ code: 400, message: '请提供项目类别 type' })
+  }
+  const codeList = Array.isArray(codes) ? codes.map(String) : []
+  const nameList = Array.isArray(names) ? names.map(String) : []
+  if (codeList.length === 0 && nameList.length === 0) {
+    return res.json({ code: 0, data: [] })
+  }
+  if (codeList.length > 500000 || nameList.length > 500000) {
+    return res.status(400).json({ code: 400, message: '单次最多查询 500,000 个编码或名称，请分批请求' })
+  }
+  const items = lookupAuxItemsForImport(
+    getDb(),
+    req.accountSetId || '',
+    categoryId,
+    codeList,
+    nameList
+  )
+  res.json({ code: 0, data: items })
+})
 
 export default router

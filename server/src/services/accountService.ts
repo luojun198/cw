@@ -1,6 +1,14 @@
 import Database from 'better-sqlite3'
 import { v4 as uuidv4 } from 'uuid'
 import { buildWhereClause, SqlParam } from './baseValidation.js'
+import { getAccountReportTemplateBlockReason } from './accountDeleteGuard.js'
+import { DEFAULT_LIST_LIMIT, MAX_LIST_ALL, MAX_LIST_LIMIT } from '../utils/listLimits.js'
+import {
+  findDirectParentCodeByPrefix,
+  getParentCodeByLevel,
+  inferLevelByCodeLength,
+} from '../utils/accountLevel.js'
+import { accountHasAuxAccounting } from '../utils/auxItemId.js'
 
 /**
  * 会计科目 Service 层
@@ -33,6 +41,9 @@ export interface AccountQueryParams {
   direction?: string
   level?: number
   is_enabled?: number
+  limit?: number
+  offset?: number
+  all?: boolean
 }
 
 export interface CreateAccountParams {
@@ -67,6 +78,10 @@ export interface AccountUsage {
   balanceYears: number[]
   voucherYears: number[]
   years: number[]
+  /** 直接期初记录数（aux_item_id=''） */
+  initBalanceCount: number
+  /** 辅助期初明细记录数（aux_item_id!=''） */
+  auxInitCount: number
 }
 
 interface AccountCodeConfig {
@@ -117,12 +132,7 @@ export class AccountService {
   }
 
   private inferLevelByCodeLength(code: string, config: AccountCodeConfig): number | null {
-    let expectedLength = 0
-    for (let index = 0; index < config.maxLevels; index++) {
-      expectedLength += config.codeLengths[index] || 0
-      if (code.length === expectedLength) return index + 1
-    }
-    return null
+    return inferLevelByCodeLength(code, config.codeLengths, config.maxLevels)
   }
 
   private getParentAccount(parentId: string, accountSetId: string): Account | null {
@@ -208,8 +218,54 @@ export class AccountService {
     }
 
     const where = buildWhereClause(conditions)
-    const sql = `SELECT * FROM accounts${where} GROUP BY id ORDER BY code`
+    let limitClause = ''
+    if (!params.all) {
+      const limit = Math.min(params.limit ?? DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT)
+      const offset = Math.max(0, params.offset ?? 0)
+      if (params.limit === undefined && !params.keyword && !params.parent_id) {
+        // 未指定 limit 且无筛选：允许较大上限供树形科目页（仍 capped）
+        limitClause = ` LIMIT ${MAX_LIST_ALL} OFFSET ${offset}`
+      } else {
+        limitClause = ` LIMIT ${limit} OFFSET ${offset}`
+      }
+    } else {
+      limitClause = ` LIMIT ${MAX_LIST_ALL}`
+    }
+    const sql = `SELECT * FROM accounts${where} GROUP BY id ORDER BY code${limitClause}`
     return this.db.prepare(sql).all(...sqlParams) as Account[]
+  }
+
+  countAccounts(params: Omit<AccountQueryParams, 'limit' | 'offset' | 'all'>): number {
+    const conditions = ['account_set_id = ?']
+    const sqlParams: SqlParam[] = [params.account_set_id]
+
+    if (params.parent_id) {
+      conditions.push('parent_id = ?')
+      sqlParams.push(params.parent_id)
+    }
+    if (params.keyword) {
+      conditions.push('(name LIKE ? OR code LIKE ?)')
+      const keywordPattern = `%${params.keyword}%`
+      sqlParams.push(keywordPattern, `${params.keyword}%`)
+    }
+    if (params.direction) {
+      conditions.push('direction = ?')
+      sqlParams.push(params.direction)
+    }
+    if (params.level !== undefined) {
+      conditions.push('level = ?')
+      sqlParams.push(params.level)
+    }
+    if (params.is_enabled !== undefined) {
+      conditions.push('is_enabled = ?')
+      sqlParams.push(params.is_enabled)
+    }
+
+    const where = buildWhereClause(conditions)
+    const row = this.db
+      .prepare(`SELECT COUNT(DISTINCT id) as count FROM accounts${where}`)
+      .get(...sqlParams) as { count: number }
+    return row?.count ?? 0
   }
 
   /**
@@ -260,12 +316,52 @@ export class AccountService {
       ...new Set([...balanceYears.map(r => r.year), ...voucherYearRows.map(r => r.year)]),
     ].sort((a, b) => b - a)
 
+    const initBalanceCount =
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as cnt FROM init_balances WHERE account_id = ? AND aux_item_id = ''`
+          )
+          .get(accountId) as any
+      )?.cnt || 0
+    const auxInitCount =
+      (
+        this.db
+          .prepare(
+            `SELECT COUNT(*) as cnt FROM init_balances WHERE account_id = ? AND aux_item_id != ''`
+          )
+          .get(accountId) as any
+      )?.cnt || 0
+
     return {
       voucherCount,
       balanceYears: balanceYears.map(r => r.year),
       voucherYears: voucherYearRows.map(r => r.year),
       years,
+      initBalanceCount,
+      auxInitCount,
     }
+  }
+
+  /**
+   * 判断科目是否持有任何记账/期初数据或启用了辅助核算
+   * 用于「新增第一个子科目时是否需要把父科目数据迁移到子科目」的判定
+   */
+  private accountHasMigratableData(account: Account): boolean {
+    if (accountHasAuxAccounting(account)) return true
+    const ve = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM voucher_entries WHERE account_id = ?')
+      .get(account.id) as { cnt: number } | undefined
+    if ((ve?.cnt || 0) > 0) return true
+    const ib = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM init_balances WHERE account_id = ?')
+      .get(account.id) as { cnt: number } | undefined
+    if ((ib?.cnt || 0) > 0) return true
+    const ab = this.db
+      .prepare('SELECT COUNT(*) as cnt FROM account_balances WHERE account_id = ?')
+      .get(account.id) as { cnt: number } | undefined
+    if ((ab?.cnt || 0) > 0) return true
+    return false
   }
 
   /**
@@ -304,6 +400,13 @@ export class AccountService {
       const lengthDesc = config.codeLengths.slice(0, config.maxLevels).join('-')
       throw new Error(`科目编码长度不符合当前科目长度设置（${lengthDesc}）`)
     }
+    // 未选上级时，编码长度必须对应顶级科目；否则会产生“无父的非顶级科目”，导致分级混乱
+    if (!parent && inferredLevel !== 1) {
+      const topLength = config.codeLengths[0] || 0
+      throw new Error(
+        `该编码长度对应第${inferredLevel}级科目，必须选择上级科目（顶级科目编码应为${topLength}位）`
+      )
+    }
     const actualLevel = inferredLevel
 
     // 验证科目编码格式
@@ -321,6 +424,21 @@ export class AccountService {
         : null
     const hasAux = auxTypesJson ? 1 : 0
     const noNegative = params.no_negative ? 1 : 0
+
+    // 判定是否需要把父科目数据迁移到本次新建的「第一个子科目」：
+    // 父科目从末级变为非末级后不能再记账/挂期初，其数据/会计属性应由第一个子科目继承。
+    let shouldMigrateFromParent = false
+    if (parent) {
+      const existingChildCount =
+        (
+          this.db
+            .prepare('SELECT COUNT(*) as cnt FROM accounts WHERE parent_id = ?')
+            .get(parent.id) as { cnt: number } | undefined
+        )?.cnt || 0
+      const isFirstChild = existingChildCount === 0
+      shouldMigrateFromParent =
+        isFirstChild && (params.migrate_from_parent === true || this.accountHasMigratableData(parent))
+    }
 
     const doCreate = this.db.transaction(() => {
       this.db
@@ -347,9 +465,9 @@ export class AccountService {
         this.db.prepare('UPDATE accounts SET no_negative = ? WHERE id = ?').run(noNegative, id)
       }
 
-      // 从父科目迁移数据
-      if (params.parent_id && params.migrate_from_parent) {
-        this.migrateFromParent(id, params.parent_id, params.code, params.name)
+      // 新增第一个子科目时，把父科目的数据与会计属性迁移/继承到该子科目
+      if (parent && shouldMigrateFromParent) {
+        this.migrateFromParent(id, parent, params.code, params.name)
       }
     })
     doCreate()
@@ -358,15 +476,37 @@ export class AccountService {
   }
 
   /**
-   * 从父科目迁移数据
+   * 从父科目迁移数据到（第一个）子科目
+   * 父科目变为非末级后不能再记账/挂期初，故子科目需继承：
+   * 会计属性（辅助核算/方向/现金银行/不允许负数）、凭证分录、科目余额、年初与辅助年初记录。
    */
   private migrateFromParent(
     newAccountId: string,
-    parentId: string,
+    parent: Account,
     code: string,
     name: string
   ): void {
-    // 迁移凭证分录
+    const parentId = parent.id
+
+    // 1. 会计属性：子科目继承父科目（覆盖创建时的默认值）
+    this.db
+      .prepare(
+        `UPDATE accounts
+         SET is_aux = ?, aux_types = ?, direction = ?, is_cash = ?, is_bank = ?, no_negative = ?,
+             updated_at = datetime('now')
+         WHERE id = ?`
+      )
+      .run(
+        parent.is_aux ?? 0,
+        parent.aux_types ?? null,
+        parent.direction,
+        parent.is_cash ?? 0,
+        parent.is_bank ?? 0,
+        parent.no_negative ?? 0,
+        newAccountId
+      )
+
+    // 2. 迁移凭证分录
     const veCount = this.db
       .prepare('SELECT COUNT(*) as cnt FROM voucher_entries WHERE account_id = ?')
       .get(parentId) as any
@@ -379,7 +519,12 @@ export class AccountService {
         .run(newAccountId, code, name, parentId)
     }
 
-    // 迁移期初余额
+    // 3. 迁移科目余额（过账汇总）
+    this.db
+      .prepare('UPDATE account_balances SET account_id = ? WHERE account_id = ?')
+      .run(newAccountId, parentId)
+
+    // 4. 迁移年初余额与辅助年初明细（aux_item_id='' 与 !='' 全部）
     this.db
       .prepare('UPDATE init_balances SET account_id = ? WHERE account_id = ?')
       .run(newAccountId, parentId)
@@ -403,6 +548,19 @@ export class AccountService {
         ? JSON.stringify(params.aux_types)
         : null
     const hasAux = auxTypesJson ? 1 : 0
+
+    // 守卫：若原本启用辅助核算、现在关闭，但仍存在辅助期初明细，则阻断，
+    // 避免产生“被清理统计到却在辅助期初看不见”的孤立数据
+    if (oldAccount && accountHasAuxAccounting(oldAccount) && hasAux === 0) {
+      const auxInit = this.db
+        .prepare(
+          `SELECT COUNT(*) as cnt FROM init_balances WHERE account_id = ? AND aux_item_id != ''`
+        )
+        .get(id) as { cnt: number } | undefined
+      if ((auxInit?.cnt || 0) > 0) {
+        throw new Error('该科目存在辅助期初明细，请先到「辅助期初」清空后再关闭辅助核算')
+      }
+    }
 
     // 将 is_enabled 转换为数字 0 或 1
     const newEnabled = params.is_enabled ? 1 : 0
@@ -587,13 +745,13 @@ export class AccountService {
       throw new Error('该科目已被凭证使用，无法删除')
     }
 
-    // 检查是否在报表模板中使用
-    const templateUsage = this.db
-      .prepare('SELECT COUNT(*) as count FROM report_template_cells WHERE account_id = ?')
-      .get(id) as any
-
-    if (templateUsage?.count > 0) {
-      throw new Error('该科目在报表模板中使用，请先修改报表模板')
+    const reportBlock = getAccountReportTemplateBlockReason(
+      this.db,
+      account.account_set_id,
+      account.code
+    )
+    if (reportBlock) {
+      throw new Error(reportBlock)
     }
 
     this.db.prepare('DELETE FROM accounts WHERE id = ?').run(id)
@@ -632,9 +790,7 @@ export class AccountService {
     // 检查每个科目的父科目是否存在
     for (const account of accounts) {
       const level = this.calculateLevel(account.code, codeLengths)
-
-      // 如果是第一级科目，不需要父科目
-      if (level === 1) continue
+      if (!level || level === 1) continue
 
       // 计算所有上级科目编码
       const parentCodes = this.getParentCodes(account.code, codeLengths, level)
@@ -642,6 +798,7 @@ export class AccountService {
       for (const parentCode of parentCodes) {
         if (!accountMap.has(parentCode) && !toCreate.some(t => t.code === parentCode)) {
           const parentLevel = this.calculateLevel(parentCode, codeLengths)
+          if (!parentLevel) continue
           toCreate.push({
             code: parentCode,
             level: parentLevel,
@@ -720,17 +877,10 @@ export class AccountService {
   }
 
   /**
-   * 根据编码和长度配置计算科目级数
+   * 根据编码和长度配置计算科目级数（无法匹配时返回 null，避免误判为 1 级）
    */
-  private calculateLevel(code: string, codeLengths: number[]): number {
-    let totalLength = 0
-    for (let i = 0; i < codeLengths.length; i++) {
-      totalLength += codeLengths[i]
-      if (code.length === totalLength) {
-        return i + 1
-      }
-    }
-    return 1
+  private calculateLevel(code: string, codeLengths: number[]): number | null {
+    return inferLevelByCodeLength(code, codeLengths)
   }
 
   /**
@@ -738,14 +888,77 @@ export class AccountService {
    */
   private getParentCodes(code: string, codeLengths: number[], level: number): string[] {
     const parentCodes: string[] = []
-    let currentLength = 0
+    for (let lv = 2; lv <= level; lv++) {
+      const parentCode = getParentCodeByLevel(code, lv, codeLengths)
+      if (parentCode) parentCodes.push(parentCode)
+    }
+    return parentCodes
+  }
 
-    for (let i = 0; i < level - 1; i++) {
-      currentLength += codeLengths[i]
-      parentCodes.push(code.substring(0, currentLength))
+  /**
+   * 按科目编码规则重新校验并修复 level / parent_id
+   */
+  repairAccountHierarchy(accountSetId: string): {
+    total: number
+    updated: number
+    skipped: number
+    details: Array<{ code: string; level: number; parent_code: string | null }>
+  } {
+    const config = this.getAccountCodeConfig(accountSetId)
+    const accounts = this.getAccounts({ account_set_id: accountSetId, all: true })
+    const accountByCode = new Map<string, Account>()
+    for (const account of accounts) {
+      accountByCode.set(account.code, account)
     }
 
-    return parentCodes
+    const details: Array<{ code: string; level: number; parent_code: string | null }> = []
+    let updated = 0
+    let skipped = 0
+
+    const updateStmt = this.db.prepare(`
+      UPDATE accounts
+      SET level = ?, parent_id = ?
+      WHERE id = ?
+    `)
+
+    this.db.transaction(() => {
+      for (const account of accounts) {
+        const level = this.inferLevelByCodeLength(account.code, config)
+        if (!level) {
+          skipped++
+          continue
+        }
+
+        let parentId: string | null = null
+        let parentCode: string | null = null
+        if (level > 1) {
+          parentCode = getParentCodeByLevel(account.code, level, config.codeLengths)
+          if (parentCode) {
+            parentId = accountByCode.get(parentCode)?.id || null
+          }
+          if (!parentId) {
+            const fallbackCode = findDirectParentCodeByPrefix(
+              account.code,
+              accounts.map(row => row.code)
+            )
+            if (fallbackCode) {
+              parentCode = fallbackCode
+              parentId = accountByCode.get(fallbackCode)?.id || null
+            }
+          }
+        }
+
+        if (account.level !== level || account.parent_id !== parentId) {
+          updateStmt.run(level, parentId, account.id)
+          account.level = level
+          account.parent_id = parentId
+          updated++
+          details.push({ code: account.code, level, parent_code: parentCode })
+        }
+      }
+    })()
+
+    return { total: accounts.length, updated, skipped, details }
   }
 
   /**
@@ -753,7 +966,7 @@ export class AccountService {
    */
   private findParentId(code: string, codeLengths: number[], accountMap: Map<string, Account>): string | null {
     const level = this.calculateLevel(code, codeLengths)
-    if (level === 1) return null
+    if (!level || level === 1) return null
 
     const parentCodes = this.getParentCodes(code, codeLengths, level)
     const immediateParentCode = parentCodes[parentCodes.length - 1]

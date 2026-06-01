@@ -17,7 +17,10 @@
     "lint": "eslint . --ext .js,.ts,.vue",
     "lint:fix": "eslint . --ext .js,.ts,.vue --fix",
     "format": "prettier --write \"**/*.{js,ts,vue,json,md}\"",
-    "format:check": "prettier --check \"**/*.{js,ts,vue,json,md}\""
+    "format:check": "prettier --check \"**/*.{js,ts,vue,json,md}\"",
+    "changelog:excel": "node scripts/convert-changelog-to-excel.mjs",
+    "license:generate": "node tools/license-generator/generate-license.mjs",
+    "license:build-tool": "node scripts/build-license-tool.mjs"
   },
   "devDependencies": {
     "@playwright/test": "^1.59.1",

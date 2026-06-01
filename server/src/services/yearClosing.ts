@@ -1,6 +1,11 @@
 import { v4 as uuidv4 } from 'uuid'
 import type { Database } from 'better-sqlite3'
 import { buildAuxItemId, type VoucherEntryLike } from './voucherPosting.js'
+import { MONEY_EPSILON } from '../utils/amountUtils.js'
+import {
+  detectStaticReportStandard,
+  getProfitLossAccountCodePrefixes,
+} from './staticReportConfig.js'
 
 type Direction = 'debit' | 'credit'
 
@@ -28,9 +33,11 @@ export interface ClosePeriodResult {
   closedPeriod: number
   nextYear?: number
   carriedCount: number
+  /** 下一年已有凭证时，重新计算并覆盖了期初余额 */
+  overwrittenNextYearOpening?: boolean
+  /** FIX-003 / P0-9：因下年期初存在手工调整行而被保留、未覆盖的科目数 */
+  preservedManualOpeningCount?: number
 }
-
-const MONEY_EPSILON = 0.005
 
 function roundMoney(value: number) {
   return Math.round((value + Number.EPSILON) * 100) / 100
@@ -54,7 +61,9 @@ export function getPeriodClosingRecord(params: {
 }) {
   return params.db
     .prepare('SELECT * FROM period_closing WHERE account_set_id=? AND year=? AND period=?')
-    .get(params.accountSetId, params.year, params.period) as { id: string; status: string } | undefined
+    .get(params.accountSetId, params.year, params.period) as
+    | { id: string; status: string }
+    | undefined
 }
 
 export function validateNoUnpostedVouchers(params: {
@@ -81,7 +90,7 @@ export function validateNoUnpostedVouchers(params: {
   }
 }
 
-export function validatePreviousPeriodsClosed(params: {
+export function getFirstPeriodForYear(params: {
   db: Database
   accountSetId: string
   year: number
@@ -92,7 +101,17 @@ export function validatePreviousPeriodsClosed(params: {
   const startDate = accountSet?.start_date || ''
   const startYear = Number(startDate.slice(0, 4))
   const startMonth = Number(startDate.slice(5, 7))
-  const firstPeriod = startYear === params.year && Number.isInteger(startMonth) && startMonth > 1 ? startMonth : 1
+  return startYear === params.year && Number.isInteger(startMonth) && startMonth > 1
+    ? startMonth
+    : 1
+}
+
+export function validatePreviousPeriodsClosed(params: {
+  db: Database
+  accountSetId: string
+  year: number
+}) {
+  const firstPeriod = getFirstPeriodForYear(params)
 
   const rows = params.db
     .prepare(
@@ -118,11 +137,7 @@ export function validatePreviousPeriodsClosed(params: {
   }
 }
 
-export function validateNextYearNotStarted(params: {
-  db: Database
-  accountSetId: string
-  nextYear: number
-}) {
+export function countYearVouchers(params: { db: Database; accountSetId: string; year: number }) {
   const row = params.db
     .prepare(
       `
@@ -132,33 +147,25 @@ export function validateNextYearNotStarted(params: {
         AND year = ?
     `
     )
-    .get(params.accountSetId, params.nextYear) as { count: number }
+    .get(params.accountSetId, params.year) as { count: number }
 
-  if ((row?.count || 0) > 0) {
-    throw new Error(`${params.nextYear}年已存在凭证，不能覆盖生成该年度期初余额`)
-  }
+  return row?.count || 0
 }
 
-/** 年度反结账（12 月）前：下一年度若已有凭证，则不能撤销结转期初 */
-export function validateNextYearHasNoVouchers(params: {
+export function countYearOpeningBalanceRows(params: {
   db: Database
   accountSetId: string
-  nextYear: number
+  year: number
+  period?: number
 }) {
+  const period = params.period ?? 1
   const row = params.db
     .prepare(
-      `
-      SELECT COUNT(*) as count
-      FROM vouchers
-      WHERE account_set_id = ?
-        AND year = ?
-    `
+      `SELECT COUNT(*) as c FROM init_balances WHERE account_set_id = ? AND year = ? AND period = ?`
     )
-    .get(params.accountSetId, params.nextYear) as { count: number }
+    .get(params.accountSetId, params.year, period) as { c: number }
 
-  if ((row?.count || 0) > 0) {
-    throw new Error(`${params.nextYear}年已存在凭证，不能反结账：请先处理下年凭证或联系管理员`)
-  }
+  return row?.c ?? 0
 }
 
 /** 反结账某月前：同年后续月份必须均为未结账 */
@@ -187,16 +194,21 @@ export function validateLaterPeriodsNotClosed(params: {
 }
 
 /**
- * 撤销结账写入的下一年 1 月期初（与 writeNextYearInitBalances 作用域一致）
+ * 撤销结账写入的下一年 1 月期初（仅删除年结自动生成行，不动用户手工调整行）。
+ * FIX-003 / P0-9：只删除 source='year_close_auto' 的行，保护 source='manual'。
  */
 export function deleteNextYearAutoOpeningBalances(params: {
   db: Database
   accountSetId: string
   nextYear: number
 }) {
-  params.db
-    .prepare('DELETE FROM init_balances WHERE account_set_id=? AND year=? AND period=1')
+  const result = params.db
+    .prepare(
+      `DELETE FROM init_balances
+       WHERE account_set_id=? AND year=? AND period=1 AND source='year_close_auto'`
+    )
     .run(params.accountSetId, params.nextYear)
+  return { deleted: Number(result.changes ?? 0) }
 }
 
 function getInitBalanceRows(db: Database, accountSetId: string, year: number) {
@@ -277,7 +289,11 @@ export function splitSignedBalance(direction: Direction, signedBalance: number) 
     : { initBalance: value, initDebit: Math.abs(value), initCredit: 0 }
 }
 
-export function buildYearEndBalances(db: Database, accountSetId: string, year: number): YearEndBalanceRow[] {
+export function buildYearEndBalances(
+  db: Database,
+  accountSetId: string,
+  year: number
+): YearEndBalanceRow[] {
   const balances = new Map<string, YearEndBalanceRow>()
 
   for (const row of getInitBalanceRows(db, accountSetId, year)) {
@@ -320,7 +336,60 @@ export function buildYearEndBalances(db: Database, accountSetId: string, year: n
       ...splitSignedBalance(row.direction, row.initBalance),
     }))
     .filter(row => Math.abs(row.initBalance) >= MONEY_EPSILON)
-    .sort((a, b) => a.accountCode.localeCompare(b.accountCode) || a.auxItemId.localeCompare(b.auxItemId))
+    .sort(
+      (a, b) => a.accountCode.localeCompare(b.accountCode) || a.auxItemId.localeCompare(b.auxItemId)
+    )
+}
+
+export interface WriteNextYearInitResult {
+  /** 实际新插入的年结自动行数 */
+  inserted: number
+  /** 因(科目, 辅助)已存在手工行而被保留、跳过自动覆盖的行数 */
+  preservedManual: number
+  /** 被替换的旧年结自动行数（上次年结遗留） */
+  replacedAuto: number
+}
+
+/**
+ * FIX-004 / P0-8：年度结账前校验损益类科目年末余额为 0。
+ *
+ * 中国会计准则要求损益类（收入/成本/费用）科目年末余额必须为 0：
+ *   - 月末或年末需通过"结转损益"凭证把余额结转到「本年利润」
+ *   - 否则下一年度期初余额会包含本年的损益数字，导致下年报表错乱
+ *
+ * 本函数：
+ *   1) 取 buildYearEndBalances 已聚合好的年末余额（已含期初 + 全年凭证净额）
+ *   2) 过滤出会计准则对应的损益类科目（按编码前缀）
+ *   3) 余额 abs >= MONEY_EPSILON 视为未结转
+ *   4) 若存在未结转科目则抛错，错误信息列出科目编码、名称、余额（至多 10 项）
+ *
+ * 调用方：closeAccountingPeriod / closeAllAccountingPeriods 在 period=12 时调用。
+ */
+export function validateProfitLossClosedFromRows(
+  rows: YearEndBalanceRow[],
+  prefixes: string[]
+) {
+  if (prefixes.length === 0) return
+  const unclosed = rows.filter(
+    row =>
+      prefixes.some(p => row.accountCode.startsWith(p)) &&
+      Math.abs(row.initBalance) >= MONEY_EPSILON
+  )
+  if (unclosed.length === 0) return
+
+  const shown = unclosed.slice(0, 10)
+  const detail = shown
+    .map(r => {
+      const aux = r.auxItemId ? `（${r.auxItemId}）` : ''
+      return `${r.accountCode} ${r.accountName}${aux} 余额 ${r.initBalance.toFixed(2)}`
+    })
+    .join('；')
+  const more =
+    unclosed.length > shown.length ? `（共 ${unclosed.length} 项，仅显示前 ${shown.length} 项）` : ''
+  throw new Error(
+    `年度结账前损益类科目余额必须为 0，请先在"凭证 → 自动结转"中执行"结转损益"，` +
+      `将以下科目余额结转至本年利润后再做年结：${detail}${more}`
+  )
 }
 
 export function writeNextYearInitBalances(params: {
@@ -328,11 +397,24 @@ export function writeNextYearInitBalances(params: {
   accountSetId: string
   sourceYear: number
   rows: YearEndBalanceRow[]
-}) {
+}): WriteNextYearInitResult {
   const nextYear = params.sourceYear + 1
-  params.db
-    .prepare('DELETE FROM init_balances WHERE account_set_id=? AND year=? AND period=1')
+
+  // FIX-003 / P0-9：只删上次年结自动生成的行；手工录入行（source='manual'）保留
+  const delResult = params.db
+    .prepare(
+      `DELETE FROM init_balances
+       WHERE account_set_id=? AND year=? AND period=1 AND source='year_close_auto'`
+    )
     .run(params.accountSetId, nextYear)
+  const replacedAuto = Number(delResult.changes ?? 0)
+
+  // 检测某 (account, aux) 是否已存在手工行
+  const manualExistsStmt = params.db.prepare(
+    `SELECT 1 FROM init_balances
+     WHERE account_set_id=? AND account_id=? AND year=? AND period=1
+       AND aux_item_id=? AND source='manual' LIMIT 1`
+  )
 
   const insert = params.db.prepare(
     `
@@ -340,13 +422,19 @@ export function writeNextYearInitBalances(params: {
       id, account_set_id, account_id, direction, year, period,
       init_balance, init_debit, init_credit, aux_item_id,
       opening_debit, opening_credit, pre_book_debit, pre_book_credit,
-      created_at
+      source, created_at
     )
-    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 0, 0, datetime('now'))
+    VALUES (?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, 0, 0, 'year_close_auto', datetime('now'))
   `
   )
 
+  let inserted = 0
+  let preservedManual = 0
   for (const row of params.rows) {
+    if (manualExistsStmt.get(params.accountSetId, row.accountId, nextYear, row.auxItemId)) {
+      preservedManual += 1
+      continue
+    }
     insert.run(
       uuidv4(),
       params.accountSetId,
@@ -360,7 +448,10 @@ export function writeNextYearInitBalances(params: {
       row.initDebit,
       row.initCredit
     )
+    inserted += 1
   }
+
+  return { inserted, preservedManual, replacedAuto }
 }
 
 export function closePeriodRecord(params: ClosePeriodParams) {
@@ -380,7 +471,13 @@ export function closePeriodRecord(params: ClosePeriodParams) {
         closed_at=excluded.closed_at
     `
     )
-    .run(existing?.id || uuidv4(), params.accountSetId, params.year, params.period, params.userId || null)
+    .run(
+      existing?.id || uuidv4(),
+      params.accountSetId,
+      params.year,
+      params.period,
+      params.userId || null
+    )
 }
 
 export function closeAccountingPeriod(params: ClosePeriodParams): ClosePeriodResult {
@@ -409,16 +506,23 @@ export function closeAccountingPeriod(params: ClosePeriodParams): ClosePeriodRes
     accountSetId: params.accountSetId,
     year: params.year,
   })
-  validateNextYearNotStarted({
+
+  const nextYear = params.year + 1
+  const nextYearVoucherCount = countYearVouchers({
     db: params.db,
     accountSetId: params.accountSetId,
-    nextYear: params.year + 1,
+    year: nextYear,
   })
 
+  // FIX-004 / P0-8：先在事务外计算并校验损益，避免事务回滚浪费
+  const rows = buildYearEndBalances(params.db, params.accountSetId, params.year)
+  const standard = detectStaticReportStandard(params.db, params.accountSetId)
+  validateProfitLossClosedFromRows(rows, getProfitLossAccountCodePrefixes(standard))
+
   let carriedCount = 0
+  let preservedManualOpeningCount = 0
   const transaction = params.db.transaction(() => {
-    const rows = buildYearEndBalances(params.db, params.accountSetId, params.year)
-    writeNextYearInitBalances({
+    const writeResult = writeNextYearInitBalances({
       db: params.db,
       accountSetId: params.accountSetId,
       sourceYear: params.year,
@@ -426,14 +530,17 @@ export function closeAccountingPeriod(params: ClosePeriodParams): ClosePeriodRes
     })
     closePeriodRecord(params)
     carriedCount = rows.length
+    preservedManualOpeningCount = writeResult.preservedManual
   })
 
   transaction()
   return {
     closedYear: params.year,
     closedPeriod: params.period,
-    nextYear: params.year + 1,
+    nextYear,
     carriedCount,
+    overwrittenNextYearOpening: nextYearVoucherCount > 0,
+    preservedManualOpeningCount,
   }
 }
 
@@ -442,6 +549,8 @@ export interface OpenPeriodResult {
   openedPeriod: number
   removedNextYearOpening?: boolean
   nextYear?: number
+  /** 下一年已有凭证数量（反结账后下年期初待恢复） */
+  nextYearVoucherCount?: number
 }
 
 /**
@@ -469,7 +578,9 @@ export function openAccountingPeriod(params: ClosePeriodParams): OpenPeriodResul
   if (params.period !== 12) {
     const transaction = params.db.transaction(() => {
       params.db
-        .prepare(`UPDATE period_closing SET status='open' WHERE account_set_id=? AND year=? AND period=?`)
+        .prepare(
+          `UPDATE period_closing SET status='open' WHERE account_set_id=? AND year=? AND period=?`
+        )
         .run(params.accountSetId, params.year, params.period)
     })
     transaction()
@@ -477,10 +588,10 @@ export function openAccountingPeriod(params: ClosePeriodParams): OpenPeriodResul
   }
 
   const nextYear = params.year + 1
-  validateNextYearHasNoVouchers({
+  const nextYearVoucherCount = countYearVouchers({
     db: params.db,
     accountSetId: params.accountSetId,
-    nextYear,
+    year: nextYear,
   })
 
   const transaction = params.db.transaction(() => {
@@ -490,7 +601,9 @@ export function openAccountingPeriod(params: ClosePeriodParams): OpenPeriodResul
       nextYear,
     })
     params.db
-      .prepare(`UPDATE period_closing SET status='open' WHERE account_set_id=? AND year=? AND period=?`)
+      .prepare(
+        `UPDATE period_closing SET status='open' WHERE account_set_id=? AND year=? AND period=?`
+      )
       .run(params.accountSetId, params.year, params.period)
   })
   transaction()
@@ -500,6 +613,161 @@ export function openAccountingPeriod(params: ClosePeriodParams): OpenPeriodResul
     openedPeriod: params.period,
     removedNextYearOpening: true,
     nextYear,
+    nextYearVoucherCount,
+  }
+}
+
+export interface CloseAllPeriodsResult {
+  year: number
+  firstPeriod: number
+  closedPeriods: number[]
+  skippedPeriods: number[]
+  nextYear?: number
+  carriedCount: number
+  overwrittenNextYearOpening?: boolean
+  /** FIX-003 / P0-9：因下年期初存在手工调整行而被保留、未覆盖的科目数 */
+  preservedManualOpeningCount?: number
+}
+
+export interface OpenAllPeriodsResult {
+  year: number
+  firstPeriod: number
+  openedPeriods: number[]
+  skippedPeriods: number[]
+  removedNextYearOpening?: boolean
+  nextYear?: number
+  nextYearVoucherCount?: number
+}
+
+/** 全年结账：按期间顺序月结，最后一期执行年结 */
+export function closeAllAccountingPeriods(params: ClosePeriodParams): CloseAllPeriodsResult {
+  toYearPeriod(params.year, '会计年度')
+  const firstPeriod = getFirstPeriodForYear(params)
+  const closedPeriods: number[] = []
+  const skippedPeriods: number[] = []
+  let carriedCount = 0
+  let overwrittenNextYearOpening = false
+  let preservedManualOpeningCount = 0
+  const nextYear = params.year + 1
+
+  const nextYearVoucherCount = countYearVouchers({
+    db: params.db,
+    accountSetId: params.accountSetId,
+    year: nextYear,
+  })
+
+  const transaction = params.db.transaction(() => {
+    for (let period = firstPeriod; period <= 12; period += 1) {
+      const existing = getPeriodClosingRecord({ ...params, period })
+      if (existing?.status === 'closed') {
+        skippedPeriods.push(period)
+        continue
+      }
+
+      validateNoUnpostedVouchers({ ...params, period })
+
+      if (period !== 12) {
+        closePeriodRecord({ ...params, period })
+        closedPeriods.push(period)
+        continue
+      }
+
+      validatePreviousPeriodsClosed(params)
+      const rows = buildYearEndBalances(params.db, params.accountSetId, params.year)
+      // FIX-004 / P0-8：年结前强制校验损益类科目余额为 0（事务内抛错会回滚整个全年结账）
+      const standard = detectStaticReportStandard(params.db, params.accountSetId)
+      validateProfitLossClosedFromRows(rows, getProfitLossAccountCodePrefixes(standard))
+      const writeResult = writeNextYearInitBalances({
+        db: params.db,
+        accountSetId: params.accountSetId,
+        sourceYear: params.year,
+        rows,
+      })
+      closePeriodRecord({ ...params, period: 12 })
+      closedPeriods.push(12)
+      carriedCount = rows.length
+      overwrittenNextYearOpening = nextYearVoucherCount > 0
+      preservedManualOpeningCount = writeResult.preservedManual
+    }
+  })
+
+  transaction()
+
+  if (closedPeriods.length === 0) {
+    throw new Error(`${params.year}年全年均已结账，无需重复操作`)
+  }
+
+  return {
+    year: params.year,
+    firstPeriod,
+    closedPeriods,
+    skippedPeriods,
+    nextYear: closedPeriods.includes(12) ? nextYear : undefined,
+    carriedCount,
+    overwrittenNextYearOpening: closedPeriods.includes(12) ? overwrittenNextYearOpening : undefined,
+    preservedManualOpeningCount: closedPeriods.includes(12)
+      ? preservedManualOpeningCount
+      : undefined,
+  }
+}
+
+/** 全年反结账：按后进先出依次打开已结期间 */
+export function openAllAccountingPeriods(params: ClosePeriodParams): OpenAllPeriodsResult {
+  toYearPeriod(params.year, '会计年度')
+  const firstPeriod = getFirstPeriodForYear(params)
+  const openedPeriods: number[] = []
+  const skippedPeriods: number[] = []
+  const nextYear = params.year + 1
+  let removedNextYearOpening = false
+
+  const transaction = params.db.transaction(() => {
+    for (let period = 12; period >= firstPeriod; period -= 1) {
+      const existing = getPeriodClosingRecord({ ...params, period })
+      if (existing?.status !== 'closed') {
+        skippedPeriods.push(period)
+        continue
+      }
+
+      if (period === 12) {
+        deleteNextYearAutoOpeningBalances({
+          db: params.db,
+          accountSetId: params.accountSetId,
+          nextYear,
+        })
+        removedNextYearOpening = true
+      }
+
+      params.db
+        .prepare(
+          `UPDATE period_closing SET status='open' WHERE account_set_id=? AND year=? AND period=?`
+        )
+        .run(params.accountSetId, params.year, period)
+      openedPeriods.push(period)
+    }
+  })
+
+  transaction()
+
+  if (openedPeriods.length === 0) {
+    throw new Error(`${params.year}年全年均未结账，无需反结账`)
+  }
+
+  const nextYearVoucherCount = removedNextYearOpening
+    ? countYearVouchers({
+        db: params.db,
+        accountSetId: params.accountSetId,
+        year: nextYear,
+      })
+    : undefined
+
+  return {
+    year: params.year,
+    firstPeriod,
+    openedPeriods,
+    skippedPeriods,
+    removedNextYearOpening,
+    nextYear: removedNextYearOpening ? nextYear : undefined,
+    nextYearVoucherCount,
   }
 }
 
@@ -531,26 +799,98 @@ export function buildYearPeriodStatusView(params: {
     months.push({
       period: p,
       status: closed ? 'closed' : 'open',
-      closedAt: closed ? rec?.closed_at ?? null : undefined,
+      closedAt: closed ? (rec?.closed_at ?? null) : undefined,
     })
   }
 
-  let yearEnd: { nextYear: number; openingBalanceRowCount: number } | undefined
+  let yearEnd:
+    | { nextYear: number; openingBalanceRowCount: number; voucherCount: number }
+    | undefined
   if (months[11]?.status === 'closed') {
-    const countRow = params.db
-      .prepare(
-        `SELECT COUNT(*) as c FROM init_balances WHERE account_set_id = ? AND year = ? AND period = 1`
-      )
-      .get(params.accountSetId, params.year + 1) as { c: number }
+    const nextYear = params.year + 1
     yearEnd = {
-      nextYear: params.year + 1,
-      openingBalanceRowCount: countRow?.c ?? 0,
+      nextYear,
+      openingBalanceRowCount: countYearOpeningBalanceRows({
+        db: params.db,
+        accountSetId: params.accountSetId,
+        year: nextYear,
+      }),
+      voucherCount: countYearVouchers({
+        db: params.db,
+        accountSetId: params.accountSetId,
+        year: nextYear,
+      }),
     }
   }
+
+  const nextYear = params.year + 1
+  const nextYearVoucherCount = countYearVouchers({
+    db: params.db,
+    accountSetId: params.accountSetId,
+    year: nextYear,
+  })
+  const nextYearOpeningCount = countYearOpeningBalanceRows({
+    db: params.db,
+    accountSetId: params.accountSetId,
+    year: nextYear,
+  })
+  const nextYearPendingOpening =
+    nextYearVoucherCount > 0 && nextYearOpeningCount === 0
+      ? { nextYear, voucherCount: nextYearVoucherCount }
+      : undefined
+
+  const currentYearVoucherCount = countYearVouchers({
+    db: params.db,
+    accountSetId: params.accountSetId,
+    year: params.year,
+  })
+  const currentYearOpeningCount = countYearOpeningBalanceRows({
+    db: params.db,
+    accountSetId: params.accountSetId,
+    year: params.year,
+  })
+  const openingPending =
+    currentYearVoucherCount > 0 && currentYearOpeningCount === 0
+      ? { year: params.year, voucherCount: currentYearVoucherCount }
+      : undefined
 
   return {
     year: params.year,
     months,
     yearEnd,
+    nextYearPendingOpening,
+    openingPending,
+  }
+}
+
+/** 期间结账页年份导航：开账年、账末年及可选范围 */
+export function getPeriodCloseYearBounds(db: Database, accountSetId: string) {
+  const accountSet = db
+    .prepare('SELECT start_date FROM account_sets WHERE id=?')
+    .get(accountSetId) as { start_date?: string } | undefined
+
+  const calendarYear = new Date().getFullYear()
+  let openingYear = calendarYear
+  if (accountSet?.start_date) {
+    const parsed = Number(String(accountSet.start_date).slice(0, 4))
+    if (Number.isInteger(parsed)) openingYear = parsed
+  }
+
+  const lastRow = db
+    .prepare(
+      `SELECT MAX(CAST(strftime('%Y', voucher_date) AS INTEGER)) as year
+       FROM vouchers
+       WHERE account_set_id = ? AND status IN ('draft', 'audited', 'posted')`
+    )
+    .get(accountSetId) as { year: number | null } | undefined
+
+  const lastVoucherYear = lastRow?.year ?? null
+  const maxYear = Math.max(calendarYear + 1, lastVoucherYear ?? calendarYear, openingYear)
+
+  return {
+    openingYear,
+    lastVoucherYear,
+    minYear: openingYear,
+    maxYear,
   }
 }

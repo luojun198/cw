@@ -38,27 +38,29 @@
                 <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-7 3c1.93 0 3.5 1.57 3.5 3.5S13.93 13 12 13s-3.5-1.57-3.5-3.5S10.07 6 12 6zm7 13H5v-.23c0-.62.28-1.2.77-1.58C7.53 15.9 9.68 15 12 15s4.47.9 6.23 2.19c.49.38.77.96.77 1.58V19z"/>
               </svg>
             </span>
-            财务驾驶舱 · 行政事业专版
+            财务驾驶舱 · {{ brandingStore.title }}
           </div>
           <h1 class="hero-title">{{ greeting }}</h1>
-          <p class="hero-subtitle">{{ currentDateTimeText }}</p>
-          <div class="hero-context">
-            <div class="context-item">
-              <span class="context-label">当前账套</span>
-              <span class="context-value">{{ accountSetName }}</span>
-            </div>
-            <div class="context-item">
-              <span class="context-label">当前用户</span>
-              <span class="context-value">{{ userName || '未识别' }}</span>
-            </div>
-            <div class="context-item">
-              <span class="context-label">会计区间</span>
-              <span class="context-value">{{ currentYear }} 年第 {{ currentPeriod }} 期</span>
+          <div class="hero-meta-row">
+            <p class="hero-subtitle">{{ currentDateTimeText }}</p>
+            <div class="hero-context">
+              <div class="context-item">
+                <span class="context-label">当前账套</span>
+                <span class="context-value">{{ accountSetName }}</span>
+              </div>
+              <div class="context-item">
+                <span class="context-label">当前用户</span>
+                <span class="context-value">{{ userName || '未识别' }}</span>
+              </div>
+              <div class="context-item">
+                <span class="context-label">会计区间</span>
+                <span class="context-value">{{ currentYear }} 年第 {{ currentPeriod }} 期</span>
+              </div>
             </div>
           </div>
         </div>
-        <div class="hero-shortcuts">
-          <button v-for="item in heroShortcuts" :key="item.label" class="shortcut-card" @click="router.push(item.path)">
+        <div v-if="visibleHeroShortcuts.length" class="hero-shortcuts">
+          <button v-for="item in visibleHeroShortcuts" :key="item.label" class="shortcut-card" @click="router.push(item.path)">
             <div class="shortcut-icon" :style="{ background: item.bg }">
               <el-icon><component :is="item.icon" /></el-icon>
             </div>
@@ -75,9 +77,9 @@
     </section>
 
     <!-- 统计指标卡片 - 苹果风格 -->
-    <section class="metrics-section">
+    <section v-if="visibleStatCards.length" class="metrics-section">
       <div class="metrics-grid">
-        <button v-for="card in statCards" :key="card.label" class="metric-card" @click="goMetric(card.path)">
+        <button v-for="card in visibleStatCards" :key="card.label" class="metric-card" @click="goMetric(card.path)">
           <div class="metric-icon" :style="{ background: card.bg, color: card.color }">
             <el-icon><component :is="card.icon" /></el-icon>
           </div>
@@ -102,11 +104,24 @@
                 <path d="M3 3v18h18"/><path d="M18.7 8l-5.1 5.2-2.4-2.4-4.3 4.3"/>
               </svg>
             </div>
-            <div><span class="panel-eyebrow">趋势分析</span><h3>近 6 期收支与结余</h3></div>
+            <div>
+              <span class="panel-eyebrow">趋势分析</span>
+              <h3>近 6 期收入与支出结构</h3>
+              <p v-if="dashboardRuleLabel" class="panel-rule-hint">
+                取数口径：{{ dashboardRuleLabel }}
+                <router-link
+                  v-if="canConfigureDashboardRules"
+                  class="panel-rule-link"
+                  to="/system/param?openDashboardRules=1"
+                >配置取数规则</router-link>
+              </p>
+            </div>
           </div>
           <div class="chart-legend">
             <span class="legend-item"><i class="legend-dot income"></i>收入</span>
             <span class="legend-item"><i class="legend-dot expense"></i>支出</span>
+            <span class="legend-item"><i class="legend-dot fee"></i>费用</span>
+            <span class="legend-item"><i class="legend-dot cost"></i>成本</span>
             <span class="legend-item"><i class="legend-dot surplus"></i>结余</span>
           </div>
         </div>
@@ -155,16 +170,24 @@
           </button>
         </div>
         <div class="voucher-list">
-          <button v-for="row in recentVouchers" :key="row.id" class="voucher-item" @click="router.push('/voucher/query')">
-            <div class="voucher-main">
-              <span class="voucher-date">{{ formatShortDate(row.voucherDate) }}</span>
-              <span class="voucher-no">{{ row.voucherNo }}</span>
-              <span class="voucher-abstract" v-if="row.abstract">{{ row.abstract }}</span>
-            </div>
-            <div class="voucher-meta">
-              <span class="voucher-status" :class="row.status">{{ getStatusText(row.status) }}</span>
-              <span class="voucher-amount">{{ formatMoney(row.totalAmount) }}</span>
-            </div>
+          <div v-if="recentVouchers.length" class="voucher-table-head">
+            <span>日期</span>
+            <span>凭证号</span>
+            <span>摘要</span>
+            <span>状态</span>
+            <span>金额</span>
+          </div>
+          <button
+            v-for="row in recentVouchers"
+            :key="row.id"
+            class="voucher-item"
+            @click="router.push('/voucher/query')"
+          >
+            <span class="voucher-date">{{ formatShortDate(row.voucherDate) }}</span>
+            <span class="voucher-no">{{ row.voucherNo }}</span>
+            <span class="voucher-abstract" :title="row.abstract || ''">{{ row.abstract || '—' }}</span>
+            <span class="voucher-status" :class="row.status">{{ getStatusText(row.status) }}</span>
+            <span class="voucher-amount">{{ formatMoney(row.totalAmount) }}</span>
           </button>
           <div v-if="!recentVouchers.length" class="empty-state">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -260,24 +283,31 @@
     <div class="footer-decoration">
       <div class="footer-pattern"></div>
       <div class="footer-text">
-        <span class="footer-brand">RCsoft</span>
-        <span class="footer-divider">|</span>
-        <span class="footer-edition">行政事业财务管理专版</span>
+        <span class="footer-brand">{{ brandingStore.title }} · {{ brandingStore.subtitle }}</span>
       </div>
     </div>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onActivated, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { CircleCheck, DataAnalysis, Document, EditPen, List, Money, Tickets, Wallet } from '@element-plus/icons-vue'
 import * as echarts from 'echarts'
 import { useUserStore } from '@/stores/user'
 import request from '@/api/request'
 import { formatAmount } from '@/utils/format'
+import { canAccessRoute } from '@/config/navigation'
+import { useBrandingStore } from '@/stores/branding'
 
-interface TrendItem { month: string; income: number; expense: number }
+interface TrendItem {
+  month: string
+  income: number
+  pureExpense: number
+  fee: number
+  cost: number
+  expense?: number
+}
 interface RiskItem { key: string; title: string; count: number; level: 'normal' | 'warning' | 'danger'; actionPath: string }
 interface CashStructureItem { name: string; balance: number; children: Array<{ code: string; name: string; balance: number }> }
 interface CashStructureDisplayItem extends CashStructureItem { totalAbs: number; palette: string[]; children: Array<{ code: string; name: string; balance: number; ratio: number; absRatio: number; color: string }> }
@@ -285,10 +315,30 @@ interface ActivityTopItem { code: string; name: string; amount: number }
 
 const router = useRouter()
 const userStore = useUserStore()
+const brandingStore = useBrandingStore()
 const userName = computed(() => userStore.userInfo?.nickname || userStore.userInfo?.username || '')
 const accountSetName = computed(() => userStore.accountSetName || '未选账套')
 
-const stats = ref({ currentYear: 0, currentPeriod: 0, voucherCount: 0, unpostedVoucherCount: 0, pendingVoucherCount: 0, auditPending: 0, cashBalance: 0, monthlyIncome: 0, monthlyExpense: 0, monthlySurplus: 0 })
+const stats = ref({
+  currentYear: 0,
+  currentPeriod: 0,
+  voucherCount: 0,
+  unpostedVoucherCount: 0,
+  pendingVoucherCount: 0,
+  auditPending: 0,
+  cashBalance: 0,
+  monthlyIncome: 0,
+  monthlyExpense: 0,
+  monthlySurplus: 0,
+  accountingStandardName: '',
+  dashboardRuleMode: '',
+})
+const dashboardRuleLabel = computed(() => {
+  const name = stats.value.accountingStandardName
+  if (!name) return ''
+  if (stats.value.dashboardRuleMode === 'custom') return `${name}（可在系统参数中调整）`
+  return name
+})
 const recentVouchers = ref<any[]>([])
 const trend = ref<TrendItem[]>([])
 const insights = ref({ riskItems: [] as RiskItem[], cashStructure: [] as CashStructureItem[], activityTop: [] as ActivityTopItem[] })
@@ -323,6 +373,26 @@ const currentDateTimeText = computed(() => {
   return `${date.getFullYear()}年${pad(date.getMonth() + 1)}月${pad(date.getDate())}日 ${weekdays[date.getDay()]} ${pad(date.getHours())}:${pad(date.getMinutes())}`
 })
 
+const canConfigureDashboardRules = computed(() =>
+  canAccessRoute('/system/param', userStore.permissions)
+)
+
+function isAccessiblePath(path?: string) {
+  if (!path) return false
+  return canAccessRoute(path.split('?')[0], userStore.permissions)
+}
+
+const heroShortcutsBase = [
+  { label: '凭证录入', desc: '新增凭证', path: '/voucher/entry?action=add', icon: EditPen, color: '#007AFF', bg: 'rgba(0, 122, 255, 0.15)' },
+  { label: '凭证管理', desc: '审核与记账', path: '/voucher/audit', icon: CircleCheck, color: '#34C759', bg: 'rgba(52, 199, 89, 0.15)' },
+  { label: '余额表', desc: '打开科目余额表', path: '/ledger/general', icon: DataAnalysis, color: '#FF9500', bg: 'rgba(255, 149, 0, 0.15)' },
+  { label: '日记账', desc: '现金银行流水', path: '/ledger/cash-journal', icon: List, color: '#5856D6', bg: 'rgba(88, 86, 214, 0.15)' },
+]
+
+const visibleHeroShortcuts = computed(() =>
+  heroShortcutsBase.filter(item => isAccessiblePath(item.path))
+)
+
 const statCards = computed(() => [
   { label: '本月凭证', value: stats.value.voucherCount, hint: `${currentYear.value} 年第 ${currentPeriod.value} 期`, color: '#007AFF', bg: 'rgba(0, 122, 255, 0.12)', icon: Tickets, path: '/voucher/query' },
   { label: '未记账凭证', value: stats.value.unpostedVoucherCount, hint: '草稿 + 已审核', color: '#FF3B30', bg: 'rgba(255, 59, 48, 0.12)', icon: Document, path: '/voucher/audit', badge: stats.value.unpostedVoucherCount > 0 ? `${stats.value.unpostedVoucherCount}` : undefined },
@@ -331,6 +401,10 @@ const statCards = computed(() => [
   { label: '本月支出', value: formatMoney(stats.value.monthlyExpense), hint: '支出费用发生额', color: '#FF9500', bg: 'rgba(255, 149, 0, 0.12)', icon: DataAnalysis, path: '/ledger/detail' },
   { label: '本月结余', value: formatMoney(stats.value.monthlySurplus), hint: stats.value.monthlySurplus >= 0 ? '收支结余为正' : '支出大于收入', color: stats.value.monthlySurplus >= 0 ? '#34C759' : '#FF3B30', bg: stats.value.monthlySurplus >= 0 ? 'rgba(52, 199, 89, 0.12)' : 'rgba(255, 59, 48, 0.12)', icon: CircleCheck, path: '/report/run/2' },
 ])
+
+const visibleStatCards = computed(() =>
+  statCards.value.filter(card => isAccessiblePath(card.path))
+)
 
 const cashStructure = computed(() => insights.value.cashStructure)
 const cashStructureWithRatio = computed<CashStructureDisplayItem[]>(() => {
@@ -350,13 +424,6 @@ const activityTopWithRatio = computed(() => {
 const riskSummaryCount = computed(() => insights.value.riskItems.filter(i => i.count > 0).length)
 const riskSummaryType = computed(() => riskSummaryCount.value > 0 ? 'warning' : 'success')
 const riskSummaryText = computed(() => riskSummaryCount.value > 0 ? `${riskSummaryCount.value} 项需关注` : '运行平稳')
-
-const heroShortcuts = [
-  { label: '凭证录入', desc: '新增凭证', path: '/voucher/entry?action=add', icon: EditPen, color: '#007AFF', bg: 'rgba(0, 122, 255, 0.15)' },
-  { label: '凭证管理', desc: '审核与记账', path: '/voucher/audit', icon: CircleCheck, color: '#34C759', bg: 'rgba(52, 199, 89, 0.15)' },
-  { label: '余额表', desc: '打开科目余额表', path: '/ledger/general', icon: DataAnalysis, color: '#FF9500', bg: 'rgba(255, 149, 0, 0.15)' },
-  { label: '日记账', desc: '现金银行流水', path: '/ledger/cash-journal', icon: List, color: '#5856D6', bg: 'rgba(88, 86, 214, 0.15)' },
-]
 
 function goMetric(path?: string) { if (path) router.push(path) }
 function formatMoney(val: number) { return '¥' + formatAmount(val || 0) }
@@ -382,19 +449,100 @@ function hideLastLoginNotice() {
   if (loginSecurityNoticeTimer) { window.clearTimeout(loginSecurityNoticeTimer); loginSecurityNoticeTimer = null }
 }
 
+function getTrendSurplus(item: TrendItem) {
+  return item.income - item.pureExpense - item.fee - item.cost
+}
+
 function renderTrendChart() {
   if (!trendChartRef.value) return
   if (!trendChart) trendChart = echarts.init(trendChartRef.value)
   trendChart.setOption({
-    color: ['#34C759', '#FF9500', '#007AFF'],
-    tooltip: { trigger: 'axis', backgroundColor: 'rgba(255,255,255,0.95)', borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, borderRadius: 12, padding: [12, 16], textStyle: { color: '#1d1d1f', fontSize: 13 }, formatter: (p: any) => p.map((i: any) => `${i.marker}${i.seriesName}：${formatMoney(i.value)}`).join('<br/>') },
-    grid: { left: 48, right: 24, top: 48, bottom: 32 },
-    xAxis: { type: 'category', data: trend.value.map(i => i.month.slice(5) + '期'), axisLine: { lineStyle: { color: 'rgba(0,0,0,0.08)' } }, axisLabel: { color: '#86868b', fontSize: 12 }, axisTick: { show: false } },
-    yAxis: { type: 'value', axisLabel: { color: '#86868b', fontSize: 12, formatter: (v: number) => `${Math.round(v / 10000)}万` }, splitLine: { lineStyle: { color: 'rgba(0,0,0,0.06)', type: 'dashed' } }, axisTick: { show: false }, axisLine: { show: false } },
+    color: ['#34C759', '#FF9500', '#FF3B30', '#5856D6', '#007AFF'],
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: 'rgba(255,255,255,0.95)',
+      borderColor: 'rgba(0,0,0,0.1)',
+      borderWidth: 1,
+      borderRadius: 12,
+      padding: [12, 16],
+      textStyle: { color: '#1d1d1f', fontSize: 13 },
+      formatter: (params: any) => {
+        const items = Array.isArray(params) ? params : [params]
+        const lines = items.map((item: any) => `${item.marker}${item.seriesName}：${formatMoney(item.value)}`)
+        const monthIndex = items[0]?.dataIndex
+        if (monthIndex != null && trend.value[monthIndex]) {
+          const row = trend.value[monthIndex]
+          const surplus = getTrendSurplus(row)
+          if (!items.some((item: any) => item.seriesName === '结余')) {
+            lines.push(`结余：${formatMoney(surplus)}`)
+          }
+        }
+        return lines.join('<br/>')
+      },
+    },
+    legend: { show: false },
+    grid: { left: 48, right: 24, top: 56, bottom: 32 },
+    xAxis: {
+      type: 'category',
+      data: trend.value.map(i => i.month.slice(5) + '期'),
+      axisLine: { lineStyle: { color: 'rgba(0,0,0,0.08)' } },
+      axisLabel: { color: '#86868b', fontSize: 12 },
+      axisTick: { show: false },
+    },
+    yAxis: {
+      type: 'value',
+      axisLabel: {
+        color: '#86868b',
+        fontSize: 12,
+        formatter: (v: number) => `${Math.round(v / 10000)}万`,
+      },
+      splitLine: { lineStyle: { color: 'rgba(0,0,0,0.06)', type: 'dashed' } },
+      axisTick: { show: false },
+      axisLine: { show: false },
+    },
     series: [
-      { name: '收入', type: 'bar', data: trend.value.map(i => i.income), barWidth: 20, itemStyle: { borderRadius: [8, 8, 0, 0] } },
-      { name: '支出', type: 'bar', data: trend.value.map(i => i.expense), barWidth: 20, itemStyle: { borderRadius: [8, 8, 0, 0] } },
-      { name: '结余', type: 'line', data: trend.value.map(i => i.income - i.expense), smooth: true, symbolSize: 8, lineStyle: { width: 3 }, areaStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: 'rgba(0,122,255,0.15)' }, { offset: 1, color: 'rgba(0,122,255,0)' }]) } },
+      {
+        name: '收入',
+        type: 'bar',
+        data: trend.value.map(i => i.income),
+        barWidth: 14,
+        itemStyle: { borderRadius: [6, 6, 0, 0] },
+      },
+      {
+        name: '支出',
+        type: 'bar',
+        data: trend.value.map(i => i.pureExpense),
+        barWidth: 14,
+        itemStyle: { borderRadius: [6, 6, 0, 0] },
+      },
+      {
+        name: '费用',
+        type: 'bar',
+        data: trend.value.map(i => i.fee),
+        barWidth: 14,
+        itemStyle: { borderRadius: [6, 6, 0, 0] },
+      },
+      {
+        name: '成本',
+        type: 'bar',
+        data: trend.value.map(i => i.cost),
+        barWidth: 14,
+        itemStyle: { borderRadius: [6, 6, 0, 0] },
+      },
+      {
+        name: '结余',
+        type: 'line',
+        data: trend.value.map(i => getTrendSurplus(i)),
+        smooth: true,
+        symbolSize: 8,
+        lineStyle: { width: 3, type: 'dashed' },
+        areaStyle: {
+          color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+            { offset: 0, color: 'rgba(0,122,255,0.12)' },
+            { offset: 1, color: 'rgba(0,122,255,0)' },
+          ]),
+        },
+      },
     ],
   })
 }
@@ -418,6 +566,7 @@ function renderCashPieCharts() {
 function resizeCharts() { trendChart?.resize(); cashPieCharts.forEach(c => c.resize()) }
 
 async function loadDashboard() {
+  if (!userStore.token || !userStore.accountSetId) return
   const [s, v, tr, insight] = await Promise.allSettled([request.get<any>('/dashboard/stats'), request.get<any>('/dashboard/recent-vouchers'), request.get<any>('/dashboard/trend'), request.get<any>('/dashboard/insights')])
   if (s.status === 'fulfilled' && s.value.code === 0) Object.assign(stats.value, s.value.data)
   if (v.status === 'fulfilled' && v.value.code === 0) recentVouchers.value = v.value.data
@@ -426,11 +575,25 @@ async function loadDashboard() {
   await nextTick(); renderTrendChart(); renderCashPieCharts()
 }
 
-onMounted(async () => {
+watch(
+  () => userStore.accountSetId,
+  (accountSetId, prevId) => {
+    if (accountSetId && accountSetId !== prevId) {
+      void loadDashboard()
+    }
+  }
+)
+
+onMounted(() => {
   clockTimer = window.setInterval(() => { currentTime.value = new Date() }, 30000)
   showLastLoginNotice()
-  await loadDashboard()
   window.addEventListener('resize', resizeCharts)
+})
+
+onActivated(() => {
+  if (userStore.token && userStore.accountSetId) {
+    void loadDashboard()
+  }
 })
 
 onUnmounted(() => {

@@ -1,7 +1,8 @@
 import { v4 as uuidv4 } from 'uuid'
 import type { Database } from 'better-sqlite3'
 import { buildBatchVoucherQuery } from './voucherQuery.js'
-import { yuanToCents } from '../utils/amountUtils.js'
+import type { AccountScopeContext } from './accountAuthorization.js'
+import { yuanToCents, centsToYuan, MONEY_EPSILON } from '../utils/amountUtils.js'
 import {
   accountHasAuxAccounting,
   extractEntryAuxSelections,
@@ -66,10 +67,103 @@ export function validateVoucherEntryCount(entries: unknown) {
   return null
 }
 
+/**
+ * FIX-010 / P1-14：分录金额合法性校验
+ *
+ * 规则：
+ *   1) 金额必须是有限数（拒绝 NaN / Infinity）
+ *   2) 金额必须严格大于 0（拒绝 0 元和负数分录；负向金额应通过反方向表达）
+ *   3) 单笔金额不得超过 MAX_ENTRY_AMOUNT（默认 1e12 元 = 1 万亿，防止误输入 1e15+ 的明显错误）
+ *
+ * 返回错误消息字符串，无问题返回 null。
+ */
+export const MAX_ENTRY_AMOUNT = 1e12
+
+export function validateVoucherEntryAmounts(entries: VoucherEntryInput[]): string | null {
+  if (!Array.isArray(entries)) return null
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    const amount = Number(entry?.amount)
+    const seq = i + 1
+    const accName = entry?.account_name || entry?.account_code || `第${seq}行`
+    if (!Number.isFinite(amount)) {
+      return `第${seq}行【${accName}】金额无效（非有限数）`
+    }
+    if (amount <= 0) {
+      return `第${seq}行【${accName}】金额必须大于 0（当前 ${amount}）。请通过调整借贷方向表达减少，不要使用负数金额`
+    }
+    if (amount > MAX_ENTRY_AMOUNT) {
+      return `第${seq}行【${accName}】金额 ${amount} 超过单笔上限（${MAX_ENTRY_AMOUNT}），请确认是否输入错误`
+    }
+  }
+  return null
+}
+
+export function validateVoucherDate(params: {
+  voucherDate: string
+  accountSetId: string
+  db: { prepare: (sql: string) => { get: (...args: any[]) => any } }
+}) {
+  const { voucherDate, accountSetId, db } = params
+  if (!voucherDate) return '凭证日期不能为空'
+
+  const dateObj = new Date(voucherDate)
+  if (isNaN(dateObj.getTime())) return '凭证日期格式无效'
+
+  // FIX-018 / P2-23：凭证日期上限对齐错误消息的"当月最后一天"语义。
+  // 旧实现 `new Date(year, month+1, day)` 等价于"次月同一天"，与错误消息不一致，
+  // 实际放行了大量未来跨月凭证。
+  // 正确做法：取本月最后一天（new Date(year, month+1, 0) → 月末）作为时间上限。
+  const now = new Date()
+  const maxFutureDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999)
+  if (dateObj > maxFutureDate) {
+    const maxStr = `${maxFutureDate.getFullYear()}-${String(maxFutureDate.getMonth() + 1).padStart(2, '0')}-${String(maxFutureDate.getDate()).padStart(2, '0')}`
+    return `凭证日期不能超过当月最后一天（当前：${voucherDate}，允许最晚：${maxStr}）`
+  }
+
+  const accountSet = db
+    .prepare('SELECT start_date FROM account_sets WHERE id = ?')
+    .get(accountSetId) as { start_date?: string | null } | undefined
+  const startDate = accountSet?.start_date
+  if (startDate && voucherDate < startDate) {
+    return `凭证日期（${voucherDate}）不能早于账套启用日期（${startDate}）`
+  }
+
+  return null
+}
+
+/**
+ * 取分录金额的整数 cents：优先使用 amount_cents（若客户端/DB 已提供），
+ * 否则用 yuanToCents 将 amount 转为整数 cents（中间四舍五入到分）。
+ * 用于借贷平衡比较，避免浮点累加误差（修复 P0-6，见 debug/修复日志.md FIX-001）
+ */
+function getEntryAmountCents(entry: VoucherEntryInput): number {
+  const ac = (entry as any).amount_cents
+  if (typeof ac === 'number' && Number.isFinite(ac) && Number.isInteger(ac)) {
+    return ac
+  }
+  return yuanToCents(Number(entry.amount) || 0)
+}
+
+/**
+ * 整数 cents 版本的合计：所有累加都在整数域，0 误差。
+ * 借贷平衡的唯一权威算法。
+ */
+export function calculateVoucherTotalsCents(entries: VoucherEntryInput[]) {
+  let debitCents = 0
+  let creditCents = 0
+  for (const entry of entries) {
+    const c = getEntryAmountCents(entry)
+    if (entry.direction === 'debit') debitCents += c
+    else creditCents += c
+  }
+  return { debitCents, creditCents }
+}
+
 export function getVoucherBalanceError(entries: VoucherEntryInput[]) {
-  const { debitTotal, creditTotal } = calculateVoucherTotals(entries)
-  if (Math.abs(debitTotal - creditTotal) > 0.001) {
-    return `借贷不平衡: 借方${debitTotal} != 贷方${creditTotal}`
+  const { debitCents, creditCents } = calculateVoucherTotalsCents(entries)
+  if (debitCents !== creditCents) {
+    return `借贷不平衡: 借方${centsToYuan(debitCents).toFixed(2)} != 贷方${centsToYuan(creditCents).toFixed(2)}`
   }
   return null
 }
@@ -81,21 +175,74 @@ export function getVoucherUpdateBalanceError(entries: VoucherEntryInput[]) {
   return null
 }
 
+/**
+ * 元单位合计：仅供前端展示 / 凭证主表 total_amount 写入使用。
+ * 注意：**严禁**用于借贷平衡判断（多笔分录浮点累加可能产生 > 0.005 误差）。
+ * 判平衡请使用 calculateVoucherTotalsCents / getVoucherBalanceError。
+ */
 export function calculateVoucherTotals(entries: VoucherEntryInput[]) {
-  let debitTotal = 0
-  let creditTotal = 0
-
-  for (const entry of entries) {
-    if (entry.direction === 'debit') debitTotal += entry.amount
-    else creditTotal += entry.amount
+  const { debitCents, creditCents } = calculateVoucherTotalsCents(entries)
+  return {
+    debitTotal: centsToYuan(debitCents),
+    creditTotal: centsToYuan(creditCents),
   }
-
-  return { debitTotal, creditTotal }
 }
 
 export function isVoucherBalanced(entries: VoucherEntryInput[]) {
-  const { debitTotal, creditTotal } = calculateVoucherTotals(entries)
-  return Math.abs(debitTotal - creditTotal) <= 0.001
+  const { debitCents, creditCents } = calculateVoucherTotalsCents(entries)
+  return debitCents === creditCents
+}
+
+export interface DuplicateEntryWarning {
+  accountName: string
+  direction: string
+  auxDesc: string
+  count: number
+}
+
+export function findDuplicateEntries(entries: VoucherEntryInput[]): DuplicateEntryWarning[] {
+  const seen = new Map<
+    string,
+    { accountName: string; direction: string; auxDesc: string; count: number }
+  >()
+  const warnings: DuplicateEntryWarning[] = []
+
+  for (const entry of entries) {
+    const auxParts: string[] = []
+    const deptId = (entry as any).dept_id
+    const projectId = (entry as any).project_id
+    const supplierId = (entry as any).supplier_id
+    const personId = (entry as any).person_id
+    const funcClassId = (entry as any).func_class_id
+    // FIX-011 / P1-15：现金流量项目编码也作为判重维度
+    // 同账户同辅助但不同现金流量项目的两笔分录是合法业务（如同一银行账户对应不同流向），不应误判
+    const cashFlowCode = (entry as any).cash_flow_code
+    if (deptId) auxParts.push(`d:${deptId}`)
+    if (projectId) auxParts.push(`p:${projectId}`)
+    if (supplierId) auxParts.push(`s:${supplierId}`)
+    if (personId) auxParts.push(`r:${personId}`)
+    if (funcClassId) auxParts.push(`f:${funcClassId}`)
+    if (cashFlowCode) auxParts.push(`c:${cashFlowCode}`)
+
+    const key = `${entry.account_id}|${entry.direction}|${auxParts.join('|')}`
+    const existing = seen.get(key)
+    if (existing) {
+      if (existing.count === 1) {
+        warnings.push(existing)
+      }
+      existing.count++
+    } else {
+      const auxDesc = auxParts.length > 0 ? `（${auxParts.join(', ')}）` : ''
+      seen.set(key, {
+        accountName: entry.account_name,
+        direction: entry.direction === 'debit' ? '借方' : '贷方',
+        auxDesc,
+        count: 1,
+      })
+    }
+  }
+
+  return warnings
 }
 
 function resolveCashFlowFields(
@@ -124,7 +271,10 @@ export function buildVoucherEntryPayloads(params: {
   itemMap: Record<string, AuxItemLike>
 }) {
   return params.entries.map((entry, index) => {
-    const auxData: Record<string, { id: string; name: string; field_values?: Record<string, string> }> = {}
+    const auxData: Record<
+      string,
+      { id: string; name: string; field_values?: Record<string, string> }
+    > = {}
     for (const category of params.categories) {
       const dynamicFieldKey = `_${category.code}_id`
       const itemId = entry[dynamicFieldKey]
@@ -212,11 +362,24 @@ export function isCashFlowEnabledForAccountSet(db: Database, accountSetId: strin
   return row?.param_value === 'true'
 }
 
-export function accountRequiresCashFlowItem(account: {
-  require_cash_flow?: number | null
-  is_cash?: number | null
-  is_bank?: number | null
-} | null | undefined): boolean {
+/**
+ * 仅现金/银行科目需指定现金流量项目（FIX-021 评审更正 §P2-24）
+ *
+ * `accounts.require_cash_flow` 字段在 schema 中保留，但仅用于 ACD 导入兼容；
+ * 业务校验**有意只看 is_cash / is_bank**（与客户端 `accountNeedsCashFlowItem` 行为一致）。
+ * 单元测试 `voucherEntry.test.ts > 仅 require_cash_flow=1 且非现金/银行科目时不拦截`
+ * 锁定此契约，不应放宽。
+ */
+export function accountRequiresCashFlowItem(
+  account:
+    | {
+        require_cash_flow?: number | null
+        is_cash?: number | null
+        is_bank?: number | null
+      }
+    | null
+    | undefined
+): boolean {
   if (!account) return false
   return Number(account.is_cash) === 1 || Number(account.is_bank) === 1
 }
@@ -238,12 +401,14 @@ export function validateVoucherEntriesCashFlow(
 
   for (const entry of entries) {
     if (!entry.account_id || !entry.amount) continue
-    const account = accountStmt.get(entry.account_id, accountSetId) as {
-      name: string
-      require_cash_flow: number
-      is_cash: number
-      is_bank: number
-    } | undefined
+    const account = accountStmt.get(entry.account_id, accountSetId) as
+      | {
+          name: string
+          require_cash_flow: number
+          is_cash: number
+          is_bank: number
+        }
+      | undefined
     if (!account) continue
 
     const code = (entry.cash_flow_code || '').trim()
@@ -276,14 +441,14 @@ export function isAiSummaryEnabled(aiConfig: AiConfigLike | null | undefined) {
 
 export function buildAiSummaryEntryText(entries: AiSummaryEntryLike[]) {
   return entries
-    .map(entry => `${entry.account_name || ''}: ${entry.direction === 'debit' ? '借' : '贷'} ${entry.amount ?? ''}`)
+    .map(
+      entry =>
+        `${entry.account_name || ''}: ${entry.direction === 'debit' ? '借' : '贷'} ${entry.amount ?? ''}`
+    )
     .join('\n')
 }
 
-export function buildAiSummaryRequestBody(params: {
-  model?: string | null
-  entryText: string
-}) {
+export function buildAiSummaryRequestBody(params: { model?: string | null; entryText: string }) {
   return {
     model: params.model || 'gpt-3.5-turbo',
     messages: [
@@ -349,18 +514,96 @@ export function getEffectiveVoucherTypeId(params: {
   return firstType?.id || null
 }
 
-export function buildVoucherNo(params: {
-  year: number
-  period: number
-  maxNo?: number | null
-  typeName?: string
-}) {
+/** SQL 表达式：从 voucher_no 提取序号（兼容「记-001」与纯数字） */
+export const VOUCHER_NO_SEQ_SQL = `CAST(
+  CASE
+    WHEN INSTR(voucher_no, '-') > 0
+    THEN SUBSTR(voucher_no, INSTR(voucher_no, '-') + 1)
+    ELSE voucher_no
+  END
+  AS INTEGER
+)`
+
+export function parseVoucherNoSeq(voucherNo: string): number | null {
+  const dashIndex = voucherNo.indexOf('-')
+  const seqStr = dashIndex >= 0 ? voucherNo.substring(dashIndex + 1) : voucherNo
+  const seq = parseInt(seqStr, 10)
+  return Number.isNaN(seq) ? null : seq
+}
+
+export function buildVoucherNo(params: { maxNo?: number | null; typeName?: string }) {
+  const nextSeq = (params.maxNo || 0) + 1
   if (params.typeName) {
     // 取类型名称的第一个字作为简称，如"记账凭证"→"记"
     const shortName = params.typeName.charAt(0)
-    return `${shortName}-${String((params.maxNo || 0) + 1).padStart(3, '0')}`
+    return `${shortName}-${String(nextSeq).padStart(3, '0')}`
   }
-  return `${params.year}${String(params.period).padStart(2, '0')}-${String((params.maxNo || 0) + 1).padStart(4, '0')}`
+  // 无类型时使用纯序号，年月隔离由数据库唯一约束保证
+  return String(nextSeq)
+}
+
+/** 查询指定账套·年度·期间·凭证类型下的最大序号 */
+export function getMaxVoucherNoSeqInPeriod(params: {
+  db: {
+    prepare: (sql: string) => { get: (...args: any[]) => any }
+  }
+  accountSetId: string
+  year: number
+  period: number
+  voucherTypeId?: string | null
+}): number {
+  const row = params.db
+    .prepare(
+      `SELECT MAX(${VOUCHER_NO_SEQ_SQL}) as max_no
+       FROM vouchers
+       WHERE account_set_id=? AND year=? AND period=?
+         AND (voucher_type_id=? OR (voucher_type_id IS NULL AND ? IS NULL))`
+    )
+    .get(
+      params.accountSetId,
+      params.year,
+      params.period,
+      params.voucherTypeId ?? null,
+      params.voucherTypeId ?? null
+    ) as { max_no: number | null } | undefined
+
+  return row?.max_no ?? 0
+}
+
+/** 检测同账套·同年·同月·同类型下凭证号是否已被占用 */
+export function findVoucherNoConflict(params: {
+  db: {
+    prepare: (sql: string) => { get: (...args: any[]) => any }
+  }
+  accountSetId: string
+  year: number
+  period: number
+  voucherTypeId?: string | null
+  voucherNo: string
+  excludeId?: string
+}) {
+  const sql = params.excludeId
+    ? `SELECT id, voucher_no FROM vouchers
+       WHERE account_set_id=? AND year=? AND period=? AND voucher_no=?
+         AND (voucher_type_id=? OR (voucher_type_id IS NULL AND ? IS NULL))
+         AND id<>?
+       LIMIT 1`
+    : `SELECT id, voucher_no FROM vouchers
+       WHERE account_set_id=? AND year=? AND period=? AND voucher_no=?
+         AND (voucher_type_id=? OR (voucher_type_id IS NULL AND ? IS NULL))
+       LIMIT 1`
+
+  const args = [
+    params.accountSetId,
+    params.year,
+    params.period,
+    params.voucherNo,
+    params.voucherTypeId ?? null,
+    params.voucherTypeId ?? null,
+  ]
+  if (params.excludeId) args.push(params.excludeId)
+
+  return params.db.prepare(sql).get(...args) as { id: string; voucher_no: string } | undefined
 }
 
 export function getNextVoucherNo(params: {
@@ -389,33 +632,20 @@ export function getNextVoucherNo(params: {
     typeName = type?.name || null
   }
 
-  // 提取序号：统一取横线后的数字部分（新旧格式均适用）
-  // 注意：按年度+期间查询，避免跨期间编号重复
-  const row = params.db
-    .prepare(
-      `SELECT MAX(
-        CAST(
-          CASE
-            WHEN INSTR(voucher_no, '-') > 0
-            THEN SUBSTR(voucher_no, INSTR(voucher_no, '-') + 1)
-            ELSE voucher_no
-          END
-          AS INTEGER
-        )
-      ) as max_no
-      FROM vouchers
-      WHERE account_set_id=? AND year=? AND period=? 
-        AND (voucher_type_id=? OR (voucher_type_id IS NULL AND ? IS NULL))`
-    )
-    .get(params.accountSetId, params.year, params.period, effectiveTypeId, effectiveTypeId) as any
+  // 按账套 + 年度 + 期间 + 凭证类型隔离编号，新期间从 1 重新开始
+  const maxNo = getMaxVoucherNoSeqInPeriod({
+    db: params.db,
+    accountSetId: params.accountSetId,
+    year: params.year,
+    period: params.period,
+    voucherTypeId: effectiveTypeId,
+  })
 
   return {
     effectiveTypeId,
     typeName,
     voucherNo: buildVoucherNo({
-      year: params.year,
-      period: params.period,
-      maxNo: row?.max_no,
+      maxNo,
       typeName: typeName || undefined,
     }),
   }
@@ -440,7 +670,9 @@ export function getVoucherEntries(params: {
   }
   voucherId: string
 }) {
-  return params.db.prepare('SELECT * FROM voucher_entries WHERE voucher_id=? ORDER BY seq').all(params.voucherId) as any[]
+  return params.db
+    .prepare('SELECT * FROM voucher_entries WHERE voucher_id=? ORDER BY seq')
+    .all(params.voucherId) as any[]
 }
 
 export function getVoucherDetail(params: {
@@ -503,7 +735,9 @@ export function replaceVoucherEntries(params: {
   })
 }
 
-export function buildVoucherEntriesMap(entries: Array<{ voucher_id: string } & Record<string, any>>) {
+export function buildVoucherEntriesMap(
+  entries: Array<{ voucher_id: string } & Record<string, any>>
+) {
   const entriesMap: Record<string, any[]> = {}
   for (const entry of entries) {
     if (!entriesMap[entry.voucher_id]) entriesMap[entry.voucher_id] = []
@@ -512,7 +746,10 @@ export function buildVoucherEntriesMap(entries: Array<{ voucher_id: string } & R
   return entriesMap
 }
 
-export function attachVoucherEntries<T extends { id: string }>(vouchers: T[], entriesMap: Record<string, any[]>) {
+export function attachVoucherEntries<T extends { id: string }>(
+  vouchers: T[],
+  entriesMap: Record<string, any[]>
+) {
   return vouchers.map(voucher => ({
     ...voucher,
     entries: entriesMap[voucher.id] || [],
@@ -564,12 +801,8 @@ export function buildNoNegativeBalanceSummaryMessage(
   if (violations.length === 1) {
     const v = violations[0]
     const auxPart =
-      v.auxCategoryName && v.auxItemName
-        ? `核算项目【${v.auxCategoryName}：${v.auxItemName}】`
-        : ''
-    const hint = v.constraintAccountName
-      ? `（受上级科目【${v.constraintAccountName}】约束）`
-      : ''
+      v.auxCategoryName && v.auxItemName ? `核算项目【${v.auxCategoryName}：${v.auxItemName}】` : ''
+    const hint = v.constraintAccountName ? `（受上级科目【${v.constraintAccountName}】约束）` : ''
     return `科目【${v.accountName}】${auxPart}${hint}余额不允许为负数，保存后余额将为 ${v.projectedBalance.toFixed(2)}`
   }
   return `共 ${violations.length} 项核算余额保存后将变为负数，无法保存凭证`
@@ -586,12 +819,8 @@ export function createRealtimeNoNegativeBalanceGetters(
   }
 ) {
   const categoryCodeById = new Map(params.categories.map(c => [c.id, c.code]))
-  const categoryNameByCode = new Map(
-    params.categories.map(c => [c.code, c.name?.trim() || c.code])
-  )
-  const itemNameStmt = db.prepare(
-    'SELECT name FROM aux_items WHERE id=? AND account_set_id=?'
-  )
+  const categoryNameByCode = new Map(params.categories.map(c => [c.code, c.name?.trim() || c.code]))
+  const itemNameStmt = db.prepare('SELECT name FROM aux_items WHERE id=? AND account_set_id=?')
 
   return {
     getBalanceByAccountId(accountId: string) {
@@ -645,7 +874,9 @@ export function validateVoucherEntriesNoNegativeBalance(params: {
   getAuxBalanceByCategory?: (accountId: string, categoryCode: string, itemId: string) => number
   getAuxCategoryName?: (categoryCode: string) => string
   getAuxItemName?: (categoryCode: string, itemId: string) => string
-  getEnabledCategoryCodesForAccount?: (account: NoNegativeAccountLike & { aux_types?: unknown }) => string[]
+  getEnabledCategoryCodesForAccount?: (
+    account: NoNegativeAccountLike & { aux_types?: unknown }
+  ) => string[]
 }): NoNegativeBalanceCheckResult | null {
   // 缓存"约束源"：科目自身或最近的祖先中 no_negative=1 的科目；找不到返回 null
   const constraintCache = new Map<string, NoNegativeAccountLike | null>()
@@ -702,10 +933,8 @@ export function validateVoucherEntriesNoNegativeBalance(params: {
       const selections = extractEntryAuxSelections(entry, categoryCodes)
       for (const sel of selections) {
         const auxKey = `${entry.account_id}|${sel.categoryCode}|${sel.itemId}`
-        const auxCategoryName =
-          params.getAuxCategoryName?.(sel.categoryCode) || sel.categoryCode
-        const auxItemName =
-          params.getAuxItemName?.(sel.categoryCode, sel.itemId) || sel.itemId
+        const auxCategoryName = params.getAuxCategoryName?.(sel.categoryCode) || sel.categoryCode
+        const auxItemName = params.getAuxItemName?.(sel.categoryCode, sel.itemId) || sel.itemId
         if (!balanceByAux.has(auxKey)) {
           balanceByAux.set(auxKey, {
             account,
@@ -824,9 +1053,11 @@ export function loadVoucherAuxiliaryData(params: {
     .prepare('SELECT id, code, name FROM aux_categories WHERE account_set_id=?')
     .all(params.accountSetId) as AuxCategoryLike[]
   // 为每个类别加载字段配置
-  const fieldsStmt = params.db.prepare('SELECT * FROM aux_category_fields WHERE category_id=? AND is_enabled=1 ORDER BY sort_order')
+  const fieldsStmt = params.db.prepare(
+    'SELECT * FROM aux_category_fields WHERE category_id=? AND is_enabled=1 ORDER BY sort_order'
+  )
   for (const cat of categories) {
-    (cat as any).fields = fieldsStmt.all(cat.id)
+    ;(cat as any).fields = fieldsStmt.all(cat.id)
   }
   const items = params.db
     .prepare('SELECT id, type, name FROM aux_items WHERE account_set_id=?')
@@ -881,7 +1112,9 @@ export function openPeriod(params: {
   period: string | number
 }) {
   params.db
-    .prepare(`UPDATE period_closing SET status='open' WHERE account_set_id=? AND year=? AND period=?`)
+    .prepare(
+      `UPDATE period_closing SET status='open' WHERE account_set_id=? AND year=? AND period=?`
+    )
     .run(params.accountSetId, params.year, params.period)
 }
 
@@ -922,13 +1155,21 @@ export function applyVoucherAudit(params: {
   userName?: string | null
 }) {
   params.db
-    .prepare("UPDATE vouchers SET status=?, auditor_id=?, auditor_name=?, updated_at=datetime('now') WHERE id=?")
+    .prepare(
+      "UPDATE vouchers SET status=?, auditor_id=?, auditor_name=?, updated_at=datetime('now') WHERE id=?"
+    )
     .run('audited', params.userId, params.userName, params.voucherId)
 }
 
 export function validateVoucherForUnAudit(voucher: { status?: string } | null | undefined) {
-  if (voucher?.status === 'posted') {
+  if (!voucher) {
+    return '凭证不存在'
+  }
+  if (voucher.status === 'posted') {
     return '已记账凭证无法反审核'
+  }
+  if (voucher.status !== 'audited') {
+    return '只能反审核已审核状态的凭证'
   }
   return null
 }
@@ -940,7 +1181,9 @@ export function applyVoucherUnAudit(params: {
   voucherId: string
 }) {
   params.db
-    .prepare("UPDATE vouchers SET status=?, auditor_id=NULL, auditor_name=NULL, updated_at=datetime('now') WHERE id=?")
+    .prepare(
+      "UPDATE vouchers SET status=?, auditor_id=NULL, auditor_name=NULL, updated_at=datetime('now') WHERE id=?"
+    )
     .run('draft', params.voucherId)
 }
 
@@ -951,15 +1194,19 @@ export function getBatchVoucherQuery(params: {
   endDate?: string
   startNo?: string
   endNo?: string
+  accountScope?: AccountScopeContext
 }) {
-  return buildBatchVoucherQuery({
-    voucherTypeIds: params.voucherTypeIds,
-    accountSetId: params.accountSetId,
-    startDate: params.startDate || '',
-    endDate: params.endDate || '',
-    startNo: params.startNo,
-    endNo: params.endNo,
-  })
+  return buildBatchVoucherQuery(
+    {
+      voucherTypeIds: params.voucherTypeIds,
+      accountSetId: params.accountSetId,
+      startDate: params.startDate || '',
+      endDate: params.endDate || '',
+      startNo: params.startNo,
+      endNo: params.endNo,
+    },
+    params.accountScope
+  )
 }
 
 export function loadBatchDraftVouchers(params: {
@@ -967,6 +1214,7 @@ export function loadBatchDraftVouchers(params: {
     prepare: (sql: string) => { all: (...args: any[]) => any[] }
   }
   accountSetId: string
+  accountScope?: AccountScopeContext
   filters: {
     voucherTypeIds: string[]
     startDate?: string
@@ -982,6 +1230,7 @@ export function loadBatchDraftVouchers(params: {
     endDate: params.filters.endDate,
     startNo: params.filters.startNo,
     endNo: params.filters.endNo,
+    accountScope: params.accountScope,
   })
   return getBatchDraftVouchers({
     db: params.db,
@@ -995,6 +1244,7 @@ export function loadBatchFilteredVouchers(params: {
     prepare: (sql: string) => { all: (...args: any[]) => any[] }
   }
   accountSetId: string
+  accountScope?: AccountScopeContext
   filters: {
     voucherTypeIds: string[]
     startDate?: string
@@ -1010,6 +1260,7 @@ export function loadBatchFilteredVouchers(params: {
     endDate: params.filters.endDate,
     startNo: params.filters.startNo,
     endNo: params.filters.endNo,
+    accountScope: params.accountScope,
   })
   return loadBatchVouchers({
     db: params.db,
@@ -1095,18 +1346,24 @@ export function auditBatchVouchers(params: {
   const auditBatch = params.db.transaction(() => {
     for (const voucher of params.vouchers) {
       params.db
-        .prepare("UPDATE vouchers SET status=?, auditor_id=?, auditor_name=?, updated_at=datetime('now') WHERE id=?")
+        .prepare(
+          "UPDATE vouchers SET status=?, auditor_id=?, auditor_name=?, updated_at=datetime('now') WHERE id=?"
+        )
         .run('audited', params.userId, params.userName, voucher.id)
     }
   })
   auditBatch()
 }
 
-export function findPostedVoucher(vouchers: Array<{ status?: string; voucher_no?: string | null }>) {
+export function findPostedVoucher(
+  vouchers: Array<{ status?: string; voucher_no?: string | null }>
+) {
   return vouchers.find(v => v.status === 'posted')
 }
 
-export function buildBatchDeletePreviewData(vouchers: Array<{ status?: string; voucher_no?: string | null }>) {
+export function buildBatchDeletePreviewData(
+  vouchers: Array<{ status?: string; voucher_no?: string | null }>
+) {
   const postedVoucher = findPostedVoucher(vouchers)
   return {
     count: vouchers.length,
@@ -1117,10 +1374,7 @@ export function buildBatchDeletePreviewData(vouchers: Array<{ status?: string; v
   }
 }
 
-export function deleteBatchVouchers(params: {
-  db: Database
-  vouchers: Array<{ id: string }>
-}) {
+export function deleteBatchVouchers(params: { db: Database; vouchers: Array<{ id: string }> }) {
   const removeBatch = params.db.transaction(() => {
     for (const voucher of params.vouchers) {
       deleteVoucherRecords(params.db, voucher.id)
@@ -1153,4 +1407,46 @@ export function deleteVoucherRecords(db: Database, voucherId: string) {
   })
 
   transaction()
+}
+
+export interface BatchVoucherOperationResult {
+  id: string
+  voucher_no: string
+  success: boolean
+  error?: string
+}
+
+/** 批量凭证操作统一响应：支持部分成功，全部失败时返回 400 */
+export function sendBatchVoucherOperationResponse(
+  res: {
+    status: (code: number) => { json: (body: unknown) => unknown }
+    json: (body: unknown) => unknown
+  },
+  operationLabel: string,
+  voucherIds: string[],
+  results: BatchVoucherOperationResult[]
+) {
+  const successCount = results.filter(r => r.success).length
+  const failCount = results.filter(r => !r.success).length
+  const data = {
+    total: voucherIds.length,
+    success: successCount,
+    fail: failCount,
+    details: results,
+  }
+
+  if (successCount === 0 && failCount > 0) {
+    const firstError = results.find(r => !r.success)?.error || `${operationLabel}失败`
+    return res.status(400).json({
+      code: 400,
+      message: `批量${operationLabel}失败：${firstError}（共 ${failCount} 张全部失败）`,
+      data,
+    })
+  }
+
+  return res.json({
+    code: 0,
+    message: `批量${operationLabel}完成：成功 ${successCount} 张，失败 ${failCount} 张`,
+    data,
+  })
 }

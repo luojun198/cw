@@ -1,4 +1,9 @@
 import type Database from 'better-sqlite3'
+import {
+  buildVoucherAllEntriesInScopeSql,
+  type AccountScopeContext,
+} from './accountAuthorization.js'
+import { MAX_PAGE_SIZE, parsePageSizeParam } from '../utils/listLimits.js'
 
 export interface VoucherListFilters {
   accountSetId: string
@@ -18,9 +23,15 @@ export interface VoucherListFilters {
   auxFields?: Record<string, string>
   sortField?: string
   sortOrder?: string
+  minAmount?: number
+  maxAmount?: number
+  makerName?: string
+  auditorName?: string
+  posterName?: string
   // 游标分页参数
   cursor?: string // 上次查询的最后一条记录的游标（base64 编码的 JSON）
   useCursor?: boolean // 是否使用游标分页
+  accountScope?: AccountScopeContext
 }
 
 export interface BatchVoucherQueryFilters {
@@ -32,14 +43,17 @@ export interface BatchVoucherQueryFilters {
   endNo?: string | number | null
 }
 
-export function buildBatchVoucherQuery({
-  voucherTypeIds,
-  accountSetId,
-  startDate,
-  endDate,
-  startNo,
-  endNo,
-}: BatchVoucherQueryFilters) {
+export function buildBatchVoucherQuery(
+  {
+    voucherTypeIds,
+    accountSetId,
+    startDate,
+    endDate,
+    startNo,
+    endNo,
+  }: BatchVoucherQueryFilters,
+  accountScope?: AccountScopeContext
+) {
   const placeholders = voucherTypeIds.map(() => '?').join(',')
   const conditions = [
     'account_set_id=?',
@@ -62,11 +76,26 @@ export function buildBatchVoucherQuery({
     params.push(Number(endNo))
   }
 
+  let scopeSql = ''
+  const scopeParams: string[] = []
+  if (accountScope) {
+    const scope = buildVoucherAllEntriesInScopeSql(accountScope, 'vouchers.id', accountSetId)
+    scopeSql = ` AND (${scope.sql})`
+    scopeParams.push(...scope.params)
+  }
+
   return {
-    sql: `SELECT id, voucher_no, status, maker_id FROM vouchers WHERE ${conditions.join(' AND ')} ORDER BY voucher_date ASC, voucher_no ASC`,
-    params,
+    sql: `SELECT id, voucher_no, status, maker_id FROM vouchers WHERE ${conditions.join(' AND ')}${scopeSql} ORDER BY voucher_date ASC, voucher_no ASC`,
+    params: [...params, ...scopeParams],
   }
 }
+
+/** 与 baseVoucherType 列表一致的凭证类型编码排序前缀（vt 别名需已 JOIN） */
+export const VOUCHER_TYPE_ORDER_BY_SQL = `
+  CASE WHEN vt.code IS NOT NULL AND vt.code != '' AND vt.code NOT GLOB '*[^0-9]*' THEN 0 ELSE 1 END ASC,
+  CASE WHEN vt.code IS NOT NULL AND vt.code != '' AND vt.code NOT GLOB '*[^0-9]*' THEN CAST(vt.code AS INTEGER) END ASC,
+  COALESCE(vt.code, '') COLLATE NOCASE ASC,
+  COALESCE(vt.sort_order, 0) ASC`.trim()
 
 export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.Database) {
   const conditions = ['v.account_set_id = ?']
@@ -119,16 +148,24 @@ export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.
     const ftsQuery = rawKeyword.endsWith('*') ? rawKeyword : `${rawKeyword}*`
 
     // 从 FTS5 表中搜索匹配的凭证 ID
-    const voucherFtsResults = db.prepare(`
+    const voucherFtsResults = db
+      .prepare(
+        `
       SELECT DISTINCT voucher_id FROM vouchers_fts
       WHERE vouchers_fts MATCH ?
-    `).all(ftsQuery) as Array<{ voucher_id: number }>
+    `
+      )
+      .all(ftsQuery) as Array<{ voucher_id: number }>
 
     // 从分录 FTS5 表中搜索匹配的凭证 ID
-    const entryFtsResults = db.prepare(`
+    const entryFtsResults = db
+      .prepare(
+        `
       SELECT DISTINCT voucher_id FROM voucher_entries_fts
       WHERE voucher_entries_fts MATCH ?
-    `).all(ftsQuery) as Array<{ voucher_id: number }>
+    `
+      )
+      .all(ftsQuery) as Array<{ voucher_id: number }>
 
     // 合并两个结果集
     const matchedVoucherIds = new Set<number>()
@@ -155,7 +192,9 @@ export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.
   // 科目多选筛选
   if (filters.accountIds && filters.accountIds.length > 0) {
     const placeholders = filters.accountIds.map(() => '?').join(',')
-    conditions.push(`EXISTS (SELECT 1 FROM voucher_entries WHERE voucher_id=v.id AND account_id IN (${placeholders}))`)
+    conditions.push(
+      `EXISTS (SELECT 1 FROM voucher_entries WHERE voucher_id=v.id AND account_id IN (${placeholders}))`
+    )
     params.push(...filters.accountIds)
   }
 
@@ -170,8 +209,8 @@ export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.
   // filters.auxItems 的 key 已经是 categoryCode（在路由层转换）
   if (filters.auxItems) {
     for (let [categoryCode, itemIds] of Object.entries(filters.auxItems)) {
-        categoryCode = (categoryCode || '').replace(/[^a-zA-Z0-9_]/g, '')
-        if (!categoryCode) continue
+      categoryCode = (categoryCode || '').replace(/[^a-zA-Z0-9_]/g, '')
+      if (!categoryCode) continue
       if (itemIds && Array.isArray(itemIds) && itemIds.length > 0) {
         const placeholders = itemIds.map(() => '?').join(',')
         conditions.push(
@@ -207,6 +246,40 @@ export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.
     }
   }
 
+  // 金额范围筛选
+  if (filters.minAmount !== undefined && filters.minAmount !== null) {
+    conditions.push('v.total_amount >= ?')
+    params.push(filters.minAmount)
+  }
+  if (filters.maxAmount !== undefined && filters.maxAmount !== null) {
+    conditions.push('v.total_amount <= ?')
+    params.push(filters.maxAmount)
+  }
+
+  // 经办人筛选（模糊匹配）
+  if (filters.makerName) {
+    conditions.push('v.maker_name LIKE ?')
+    params.push(`%${filters.makerName}%`)
+  }
+  if (filters.auditorName) {
+    conditions.push('v.auditor_name LIKE ?')
+    params.push(`%${filters.auditorName}%`)
+  }
+  if (filters.posterName) {
+    conditions.push('v.poster_name LIKE ?')
+    params.push(`%${filters.posterName}%`)
+  }
+
+  if (filters.accountScope) {
+    const scope = buildVoucherAllEntriesInScopeSql(
+      filters.accountScope,
+      'v.id',
+      filters.accountSetId
+    )
+    conditions.push(`(${scope.sql})`)
+    params.push(...scope.params)
+  }
+
   const whereClause = `WHERE ${conditions.join(' AND ')}`
 
   // 动态排序：仅允许安全字段，防止 SQL 注入
@@ -214,12 +287,14 @@ export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.
     voucher_date: 'v.voucher_date',
     voucher_no: 'v.voucher_no',
     created_at: 'v.created_at',
-    debit_amount: 'COALESCE((SELECT SUM(amount) FROM voucher_entries WHERE voucher_id=v.id AND direction=\'debit\'), 0)',
-    credit_amount: 'COALESCE((SELECT SUM(amount) FROM voucher_entries WHERE voucher_id=v.id AND direction=\'credit\'), 0)',
+    debit_amount:
+      "COALESCE((SELECT SUM(amount) FROM voucher_entries WHERE voucher_id=v.id AND direction='debit'), 0)",
+    credit_amount:
+      "COALESCE((SELECT SUM(amount) FROM voucher_entries WHERE voucher_id=v.id AND direction='credit'), 0)",
   }
   const sortExpr = allowedSortFields[filters.sortField || 'voucher_date'] || 'v.voucher_date'
   const sortDir = filters.sortOrder === 'asc' ? 'ASC' : 'DESC'
-  const orderBy = `ORDER BY ${sortExpr} ${sortDir}, v.voucher_no ASC`
+  const orderBy = `ORDER BY ${VOUCHER_TYPE_ORDER_BY_SQL}, ${sortExpr} ${sortDir}, v.voucher_no ASC`
 
   // 游标分页支持
   let cursorCondition = ''
@@ -242,14 +317,16 @@ export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.
 
   const finalWhereClause = whereClause + cursorCondition
 
-  // pageSize 为 -1 时返回全部，不加 LIMIT/OFFSET
-  const isAll = filters.pageSize === -1
-  // 游标分页只需要 LIMIT，不需要 OFFSET
-  const limitClause = isAll ? '' : (filters.useCursor ? '\n      LIMIT ?' : '\n      LIMIT ? OFFSET ?')
+  const effectivePageSize = parsePageSizeParam(filters.pageSize, 50)
+  const limitClause = filters.useCursor
+    ? '\n      LIMIT ?'
+    : '\n      LIMIT ? OFFSET ?'
 
   // 条件性 JOIN：仅在需要分录级过滤时才 JOIN voucher_entries
   // 这样可以避免 5x 行膨胀和 DISTINCT 开销
-  const entryJoinClause = needsEntryJoin ? 'LEFT JOIN voucher_entries ve ON v.id = ve.voucher_id' : ''
+  const entryJoinClause = needsEntryJoin
+    ? 'LEFT JOIN voucher_entries ve ON v.id = ve.voucher_id'
+    : ''
   const distinctClause = needsEntryJoin ? 'DISTINCT' : ''
 
   return {
@@ -265,10 +342,8 @@ export function buildVoucherListQuery(filters: VoucherListFilters, db: Database.
       ${orderBy}${limitClause}
     `,
     countParams: params.slice(0, params.length - (filters.useCursor && filters.cursor ? 3 : 0)),
-    listParams: isAll
-      ? params
-      : (filters.useCursor
-          ? [...params, filters.pageSize]
-          : [...params, filters.pageSize, (filters.page - 1) * filters.pageSize]),
+    listParams: filters.useCursor
+      ? [...params, effectivePageSize]
+      : [...params, effectivePageSize, (filters.page - 1) * effectivePageSize],
   }
 }

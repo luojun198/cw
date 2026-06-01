@@ -85,6 +85,16 @@ CREATE TABLE IF NOT EXISTS operation_logs (
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- 软件授权激活表（单机单条记录）
+CREATE TABLE IF NOT EXISTS license_activation (
+  id TEXT PRIMARY KEY DEFAULT 'default',
+  machine_id TEXT NOT NULL,
+  expires_at TEXT NOT NULL,
+  activated_at TEXT NOT NULL,
+  license_token TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 -- 系统参数表
 CREATE TABLE IF NOT EXISTS system_params (
   id TEXT PRIMARY KEY,
@@ -470,8 +480,18 @@ CREATE INDEX IF NOT EXISTS idx_voucher_entries_account ON voucher_entries(accoun
 CREATE INDEX IF NOT EXISTS idx_account_balances_period ON account_balances(account_set_id, year, period);
 CREATE INDEX IF NOT EXISTS idx_auto_transfer_runs_period ON auto_transfer_runs(account_set_id, year, period, transfer_type);
 CREATE INDEX IF NOT EXISTS idx_aux_items_type ON aux_items(account_set_id, type);
+CREATE INDEX IF NOT EXISTS idx_aux_items_list ON aux_items(account_set_id, type, status, code);
+CREATE INDEX IF NOT EXISTS idx_aux_items_type_name ON aux_items(account_set_id, type, name);
 CREATE INDEX IF NOT EXISTS idx_aux_category_fields_category ON aux_category_fields(category_id, sort_order);
 CREATE INDEX IF NOT EXISTS idx_init_balances ON init_balances(account_set_id, year, period);
+CREATE INDEX IF NOT EXISTS idx_init_balances_aux_item ON init_balances(account_set_id, aux_item_id) WHERE aux_item_id != '';
+CREATE INDEX IF NOT EXISTS idx_account_balances_account_cum ON account_balances(account_set_id, year, account_id, period);
+CREATE INDEX IF NOT EXISTS idx_account_balances_aux ON account_balances(account_set_id, account_id, aux_item_id, year, period);
+CREATE INDEX IF NOT EXISTS idx_voucher_entries_dept ON voucher_entries(account_set_id, dept_id) WHERE dept_id IS NOT NULL AND dept_id != '';
+CREATE INDEX IF NOT EXISTS idx_voucher_entries_project ON voucher_entries(account_set_id, project_id) WHERE project_id IS NOT NULL AND project_id != '';
+CREATE INDEX IF NOT EXISTS idx_voucher_entries_supplier ON voucher_entries(account_set_id, supplier_id) WHERE supplier_id IS NOT NULL AND supplier_id != '';
+CREATE INDEX IF NOT EXISTS idx_voucher_entries_person ON voucher_entries(account_set_id, person_id) WHERE person_id IS NOT NULL AND person_id != '';
+CREATE INDEX IF NOT EXISTS idx_voucher_entries_func_class ON voucher_entries(account_set_id, func_class_id) WHERE func_class_id IS NOT NULL AND func_class_id != '';
 CREATE INDEX IF NOT EXISTS idx_operation_logs_user ON operation_logs(account_set_id, user_id);
 CREATE INDEX IF NOT EXISTS idx_operation_logs_time ON operation_logs(account_set_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_budget_surplus_adjustments_period

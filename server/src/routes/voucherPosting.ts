@@ -10,8 +10,10 @@ import {
   validateVoucherCanPost,
   validateVoucherForUnpost,
 } from '../services/voucherPosting.js'
-import { getVoucherById, getPeriodClosingRecord, isPeriodClosed } from '../services/voucherEntry.js'
+import { getVoucherById, getPeriodClosingRecord, isPeriodClosed, sendBatchVoucherOperationResponse } from '../services/voucherEntry.js'
+import { isVoucherVisibleInAccountScope } from '../services/accountAuthorization.js'
 import { checkPostingIntegrity } from '../services/postingIntegrityCheck.js'
+import { validateInitBalanceBalancedForYears } from '../services/initBalanceTrial.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -23,6 +25,12 @@ router.post('/vouchers/:id/post', requirePermission('voucher:post'), operationLo
   const db = getDb()
   const voucher = getVoucherById({ db, voucherId: id })
   if (!voucher) {
+    return res.status(404).json({ code: 404, message: '凭证不存在' })
+  }
+  if (
+    req.accountScope &&
+    !isVoucherVisibleInAccountScope(db, req.accountScope, id, req.accountSetId || '')
+  ) {
     return res.status(404).json({ code: 404, message: '凭证不存在' })
   }
 
@@ -108,6 +116,157 @@ router.post('/vouchers/:id/post', requirePermission('voucher:post'), operationLo
   })
 })
 
+function loadPostingSystemParams(db: ReturnType<typeof getDb>, accountSetId: string) {
+  const requireAudit = db
+    .prepare(
+      `SELECT param_value FROM system_params WHERE account_set_id=? AND param_key='require_audit'`
+    )
+    .get(accountSetId) as any
+
+  const allowDirectPost = db
+    .prepare(
+      `SELECT param_value FROM system_params WHERE account_set_id=? AND param_key='allow_direct_post'`
+    )
+    .get(accountSetId) as any
+
+  return {
+    requireAuditEnabled: getRequireAuditEnabled(requireAudit),
+    allowDirectPostEnabled: getAllowDirectPost(allowDirectPost),
+  }
+}
+
+// 批量记账（按 voucherIds；条件筛选由 voucherBatch 路由处理）
+router.post(
+  '/vouchers/batch-post',
+  requirePermission('voucher:post'),
+  operationLog('批量记账凭证', '凭证管理'),
+  (req: AuthRequest, res, next) => {
+    const { voucherIds } = req.body
+
+    if (!Array.isArray(voucherIds)) {
+      return next()
+    }
+
+    if (voucherIds.length === 0) {
+      return res.status(400).json({ code: 400, message: '请选择要记账的凭证' })
+    }
+
+    // FIX-014 / P1-13：批量上限从 100 提至 1000
+    if (voucherIds.length > 1000) {
+      return res.status(400).json({ code: 400, message: '单次最多记账 1000 张凭证，请分批操作或改用筛选模式' })
+    }
+
+    const db = getDb()
+    const accountSetId = req.accountSetId || ''
+    const { requireAuditEnabled, allowDirectPostEnabled } = loadPostingSystemParams(db, accountSetId)
+
+    const yearsToCheck = new Set<number>()
+    for (const id of voucherIds) {
+      const voucher = getVoucherById({ db, voucherId: id })
+      if (voucher?.year) yearsToCheck.add(voucher.year)
+    }
+    const initBalanceError = validateInitBalanceBalancedForYears(db, accountSetId, yearsToCheck)
+    if (initBalanceError) {
+      return res.status(400).json({
+        code: 400,
+        message: initBalanceError,
+        data: {
+          total: voucherIds.length,
+          success: 0,
+          fail: voucherIds.length,
+          details: [],
+          initBalanceBlocked: true,
+        },
+      })
+    }
+
+    const results: Array<{ id: string; voucher_no: string; success: boolean; error?: string }> = []
+
+    for (const id of voucherIds) {
+      try {
+        const voucher = getVoucherById({ db, voucherId: id })
+        const voucherNo = voucher?.voucher_no || id
+
+        if (!voucher) {
+          results.push({ id, voucher_no: voucherNo, success: false, error: '凭证不存在' })
+          continue
+        }
+        if (
+          req.accountScope &&
+          !isVoucherVisibleInAccountScope(db, req.accountScope, id, accountSetId)
+        ) {
+          results.push({ id, voucher_no: voucherNo, success: false, error: '凭证不存在' })
+          continue
+        }
+
+        const postValidationError = validateVoucherCanPost(
+          voucher,
+          requireAuditEnabled,
+          allowDirectPostEnabled
+        )
+        if (postValidationError) {
+          results.push({ id, voucher_no: voucherNo, success: false, error: postValidationError })
+          continue
+        }
+
+        const closingRecord = getPeriodClosingRecord({
+          db,
+          accountSetId,
+          year: voucher.year,
+          period: voucher.period,
+        })
+        if (isPeriodClosed(closingRecord)) {
+          results.push({
+            id,
+            voucher_no: voucherNo,
+            success: false,
+            error: `${voucher.year}年${voucher.period}期已结账，不能记账`,
+          })
+          continue
+        }
+
+        const entries = loadVoucherEntries(db, id)
+        const integrityCheck = checkPostingIntegrity(
+          db,
+          accountSetId,
+          voucher.year,
+          voucher.period,
+          entries
+        )
+        if (!integrityCheck.isValid) {
+          results.push({
+            id,
+            voucher_no: voucherNo,
+            success: false,
+            error: integrityCheck.errors.join('；'),
+          })
+          continue
+        }
+
+        applyVoucherPosting(db, voucher, entries, {
+          accountSetId,
+          userId: req.userId,
+          userName: req.userName,
+          requireAudit: requireAuditEnabled,
+          allowDirectPost: allowDirectPostEnabled,
+        })
+
+        results.push({ id, voucher_no: voucherNo, success: true })
+      } catch (error: any) {
+        const voucher = getVoucherById({ db, voucherId: id })
+        results.push({
+          id,
+          voucher_no: voucher?.voucher_no || id,
+          success: false,
+          error: error.message || '记账失败',
+        })
+      }
+    }
+
+    return sendBatchVoucherOperationResponse(res, '记账', voucherIds, results)
+  }
+)
+
 router.post(
   '/vouchers/:id/unpost',
   requirePermission('voucher:unpost'),
@@ -158,73 +317,85 @@ router.post(
   }
 )
 
-// 批量反记账
+// 批量反记账（按 voucherIds；条件筛选由 voucherBatch 路由处理）
 router.post(
   '/vouchers/batch-unpost',
+  requirePermission('voucher:unpost'),
   operationLog('批量反记账凭证', '凭证管理'),
-  (req: AuthRequest, res) => {
+  (req: AuthRequest, res, next) => {
     const { voucherIds } = req.body
 
-    if (!Array.isArray(voucherIds) || voucherIds.length === 0) {
+    if (!Array.isArray(voucherIds)) {
+      return next()
+    }
+
+    if (voucherIds.length === 0) {
       return res.status(400).json({ code: 400, message: '请选择要反记账的凭证' })
     }
 
-    if (voucherIds.length > 100) {
-      return res.status(400).json({ code: 400, message: '单次最多反记账100张凭证' })
+    // FIX-014 / P1-13：批量上限从 100 提至 1000
+    if (voucherIds.length > 1000) {
+      return res.status(400).json({ code: 400, message: '单次最多反记账 1000 张凭证，请分批操作' })
     }
 
     const db = getDb()
-    const requireAudit = db
-      .prepare(
-        `SELECT param_value FROM system_params WHERE account_set_id=? AND param_key='require_audit'`
-      )
-      .get(req.accountSetId) as any
-
-    const allowDirectPost = db
-      .prepare(
-        `SELECT param_value FROM system_params WHERE account_set_id=? AND param_key='allow_direct_post'`
-      )
-      .get(req.accountSetId) as any
-
-    const results: Array<{ id: string; success: boolean; error?: string }> = []
+    const accountSetId = req.accountSetId || ''
+    const { requireAuditEnabled, allowDirectPostEnabled } = loadPostingSystemParams(db, accountSetId)
+    const results: Array<{ id: string; voucher_no: string; success: boolean; error?: string }> = []
 
     for (const id of voucherIds) {
       try {
         const voucher = getVoucherById({ db, voucherId: id })
+        const voucherNo = voucher?.voucher_no || id
         const validationError = validateVoucherForUnpost(voucher)
 
         if (validationError) {
-          results.push({ id, success: false, error: validationError })
+          results.push({ id, voucher_no: voucherNo, success: false, error: validationError })
+          continue
+        }
+
+        const closingRecord = getPeriodClosingRecord({
+          db,
+          accountSetId,
+          year: voucher!.year,
+          period: voucher!.period,
+        })
+        if (isPeriodClosed(closingRecord)) {
+          results.push({
+            id,
+            voucher_no: voucherNo,
+            success: false,
+            error: `${voucher!.year}年${voucher!.period}期已结账，不能反记账`,
+          })
           continue
         }
 
         const entries = loadVoucherEntries(db, id)
-        applyVoucherUnpost(db, voucher, entries, {
-          accountSetId: req.accountSetId || '',
-          requireAudit: getRequireAuditEnabled(requireAudit),
-          allowDirectPost: getAllowDirectPost(allowDirectPost),
+        applyVoucherUnpost(db, voucher!, entries, {
+          accountSetId,
+          requireAudit: requireAuditEnabled,
+          allowDirectPost: allowDirectPostEnabled,
         })
 
-        results.push({ id, success: true })
+        results.push({ id, voucher_no: voucherNo, success: true })
       } catch (error: any) {
-        results.push({ id, success: false, error: error.message || '反记账失败' })
+        const voucher = getVoucherById({ db, voucherId: id })
+        results.push({
+          id,
+          voucher_no: voucher?.voucher_no || id,
+          success: false,
+          error: error.message || '反记账失败',
+        })
       }
     }
 
-    const successCount = results.filter(r => r.success).length
-    const failCount = results.filter(r => !r.success).length
-
-    res.json({
-      code: 0,
-      message: `批量反记账完成：成功 ${successCount} 张，失败 ${failCount} 张`,
-      data: {
-        total: voucherIds.length,
-        success: successCount,
-        fail: failCount,
-        details: results,
-      },
-    })
+    return sendBatchVoucherOperationResponse(res, '反记账', voucherIds, results)
   }
 )
 
 export default router
+
+
+
+
+

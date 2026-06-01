@@ -31,10 +31,14 @@
           <p>总数：{{ total }} 条</p>
           <p>成功：{{ success }} 条</p>
           <p v-if="failed > 0" class="error-text">失败：{{ failed }} 条</p>
-          <div v-if="failed > 0 && errorDetails && errorDetails.length > 0" class="error-details">
-            <p class="error-title">失败详情（前10条）：</p>
+          <div
+            v-if="failed > 0 && errorDetails && errorDetails.length > 0 && !initBalanceBlocked"
+            class="error-details"
+          >
+            <p v-if="initBalanceBlocked" class="error-title">失败原因：</p>
+            <p v-else class="error-title">失败详情（前10条）：</p>
             <div v-for="(err, idx) in errorDetails.slice(0, 10)" :key="idx" class="error-item">
-              <span class="error-id">凭证ID: {{ err.id }}</span>
+              <span v-if="errorSubject(err)" class="error-id">{{ errorIdLabel }}：{{ errorSubject(err) }}</span>
               <span class="error-msg">{{ err.error }}</span>
             </div>
           </div>
@@ -50,6 +54,14 @@
 
     <template #footer>
       <el-button
+        v-if="firstAuxBlockDetail && (taskStatus === 'completed' || taskStatus === 'failed')"
+        type="warning"
+        plain
+        @click="emit('show-block-detail', firstAuxBlockDetail!)"
+      >
+        查看引用详情
+      </el-button>
+      <el-button
         v-if="taskStatus === 'completed' || taskStatus === 'failed'"
         type="primary"
         @click="handleClose"
@@ -63,17 +75,34 @@
 <script setup lang="ts">
 import { ref, computed, watch } from 'vue'
 import request from '@/api/request'
+import { showInitBalanceUnbalancedAlert } from '@/composables/useMessage'
+import type { AuxItemDeleteBlockDetail } from '@/components/base/AuxItemDeleteBlockDialog.vue'
+import type { AsyncTaskType } from '@/types/task'
+import { TASK_ERROR_ID_LABELS, TASK_TYPE_LABELS } from '@/types/task'
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+
+function isUuidLike(value: string) {
+  return UUID_PATTERN.test(value.trim())
+}
+
+function formatRowId(id: string): string | null {
+  const match = id.match(/^row-(\d+)$/i)
+  return match ? `第 ${match[1]} 行` : null
+}
 
 interface Props {
   modelValue: boolean
   taskId: string
-  taskType: 'batch-audit' | 'batch-unaudit' | 'batch-post' | 'batch-unpost'
+  taskType: AsyncTaskType
 }
 
 const props = defineProps<Props>()
 const emit = defineEmits<{
   'update:modelValue': [value: boolean]
   completed: []
+  'show-block-detail': [detail: AuxItemDeleteBlockDetail]
 }>()
 
 const visible = computed({
@@ -88,19 +117,20 @@ const processed = ref(0)
 const success = ref(0)
 const failed = ref(0)
 const message = ref('')
-const errorDetails = ref<Array<{ id: string; error: string }>>([])
+const errorDetails = ref<
+  Array<{ id: string; label?: string; error: string; block?: AuxItemDeleteBlockDetail }>
+>([])
+const initBalanceBlocked = ref(false)
 
-let pollTimer: any = null
+let pollTimer: ReturnType<typeof setInterval> | null = null
+let initBalanceAlertShown = false
+let completedEmitted = false
+let consecutivePollErrors = 0
+const MAX_TRANSIENT_POLL_ERRORS = 8
 
-const taskTypeText = computed(() => {
-  const map = {
-    'batch-audit': '批量审核',
-    'batch-unaudit': '批量反审核',
-    'batch-post': '批量记账',
-    'batch-unpost': '批量反记账',
-  }
-  return map[props.taskType] || '批量操作'
-})
+const taskTypeText = computed(() => TASK_TYPE_LABELS[props.taskType] || '批量操作')
+
+const errorIdLabel = computed(() => TASK_ERROR_ID_LABELS[props.taskType] || '记录')
 
 const taskStatusText = computed(() => {
   const map = {
@@ -112,17 +142,52 @@ const taskStatusText = computed(() => {
   return map[taskStatus.value]
 })
 
+const firstAuxBlockDetail = computed(() => {
+  if (props.taskType !== 'aux-items-delete') return null
+  const hit = errorDetails.value.find(item => item.block?.blocked)
+  return hit?.block ?? null
+})
+
+/** 失败详情标题：优先 label / 名称（编码），不展示 UUID */
+function errorSubject(err: { id: string; label?: string; block?: AuxItemDeleteBlockDetail }) {
+  if (err.label?.trim()) return err.label.trim()
+  const item = err.block?.item
+  if (item?.name || item?.code) {
+    const name = item.name?.trim()
+    const code = item.code?.trim()
+    if (name && code) return `${name}（${code}）`
+    return name || code || null
+  }
+  if (err.id) {
+    const rowLabel = formatRowId(err.id)
+    if (rowLabel) return rowLabel
+    if (!isUuidLike(err.id)) return err.id
+  }
+  return null
+}
+
 const progressStatus = computed(() => {
   if (taskStatus.value === 'completed') return 'success'
   if (taskStatus.value === 'failed') return 'exception'
   return undefined
 })
 
-// 监听 taskId 变化，开始轮询
+watch(
+  () => props.modelValue,
+  visible => {
+    if (!visible) stopPolling()
+  }
+)
+
+// 监听 taskId 变化，开始/停止轮询
 watch(
   () => props.taskId,
-  (newTaskId) => {
-    if (newTaskId) {
+  (newTaskId, oldTaskId) => {
+    if (!newTaskId) {
+      stopPolling()
+      return
+    }
+    if (newTaskId !== oldTaskId) {
       startPolling()
     }
   },
@@ -133,6 +198,12 @@ watch(
 function startPolling() {
   if (!props.taskId) return
 
+  initBalanceBlocked.value = false
+  errorDetails.value = []
+  initBalanceAlertShown = false
+  completedEmitted = false
+  consecutivePollErrors = 0
+
   // 清除之前的定时器
   if (pollTimer) {
     clearInterval(pollTimer)
@@ -141,17 +212,18 @@ function startPolling() {
   // 立即查询一次
   pollTaskStatus()
 
-  // 每秒轮询一次
+  // 500ms 轮询，便于大数据量导入时进度条及时刷新
   pollTimer = setInterval(() => {
     pollTaskStatus()
-  }, 1000)
+  }, 500)
 }
 
 // 查询任务状态
 async function pollTaskStatus() {
   try {
-    const res = await request.get(`/voucher/tasks/${props.taskId}`)
+    const res = await request.get(`/tasks/${props.taskId}`, { skipErrorToast: true })
     const task = res.data as any
+    consecutivePollErrors = 0
 
     taskStatus.value = task.status
     progress.value = task.progress
@@ -162,22 +234,69 @@ async function pollTaskStatus() {
     message.value = task.message || ''
 
     // 获取错误详情
-    if (task.result && task.result.errors) {
-      errorDetails.value = task.result.errors
+    initBalanceBlocked.value = Boolean(task.result?.initBalanceBlocked)
+    if (task.result?.initBalanceBlocked && task.result?.reason) {
+      errorDetails.value = [{ id: '', error: task.result.reason }]
+    } else if (task.result?.errors) {
+      errorDetails.value = (task.result.errors as Array<{
+        id: string
+        label?: string
+        error: string
+        block?: AuxItemDeleteBlockDetail
+      }>).map(item => ({
+        id: item.id,
+        label: item.label,
+        error: item.error,
+        block: item.block,
+      }))
+    } else if (task.result?.failedItems) {
+      errorDetails.value = task.result.failedItems.map(
+        (item: {
+          id: string
+          label?: string
+          reason: string
+          block?: AuxItemDeleteBlockDetail
+        }) => ({
+          id: item.id,
+          label: item.label,
+          error: item.reason,
+          block: item.block,
+        })
+      )
     }
 
     // 如果任务完成或失败，停止轮询
     if (task.status === 'completed' || task.status === 'failed') {
+      if (
+        task.status === 'completed' &&
+        task.result?.initBalanceBlocked &&
+        !initBalanceAlertShown
+      ) {
+        initBalanceAlertShown = true
+        void showInitBalanceUnbalancedAlert({ count: task.failed })
+      }
       stopPolling()
-      emit('completed')
+      if (!completedEmitted) {
+        completedEmitted = true
+        emit('completed')
+      }
     }
   } catch (error: any) {
     console.error('查询任务状态失败：', error)
-    // 如果任务不存在，停止轮询
-    if (error.response?.status === 404) {
+    const status = error.response?.status
+    if (status === 404) {
       stopPolling()
       taskStatus.value = 'failed'
-      message.value = '任务不存在'
+      message.value = '任务不存在或已过期；若后台仍在执行，请稍后刷新页面查看数据是否已更新'
+      return
+    }
+    if (status >= 500 || !status) {
+      consecutivePollErrors += 1
+      if (consecutivePollErrors >= MAX_TRANSIENT_POLL_ERRORS) {
+        stopPolling()
+        taskStatus.value = 'failed'
+        message.value = error.response?.data?.message || '查询任务状态失败，请稍后刷新页面确认结果'
+      }
     }
   }
 }

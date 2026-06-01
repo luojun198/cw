@@ -1,4 +1,14 @@
 import ExcelJS from 'exceljs'
+import request from '@/api/request'
+import { yieldToMain } from './asyncChunk'
+
+export type ExportProgressPhase = 'prepare' | 'generate' | 'download'
+
+export type ExportProgressCallback = (info: {
+  phase: ExportProgressPhase
+  percent: number
+  message: string
+}) => void
 
 export type ExportAlign = 'left' | 'center' | 'right'
 export type ExportValueType = 'text' | 'amount' | 'number' | 'integer'
@@ -24,6 +34,7 @@ export type ExportStyledTableOptions<T = Record<string, unknown>> = {
   /** 与叶子列一一对应的合计值；首列会自动写入「合计」 */
   summaryValues?: (string | number | null | undefined)[]
   stripe?: boolean
+  onProgress?: ExportProgressCallback
 }
 
 export type ExportStyledAoaOptions = {
@@ -51,11 +62,41 @@ type HeaderMerge = {
   right: number
 }
 
-const BORDER: Partial<ExcelJS.Borders> = {
-  top: { style: 'thin', color: { argb: 'FFDCDFE6' } },
-  left: { style: 'thin', color: { argb: 'FFDCDFE6' } },
-  bottom: { style: 'thin', color: { argb: 'FFDCDFE6' } },
-  right: { style: 'thin', color: { argb: 'FFDCDFE6' } },
+/** 与界面表格网格线一致，导出 Excel 中更易辨认 */
+const GRID_BORDER: Partial<ExcelJS.Borders> = {
+  top: { style: 'thin', color: { argb: 'FF909399' } },
+  left: { style: 'thin', color: { argb: 'FF909399' } },
+  bottom: { style: 'thin', color: { argb: 'FF909399' } },
+  right: { style: 'thin', color: { argb: 'FF909399' } },
+}
+
+function applyGridBorder(cell: ExcelJS.Cell) {
+  cell.border = {
+    top: GRID_BORDER.top!,
+    left: GRID_BORDER.left!,
+    bottom: GRID_BORDER.bottom!,
+    right: GRID_BORDER.right!,
+  }
+}
+
+/** 为指定矩形区域内每个单元格补齐边框（含空单元格），避免合并/稀疏行漏画网格线 */
+export function ensureWorksheetGridLines(
+  worksheet: ExcelJS.Worksheet,
+  rowCount: number,
+  colCount: number,
+  startRow = 1
+) {
+  if (rowCount < startRow || colCount < 1) return
+  for (let r = startRow; r <= rowCount; r += 1) {
+    const row = worksheet.getRow(r)
+    for (let c = 1; c <= colCount; c += 1) {
+      const cell = row.getCell(c)
+      if (cell.value === null || cell.value === undefined) {
+        cell.value = ''
+      }
+      applyGridBorder(cell)
+    }
+  }
 }
 
 const HEADER_FILL: ExcelJS.FillPattern = {
@@ -161,7 +202,7 @@ function applyCellStyle(
     size: options.title ? 14 : 11,
     bold,
   }
-  cell.border = BORDER
+  applyGridBorder(cell)
   cell.alignment = {
     vertical: 'middle',
     horizontal: options.align ?? 'left',
@@ -203,6 +244,141 @@ export async function downloadExcelWorkbook(workbook: ExcelJS.Workbook, fileName
   link.click()
   document.body.removeChild(link)
   URL.revokeObjectURL(url)
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = ensureXlsxFileName(fileName)
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}
+
+/** 可序列化列定义（发送给服务端导出，剥离 value/bold/indent 等函数） */
+export type StyledXlsxColumnSpec = {
+  label: string
+  width?: number
+  align?: ExportAlign
+  type?: ExportValueType
+  children?: StyledXlsxColumnSpec[]
+}
+
+function serializeColumns<T>(columns: ExportColumnDef<T>[]): StyledXlsxColumnSpec[] {
+  return columns.map(col => {
+    const spec: StyledXlsxColumnSpec = { label: col.label }
+    if (col.width != null) spec.width = col.width
+    if (col.align) spec.align = col.align
+    if (col.type) spec.type = col.type
+    if (col.children?.length) spec.children = serializeColumns(col.children)
+    return spec
+  })
+}
+
+async function resolveRowsMatrixChunked<T>(
+  columns: ExportColumnDef<T>[],
+  rows: T[],
+  onProgress?: ExportProgressCallback
+): Promise<(string | number | null)[][]> {
+  const leaves = getLeafColumns(columns)
+  const matrix: (string | number | null)[][] = []
+  const batchSize = 2000
+  const total = rows.length
+
+  for (let i = 0; i < total; i += batchSize) {
+    const end = Math.min(i + batchSize, total)
+    for (let rowIndex = i; rowIndex < end; rowIndex += 1) {
+      const row = rows[rowIndex]
+      matrix.push(
+        leaves.map(leaf => {
+          const v = leaf.value?.(row, rowIndex)
+          return v === undefined ? null : (v as string | number | null)
+        })
+      )
+    }
+    onProgress?.({
+      phase: 'prepare',
+      percent: total > 0 ? Math.round((end / total) * 100) : 100,
+      message:
+        total > 0
+          ? `正在整理导出数据 ${end.toLocaleString()} / ${total.toLocaleString()} 行…`
+          : '正在整理导出数据…',
+    })
+    if (end < total) await yieldToMain()
+  }
+  return matrix
+}
+
+function resolveRowsMatrix<T>(
+  columns: ExportColumnDef<T>[],
+  rows: T[]
+): (string | number | null)[][] {
+  const leaves = getLeafColumns(columns)
+  return rows.map((row, rowIndex) =>
+    leaves.map(leaf => {
+      const v = leaf.value?.(row, rowIndex)
+      return v === undefined ? null : (v as string | number | null)
+    })
+  )
+}
+
+/**
+ * 服务端生成 xlsx 并下载（十万级数据导出，避免浏览器逐单元格生成卡死/爆内存）。
+ * 前端把表格解析为「列树 + 已解析单元格矩阵」的 spec 发送给服务端。
+ */
+export async function exportStyledTableViaServer<T>(
+  options: ExportStyledTableOptions<T> & { onProgress?: ExportProgressCallback }
+) {
+  const {
+    fileName,
+    sheetName,
+    title,
+    subtitle,
+    columns,
+    rows,
+    summaryValues,
+    stripe,
+    onProgress,
+  } = options
+
+  const resolvedRows = onProgress
+    ? await resolveRowsMatrixChunked(columns, rows, onProgress)
+    : resolveRowsMatrix(columns, rows)
+
+  onProgress?.({
+    phase: 'generate',
+    percent: 0,
+    message: `正在服务端生成 Excel（共 ${rows.length.toLocaleString()} 行）…`,
+  })
+
+  const spec = {
+    fileName: ensureXlsxFileName(fileName),
+    sheetName,
+    title,
+    subtitle,
+    columns: serializeColumns(columns),
+    rows: resolvedRows,
+    summaryValues: summaryValues?.map(v => (v === undefined ? null : v)),
+    stripe,
+  }
+
+  const blob = await request.downloadPost('/export/styled-xlsx', spec, { timeout: 600_000 })
+
+  onProgress?.({
+    phase: 'download',
+    percent: 50,
+    message: '正在保存文件…',
+  })
+
+  downloadBlob(blob, spec.fileName)
+
+  onProgress?.({
+    phase: 'download',
+    percent: 100,
+    message: '导出完成',
+  })
 }
 
 export type ExportStyledWorkbookSheet<T = Record<string, unknown>> = Omit<
@@ -314,7 +490,10 @@ function appendStyledSheet<T>(
         bold: true,
       })
     })
+    currentRow += 1
   }
+
+  ensureWorksheetGridLines(worksheet, currentRow - 1, leafColumns.length)
 }
 
 export async function exportStyledWorkbook<T>(
@@ -356,14 +535,15 @@ export async function exportStyledAoa(options: ExportStyledAoaOptions) {
   const emphasisSet = new Set(emphasisRowIndexes)
   const amountSet = new Set(amountColumns)
 
-  let maxCols = 0
+  const maxCols = rows.reduce((max, rowValues) => Math.max(max, rowValues.length), 0) || 1
+
   rows.forEach((rowValues, rowIndex) => {
-    maxCols = Math.max(maxCols, rowValues.length)
     const row = worksheet.getRow(rowIndex + 1)
     row.height = titleSet.has(rowIndex) ? 24 : 18
-    rowValues.forEach((value, colIndex) => {
+    for (let colIndex = 0; colIndex < maxCols; colIndex += 1) {
       const cell = row.getCell(colIndex + 1)
-      cell.value = normalizeCellValue(value)
+      const rawValue = colIndex < rowValues.length ? rowValues[colIndex] : ''
+      cell.value = normalizeCellValue(rawValue)
       const isAmount = amountSet.has(colIndex + 1) && typeof cell.value === 'number'
       applyCellStyle(cell, {
         align: isAmount || amountSet.has(colIndex + 1) ? 'right' : colIndex === 0 ? 'left' : 'right',
@@ -372,11 +552,13 @@ export async function exportStyledAoa(options: ExportStyledAoaOptions) {
         title: titleSet.has(rowIndex),
         header: false,
       })
-    })
-    if (titleSet.has(rowIndex) && rowValues.length > 1) {
-      worksheet.mergeCells(rowIndex + 1, 1, rowIndex + 1, Math.max(rowValues.length, maxCols))
+    }
+    if (titleSet.has(rowIndex) && maxCols > 1) {
+      worksheet.mergeCells(rowIndex + 1, 1, rowIndex + 1, maxCols)
     }
   })
+
+  ensureWorksheetGridLines(worksheet, rows.length, maxCols)
 
   const widthCount = columnWidths?.length || maxCols
   for (let i = 0; i < widthCount; i += 1) {

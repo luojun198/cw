@@ -7,6 +7,7 @@ import {
   resolveSingleCategorySelection,
 } from '../utils/auxItemId.js'
 import { assertOpeningDebitCreditExclusive } from '../utils/initBalanceOpening.js'
+import { assertInitBalanceAuxEditable } from './initBalanceClear.js'
 
 export interface InitBalanceAuxLineInput {
   selection: Record<string, string>
@@ -22,6 +23,8 @@ export interface InitBalanceAuxLineRow {
   aux_item_id: string
   selection: Record<string, string>
   selection_labels: Record<string, string>
+  display_code?: string
+  display_name?: string
   opening_debit: number
   opening_credit: number
   pre_book_debit: number
@@ -103,40 +106,236 @@ export type AuxItemForInitBalance = {
   code: string
   name: string
   remark?: string
-  field_values: Record<string, string>
+  field_values: string | Record<string, string>
 }
 
-function loadAuxItemsByCategory(db: any, accountSetId: string, categoryIds: string[]) {
+function loadAuxItemsByCategory(
+  db: any,
+  accountSetId: string,
+  categoryIds: string[],
+  options?: { referencedIds?: Set<string>; pickerLimit?: number }
+) {
   if (categoryIds.length === 0) return new Map<string, AuxItemForInitBalance[]>()
-  const placeholders = categoryIds.map(() => '?').join(',')
-  const items = db
-    .prepare(
-      `SELECT id, code, name, type, remark, field_values FROM aux_items
-       WHERE account_set_id=? AND type IN (${placeholders}) AND status='active'
-       ORDER BY code`
-    )
-    .all(accountSetId, ...categoryIds) as Array<{
+  const pickerLimit = options?.pickerLimit ?? 200
+  const referencedIds = options?.referencedIds
+
+  const map = new Map<string, AuxItemForInitBalance[]>()
+  const seenIds = new Set<string>()
+  for (const catId of categoryIds) {
+    map.set(catId, [])
+  }
+
+  const pushItem = (item: {
     id: string
     code: string
     name: string
     type: string
     remark?: string
     field_values?: string
-  }>
-
-  const map = new Map<string, AuxItemForInitBalance[]>()
-  for (const item of items) {
-    if (!map.has(item.type)) map.set(item.type, [])
-    map.get(item.type)!.push({
+  }) => {
+    if (seenIds.has(item.id)) return
+    seenIds.add(item.id)
+    const list = map.get(item.type)!
+    list.push({
       id: item.id,
       code: item.code,
       name: item.name,
       remark: item.remark || '',
-      field_values: parseFieldValues(item.field_values),
+      field_values: item.field_values || '{}',
     })
+  }
+
+  if (referencedIds && referencedIds.size > 0) {
+    const idList = [...referencedIds]
+    const items = db
+      .prepare(
+        `SELECT a.id, a.code, a.name, a.type, a.remark, a.field_values 
+         FROM json_each(?) j
+         CROSS JOIN aux_items a ON a.id = j.value
+         WHERE a.account_set_id=? AND a.status='active'`
+      )
+      .all(JSON.stringify(idList), accountSetId) as Array<{
+      id: string
+      code: string
+      name: string
+      type: string
+      remark?: string
+      field_values?: string
+    }>
+    for (const item of items) {
+      if (map.has(item.type)) pushItem(item)
+    }
+  }
+
+  for (const catId of categoryIds) {
+    const list = map.get(catId)!
+    if (list.length >= pickerLimit) continue
+    const remaining = pickerLimit - list.length
+    const existingIds = new Set(list.map(i => i.id))
+    const extra = db
+      .prepare(
+        `SELECT id, code, name, type, remark, field_values FROM aux_items
+         WHERE account_set_id=? AND type=? AND status='active'
+         ORDER BY code LIMIT ?`
+      )
+      .all(accountSetId, catId, remaining + existingIds.size) as Array<{
+      id: string
+      code: string
+      name: string
+      type: string
+      remark?: string
+      field_values?: string
+    }>
+    for (const item of extra) {
+      if (existingIds.has(item.id)) continue
+      pushItem(item)
+      if (map.get(catId)!.length >= pickerLimit) break
+    }
+  }
+
+  for (const catId of categoryIds) {
+    const list = map.get(catId)!
+    if (list.length > 5000) {
+      list.sort((a, b) => (a.code > b.code ? 1 : a.code < b.code ? -1 : 0))
+    } else {
+      list.sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }))
+    }
   }
   return map
 }
+
+const resolverCache = new WeakMap<AuxItemForInitBalance[], {
+  byId: Map<string, string>,
+  byCode: Map<string, string>
+}>()
+
+/** 将录入值（id 或编码）解析为当前类目下有效的辅助项目 id */
+export function resolveAuxItemIdInCategory(
+  items: AuxItemForInitBalance[],
+  itemIdOrCode: string
+): string | null {
+  const token = String(itemIdOrCode ?? '').trim()
+  if (!token) return null
+
+  let cache = resolverCache.get(items)
+  if (!cache) {
+    cache = { byId: new Map(), byCode: new Map() }
+    for (const item of items) {
+      cache.byId.set(item.id, item.id)
+      const code = String(item.code || '').trim()
+      if (code) {
+        cache.byCode.set(code, item.id)
+      }
+    }
+    resolverCache.set(items, cache)
+  }
+
+  if (cache.byId.has(token)) return cache.byId.get(token)!
+  if (cache.byCode.has(token)) return cache.byCode.get(token)!
+
+  if (/^\d+$/.test(token)) {
+    const numeric = Number(token)
+    const strNumeric = String(numeric)
+    if (cache.byCode.has(strNumeric)) return cache.byCode.get(strNumeric)!
+  }
+
+  return null
+}
+
+function resolveAuxItemIdFromDb(
+  db: any,
+  accountSetId: string,
+  categoryId: string,
+  itemIdOrCode: string
+): string | null {
+  const token = String(itemIdOrCode ?? '').trim()
+  if (!token) return null
+  const byId = db
+    .prepare(
+      `SELECT id FROM aux_items WHERE account_set_id=? AND type=? AND id=? AND status='active'`
+    )
+    .get(accountSetId, categoryId, token) as { id: string } | undefined
+  if (byId) return byId.id
+  const byCode = db
+    .prepare(
+      `SELECT id FROM aux_items WHERE account_set_id=? AND type=? AND code=? AND status='active'`
+    )
+    .get(accountSetId, categoryId, token) as { id: string } | undefined
+  if (byCode) return byCode.id
+  if (/^\d+$/.test(token)) {
+    const numeric = Number(token)
+    const byNumeric = db
+      .prepare(
+        `SELECT id FROM aux_items
+         WHERE account_set_id=? AND type=? AND status='active'
+           AND code GLOB '[0-9]*' AND CAST(code AS INTEGER)=?`
+      )
+      .get(accountSetId, categoryId, numeric) as { id: string } | undefined
+    if (byNumeric) return byNumeric.id
+  }
+  return null
+}
+
+function buildAuxItemResolverMap(
+  db: any,
+  accountSetId: string,
+  categoryIds: string[]
+): (categoryId: string, itemIdOrCode: string) => string | null {
+  const byCategory = new Map<string, Map<string, string>>()
+
+  for (const categoryId of categoryIds) {
+    const tokenMap = new Map<string, string>()
+    const items = db
+      .prepare(
+        `SELECT id, code FROM aux_items
+         WHERE account_set_id=? AND type=? AND status='active'`
+      )
+      .all(accountSetId, categoryId) as Array<{ id: string; code: string }>
+
+    for (const item of items) {
+      tokenMap.set(item.id, item.id)
+      const code = String(item.code ?? '').trim()
+      if (code) {
+        tokenMap.set(code, item.id)
+        if (/^\d+$/.test(code)) {
+          tokenMap.set(String(Number(code)), item.id)
+        }
+      }
+    }
+    byCategory.set(categoryId, tokenMap)
+  }
+
+  return (categoryId: string, itemIdOrCode: string) => {
+    const token = String(itemIdOrCode ?? '').trim()
+    if (!token) return null
+    const map = byCategory.get(categoryId)
+    if (!map) return null
+    return map.get(token) ?? resolveAuxItemIdFromDb(db, accountSetId, categoryId, token)
+  }
+}
+
+function collectReferencedIdsFromInitRows(
+  db: any,
+  accountSetId: string,
+  rows: any[],
+  enabledCategoryIds: string[],
+  idByCode: Map<string, string>,
+  resolveItem: (categoryId: string, itemIdOrCode: string) => string | null
+): Set<string> {
+  const ids = new Set<string>()
+  for (const row of rows) {
+    const parts = parseAuxItemIdParts(row.aux_item_id)
+    for (const [code, token] of Object.entries(parts)) {
+      const catId = idByCode.get(code)
+      if (!catId || !enabledCategoryIds.includes(catId)) continue
+      const resolved = resolveItem(catId, token)
+      if (resolved) ids.add(resolved)
+    }
+  }
+  return ids
+}
+
+const selectionLabelsCache = new WeakMap<Map<string, AuxItemForInitBalance[]>, Map<string, AuxItemForInitBalance>>()
 
 function resolveSelectionLabels(
   selection: Record<string, string>,
@@ -145,27 +344,260 @@ function resolveSelectionLabels(
   itemsByCategory: Map<string, AuxItemForInitBalance[]>
 ): Record<string, string> {
   const labels: Record<string, string> = {}
+  let itemMap = selectionLabelsCache.get(itemsByCategory)
+  if (!itemMap) {
+    itemMap = new Map()
+    for (const list of itemsByCategory.values()) {
+      for (const item of list) {
+        itemMap.set(item.id, item)
+      }
+    }
+    selectionLabelsCache.set(itemsByCategory, itemMap)
+  }
+
   for (const [catId, itemId] of Object.entries(selection)) {
     const catName = nameById.get(catId) || catId
-    const item = itemsByCategory.get(catId)?.find(i => i.id === itemId)
+    const item = itemMap.get(itemId)
     labels[catId] = item ? `${catName}:${item.name}` : catName
   }
   return labels
+}
+
+const AUX_DETAILS_LINES_PAGE_SIZE = 500000
+const AUX_DETAILS_INLINE_LINES_LIMIT = 10000
+const AUX_ITEMS_REFERENCE_LOAD_LIMIT = 500000
+
+export interface InitBalanceAuxDetailsOptions {
+  linesMode?: 'all' | 'none' | 'page'
+  offset?: number
+  limit?: number
+}
+
+type AuxItemResolver = (categoryId: string, itemIdOrCode: string) => string | null
+
+function initBalanceRowHasAmount(row: {
+  opening_debit?: number
+  opening_credit?: number
+  pre_book_debit?: number
+  pre_book_credit?: number
+}) {
+  return (
+    (row.opening_debit || 0) !== 0 ||
+    (row.opening_credit || 0) !== 0 ||
+    (row.pre_book_debit || 0) !== 0 ||
+    (row.pre_book_credit || 0) !== 0
+  )
+}
+
+function countActiveAuxItemsByCategory(db: any, accountSetId: string, categoryIds: string[]) {
+  const totals: Record<string, number> = {}
+  for (const catId of categoryIds) {
+    const row = db
+      .prepare(
+        `SELECT COUNT(*) AS c FROM aux_items
+         WHERE account_set_id=? AND type=? AND status='active'`
+      )
+      .get(accountSetId, catId) as { c: number }
+    totals[catId] = row?.c || 0
+  }
+  return totals
+}
+
+function selectionFromAuxItemIdWithResolver(
+  auxItemId: string,
+  enabledCategoryIds: string[],
+  codeById: Map<string, string>,
+  idByCode: Map<string, string>,
+  itemsByCategory: Map<string, AuxItemForInitBalance[]>,
+  resolveItem?: AuxItemResolver
+): Record<string, string> {
+  const parts = parseAuxItemIdParts(auxItemId)
+  const codes = Object.keys(parts)
+  const selection: Record<string, string> = {}
+
+  const resolve = (catId: string, token: string) => {
+    const items = itemsByCategory.get(catId) || []
+    const fromList = resolveAuxItemIdInCategory(items, token)
+    if (fromList) return fromList
+    return resolveItem?.(catId, token) ?? null
+  }
+
+  if (codes.length === 1) {
+    const code = codes[0]
+    const catId = idByCode.get(code)
+    if (!catId || !enabledCategoryIds.includes(catId)) return selection
+    const resolved = resolve(catId, parts[code])
+    if (resolved) selection[catId] = resolved
+    return selection
+  }
+
+  for (const catId of enabledCategoryIds) {
+    const code = codeById.get(catId)
+    const raw = code ? parts[code] : undefined
+    if (!raw) continue
+    const resolved = resolve(catId, raw)
+    if (resolved) selection[catId] = resolved
+  }
+  return selection
+}
+
+function computeCategoryTabStatsFromDbRows(
+  dbRows: any[],
+  enabledCategoryIds: string[],
+  codeById: Map<string, string>,
+  idByCode: Map<string, string>,
+  itemsByCategory: Map<string, AuxItemForInitBalance[]>,
+  resolveItem: AuxItemResolver | undefined,
+  itemTotalsByCategory: Record<string, number>
+) {
+  const filledSets = new Map<string, Set<string>>()
+  for (const catId of enabledCategoryIds) filledSets.set(catId, new Set())
+
+  for (const row of dbRows) {
+    if (!initBalanceRowHasAmount(row)) continue
+    const selection = selectionFromAuxItemIdWithResolver(
+      row.aux_item_id,
+      enabledCategoryIds,
+      codeById,
+      idByCode,
+      itemsByCategory,
+      resolveItem
+    )
+    for (const [catId, itemId] of Object.entries(selection)) {
+      if (itemId) filledSets.get(catId)?.add(itemId)
+    }
+  }
+
+  const stats: Record<string, { filled: number; total: number }> = {}
+  for (const catId of enabledCategoryIds) {
+    stats[catId] = {
+      filled: filledSets.get(catId)?.size || 0,
+      total: itemTotalsByCategory[catId] ?? itemsByCategory.get(catId)?.length ?? 0,
+    }
+  }
+  return stats
+}
+
+function loadAuxItemDisplayMetaMap(db: any, accountSetId: string, itemIds: Iterable<string>) {
+  const map = new Map<string, { code: string; name: string }>()
+  const idList = [...new Set(itemIds)].filter(Boolean)
+  if (idList.length === 0) return map
+
+  const items = db
+    .prepare(
+      `SELECT a.id, a.code, a.name 
+       FROM json_each(?) j
+       CROSS JOIN aux_items a ON a.id = j.value
+       WHERE a.account_set_id=? AND a.status='active'`
+    )
+    .all(JSON.stringify(idList), accountSetId) as Array<{ id: string; code: string; name: string }>
+    
+  for (const item of items) {
+    map.set(item.id, { code: item.code || '', name: item.name || '' })
+  }
+  return map
+}
+
+function buildInitBalanceAuxLinesFromDbRows(
+  dbRows: any[],
+  enabledCategoryIds: string[],
+  codeById: Map<string, string>,
+  idByCode: Map<string, string>,
+  nameById: Map<string, string>,
+  itemsByCategory: Map<string, AuxItemForInitBalance[]>,
+  resolveItem?: AuxItemResolver,
+  attachDisplayMeta?: Map<string, { code: string; name: string }>
+): InitBalanceAuxLineRow[] {
+  const lines: InitBalanceAuxLineRow[] = []
+
+  for (const row of dbRows) {
+    const selection = selectionFromAuxItemIdWithResolver(
+      row.aux_item_id,
+      enabledCategoryIds,
+      codeById,
+      idByCode,
+      itemsByCategory,
+      resolveItem
+    )
+    const filled = enabledCategoryIds.filter(id => selection[id])
+    if (filled.length === 0) continue
+
+    const parts = parseAuxItemIdParts(row.aux_item_id)
+    const amountRow = {
+      opening_debit: row.opening_debit || 0,
+      opening_credit: row.opening_credit || 0,
+      pre_book_debit: row.pre_book_debit || 0,
+      pre_book_credit: row.pre_book_credit || 0,
+      init_debit: row.init_debit || 0,
+      init_credit: row.init_credit || 0,
+      init_balance: row.init_balance || 0,
+    }
+
+    const pushLine = (lineSelection: Record<string, string>, auxItemId: string) => {
+      const itemId = Object.values(lineSelection)[0]
+      const meta = itemId && attachDisplayMeta ? attachDisplayMeta.get(itemId) : undefined
+      lines.push({
+        aux_item_id: auxItemId,
+        selection: lineSelection,
+        selection_labels: resolveSelectionLabels(
+          lineSelection,
+          codeById,
+          nameById,
+          itemsByCategory
+        ),
+        display_code: meta?.code,
+        display_name: meta?.name,
+        ...amountRow,
+      })
+    }
+
+    if (Object.keys(parts).length === 1 && filled.length === 1) {
+      pushLine(selection, row.aux_item_id)
+      continue
+    }
+
+    for (const catId of filled) {
+      const itemId = selection[catId]
+      const code = codeById.get(catId)
+      if (!code || !itemId) continue
+      const auxItemId = buildSingleCategoryAuxItemId(codeById, catId, itemId)
+      pushLine({ [catId]: itemId }, auxItemId || row.aux_item_id)
+    }
+  }
+
+  return lines
 }
 
 function selectionFromAuxItemId(
   auxItemId: string,
   enabledCategoryIds: string[],
   codeById: Map<string, string>,
-  idByCode: Map<string, string>
+  idByCode: Map<string, string>,
+  itemsByCategory: Map<string, AuxItemForInitBalance[]>
 ): Record<string, string> {
   const parts = parseAuxItemIdParts(auxItemId)
+  const codes = Object.keys(parts)
   const selection: Record<string, string> = {}
+
+  // 期初辅助按类目分标签录入：优先解析单类目 aux_item_id
+  if (codes.length === 1) {
+    const code = codes[0]
+    const catId = idByCode.get(code)
+    if (!catId || !enabledCategoryIds.includes(catId)) return selection
+    const items = itemsByCategory.get(catId) || []
+    const resolved = resolveAuxItemIdInCategory(items, parts[code])
+    if (resolved) selection[catId] = resolved
+    return selection
+  }
+
+  // 兼容历史组合 aux_item_id（dept:x|proj:y）
   for (const catId of enabledCategoryIds) {
     const code = codeById.get(catId)
-    if (code && parts[code]) {
-      selection[catId] = parts[code]
-    }
+    const raw = code ? parts[code] : undefined
+    if (!raw) continue
+    const items = itemsByCategory.get(catId) || []
+    const resolved = resolveAuxItemIdInCategory(items, raw)
+    if (resolved) selection[catId] = resolved
   }
   return selection
 }
@@ -213,7 +645,8 @@ export function getInitBalanceAuxDetails(
   accountSetId: string,
   accountId: string,
   year: number,
-  period = 1
+  period = 1,
+  options?: InitBalanceAuxDetailsOptions
 ) {
   const account = db
     .prepare(`SELECT * FROM accounts WHERE id=? AND account_set_id=?`)
@@ -228,39 +661,107 @@ export function getInitBalanceAuxDetails(
 
   const enabledCategoryIds = parseAccountAuxCategoryIds(account.aux_types)
   const { codeById, nameById, idByCode } = loadCategoryMaps(db, accountSetId)
-  const itemsByCategory = loadAuxItemsByCategory(db, accountSetId, enabledCategoryIds)
 
   const rows = db
     .prepare(
       `SELECT * FROM init_balances
-       WHERE account_set_id=? AND account_id=? AND year=? AND period=? AND aux_item_id != ''`
+       WHERE account_set_id=? AND account_id=? AND year=? AND period=? AND aux_item_id != ''
+       ORDER BY aux_item_id, id`
     )
     .all(accountSetId, accountId, year, period) as any[]
 
-  const lines: InitBalanceAuxLineRow[] = rows.map(row => {
-    const selection = selectionFromAuxItemId(
-      row.aux_item_id,
+  const linesMode = options?.linesMode ?? 'all'
+  const offset = Math.max(0, options?.offset ?? 0)
+  const limit = Math.max(1, options?.limit ?? AUX_DETAILS_LINES_PAGE_SIZE)
+  const db_row_count = rows.length
+  const lines_paginated = db_row_count > AUX_DETAILS_INLINE_LINES_LIMIT
+
+  let rowSlice = rows
+  if (linesMode === 'page') {
+    rowSlice = rows.slice(offset, offset + limit)
+  } else if (lines_paginated && linesMode !== 'none') {
+    rowSlice = rows.slice(0, AUX_DETAILS_LINES_PAGE_SIZE)
+  } else if (linesMode === 'none') {
+    rowSlice = []
+  }
+
+  // We always need resolver map to extract selection
+  const fullResolverMap = buildAuxItemResolverMap(db, accountSetId, enabledCategoryIds)
+
+  const targetRowsForReference = linesMode === 'page' ? rowSlice : rows
+  const referencedIds = collectReferencedIdsFromInitRows(
+    db,
+    accountSetId,
+    targetRowsForReference,
+    enabledCategoryIds,
+    idByCode,
+    fullResolverMap
+  )
+  
+  // If we are in page mode, we don't need to load the full items reference list because frontend already has it.
+  const omitFullReferencedItems = linesMode === 'page' || referencedIds.size > AUX_ITEMS_REFERENCE_LOAD_LIMIT
+  const resolveItem = omitFullReferencedItems ? fullResolverMap : undefined
+  const itemsByCategory = loadAuxItemsByCategory(db, accountSetId, enabledCategoryIds, {
+    referencedIds: omitFullReferencedItems ? undefined : referencedIds,
+  })
+  
+  let itemTotalsByCategory: Record<string, number> = {}
+  let category_stats: Record<string, any> = {}
+
+  // Skip calculating heavy stats and item maps if we just need the paginated lines
+  if (linesMode !== 'page') {
+    itemTotalsByCategory = omitFullReferencedItems
+      ? countActiveAuxItemsByCategory(db, accountSetId, enabledCategoryIds)
+      : {}
+
+    category_stats = computeCategoryTabStatsFromDbRows(
+      rows,
       enabledCategoryIds,
       codeById,
-      idByCode
+      idByCode,
+      itemsByCategory,
+      resolveItem,
+      itemTotalsByCategory
     )
-    return {
-      aux_item_id: row.aux_item_id,
-      selection,
-      selection_labels: resolveSelectionLabels(selection, codeById, nameById, itemsByCategory),
-      opening_debit: row.opening_debit || 0,
-      opening_credit: row.opening_credit || 0,
-      pre_book_debit: row.pre_book_debit || 0,
-      pre_book_credit: row.pre_book_credit || 0,
-      init_debit: row.init_debit || 0,
-      init_credit: row.init_credit || 0,
-      init_balance: row.init_balance || 0,
-    }
-  })
+  }
+
+  let lines: InitBalanceAuxLineRow[] = []
+  if (linesMode !== 'none') {
+    const attachDisplayMeta =
+      omitFullReferencedItems && rowSlice.length > 0
+        ? loadAuxItemDisplayMetaMap(
+            db,
+            accountSetId,
+            rowSlice.flatMap(row => {
+              const selection = selectionFromAuxItemIdWithResolver(
+                row.aux_item_id,
+                enabledCategoryIds,
+                codeById,
+                idByCode,
+                itemsByCategory,
+                resolveItem
+              )
+              return Object.values(selection)
+            })
+          )
+        : undefined
+    lines = buildInitBalanceAuxLinesFromDbRows(
+      rowSlice,
+      enabledCategoryIds,
+      codeById,
+      idByCode,
+      nameById,
+      itemsByCategory,
+      resolveItem,
+      attachDisplayMeta
+    )
+  }
 
   const items: Record<string, AuxItemForInitBalance[]> = {}
-  for (const catId of enabledCategoryIds) {
-    items[catId] = itemsByCategory.get(catId) || []
+  if (linesMode !== 'page') {
+    for (const catId of enabledCategoryIds) {
+      items[catId] = itemsByCategory.get(catId) || []
+    }
   }
 
   const categoryFieldsMap = loadCategoryFields(db, enabledCategoryIds)
@@ -295,6 +796,11 @@ export function getInitBalanceAuxDetails(
     category_fields,
     code_by_category_id: Object.fromEntries(codeById),
     lines,
+    db_row_count,
+    line_count: db_row_count,
+    lines_paginated,
+    category_stats,
+    items_omitted: omitFullReferencedItems,
     isMidYear,
     startMonth,
   }
@@ -781,6 +1287,8 @@ export function upsertInitBalanceAuxLine(
   line: InitBalanceAuxLineInput,
   period = 1
 ) {
+  assertInitBalanceAuxEditable(db, accountSetId, year)
+
   const account = db
     .prepare(`SELECT * FROM accounts WHERE id=? AND account_set_id=?`)
     .get(accountId, accountSetId) as any
@@ -792,7 +1300,6 @@ export function upsertInitBalanceAuxLine(
 
   const enabledCategoryIds = parseAccountAuxCategoryIds(account.aux_types)
   const { codeById, nameById } = loadCategoryMaps(db, accountSetId)
-  const itemsByCategory = loadAuxItemsByCategory(db, accountSetId, enabledCategoryIds)
   const selection = line.selection || {}
 
   let categoryId: string
@@ -807,12 +1314,13 @@ export function upsertInitBalanceAuxLine(
     throw new Error(e.message || '请选择辅助项目')
   }
 
-  const validItems = itemsByCategory.get(categoryId) || []
-  if (!validItems.some(item => item.id === itemId)) {
+  const resolvedItemId = resolveAuxItemIdFromDb(db, accountSetId, categoryId, itemId)
+  if (!resolvedItemId) {
     throw new Error(
       `「${nameById.get(categoryId) || codeById.get(categoryId) || categoryId}」辅助项目无效`
     )
   }
+  itemId = resolvedItemId
 
   const auxItemId = buildSingleCategoryAuxItemId(codeById, categoryId, itemId)
   if (!auxItemId) throw new Error('无法生成辅助核算标识')
@@ -913,8 +1421,13 @@ export function saveInitBalanceAuxDetails(
   accountId: string,
   year: number,
   lines: InitBalanceAuxLineInput[],
-  period = 1
+  period = 1,
+  options?: {
+    onBuildProgress?: (processed: number, total: number) => void
+  }
 ) {
+  assertInitBalanceAuxEditable(db, accountSetId, year)
+
   const account = db
     .prepare(`SELECT * FROM accounts WHERE id=? AND account_set_id=?`)
     .get(accountId, accountSetId) as any
@@ -928,7 +1441,7 @@ export function saveInitBalanceAuxDetails(
 
   const enabledCategoryIds = parseAccountAuxCategoryIds(account.aux_types)
   const { codeById, nameById } = loadCategoryMaps(db, accountSetId)
-  const itemsByCategory = loadAuxItemsByCategory(db, accountSetId, enabledCategoryIds)
+  const resolveAuxItemId = buildAuxItemResolverMap(db, accountSetId, enabledCategoryIds)
 
   const builtLines: Array<{
     aux_item_id: string
@@ -959,10 +1472,11 @@ export function saveInitBalanceAuxDetails(
       throw new Error(`第 ${i + 1} 行：${e.message || '请选择辅助项目'}`)
     }
 
-    const validItems = itemsByCategory.get(categoryId) || []
-    if (!validItems.some(item => item.id === itemId)) {
+    const resolvedItemId = resolveAuxItemId(categoryId, itemId)
+    if (!resolvedItemId) {
       throw new Error(`第 ${i + 1} 行：辅助项目无效或不属于当前类别`)
     }
+    itemId = resolvedItemId
 
     const auxItemId = buildSingleCategoryAuxItemId(codeById, categoryId, itemId)
     if (!auxItemId) {
@@ -1003,12 +1517,21 @@ export function saveInitBalanceAuxDetails(
       init_credit: initCredit,
       init_balance: initBalance,
     })
+
+    options?.onBuildProgress?.(i + 1, lines.length)
   }
 
-  const findExisting = db.prepare(
-    `SELECT id, aux_item_id FROM init_balances
-     WHERE account_set_id=? AND account_id=? AND year=? AND period=? AND aux_item_id != ''`
-  )
+  const existingRows = db
+    .prepare(
+      `SELECT id, aux_item_id FROM init_balances
+       WHERE account_set_id=? AND account_id=? AND year=? AND period=? AND aux_item_id != ''`
+    )
+    .all(accountSetId, accountId, year, period) as Array<{
+    id: string
+    aux_item_id: string
+  }>
+  const existingByAuxId = new Map(existingRows.map(row => [row.aux_item_id, row]))
+
   const findSummary = db.prepare(
     `SELECT id FROM init_balances
      WHERE account_set_id=? AND account_id=? AND year=? AND period=? AND aux_item_id=''`
@@ -1029,10 +1552,6 @@ export function saveInitBalanceAuxDetails(
   const deleteById = db.prepare(`DELETE FROM init_balances WHERE id=?`)
 
   const runTx = db.transaction(() => {
-    const existingRows = findExisting.all(accountSetId, accountId, year, period) as Array<{
-      id: string
-      aux_item_id: string
-    }>
     const keepIds = new Set(builtLines.map(l => l.aux_item_id))
 
     for (const row of existingRows) {
@@ -1042,7 +1561,7 @@ export function saveInitBalanceAuxDetails(
     }
 
     for (const line of builtLines) {
-      const existing = existingRows.find(r => r.aux_item_id === line.aux_item_id)
+      const existing = existingByAuxId.get(line.aux_item_id)
       if (existing) {
         updateDetail.run(
           account.direction,
@@ -1088,4 +1607,19 @@ export function saveInitBalanceAuxDetails(
   })
 
   return runTx()
+}
+
+/** 批量清理辅助期初后，按剩余明细重算科目汇总行 */
+export function syncInitBalanceAuxSummary(
+  db: any,
+  accountSetId: string,
+  accountId: string,
+  year: number,
+  period = 1
+) {
+  const account = db
+    .prepare(`SELECT direction FROM accounts WHERE id=? AND account_set_id=?`)
+    .get(accountId, accountSetId) as { direction: string } | undefined
+  if (!account) return
+  recalcInitBalanceAuxSummary(db, accountSetId, accountId, account.direction, year, period)
 }

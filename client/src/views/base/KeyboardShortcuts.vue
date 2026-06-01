@@ -26,6 +26,8 @@
       :data="filteredShortcuts"
       border
       stripe
+      height="100%"
+      class="compact-data-table"
       style="width: 100%"
       v-loading="loading"
       @header-dragend="onDragEnd"

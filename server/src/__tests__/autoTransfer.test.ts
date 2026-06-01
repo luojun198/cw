@@ -156,6 +156,41 @@ describe('buildEntriesFromTransferItems - 借贷平衡', () => {
     expect(toEntry?.direction).toBe('debit') // 本年利润借方减少
   })
 
+  it('回归：target + pair 混用时不应重复结转（曾出现 501 → 1002 翻倍 bug）', () => {
+    // 模拟用户实际配置：一个 target（4103 本年利润）+ 一个 pair（6001 → 4103）
+    // 修复前：pair 项会被 sourceItems(汇总模式) 处理一次 + 又被 pairItems(独立模式)
+    // 处理一次，导致 6001 借方分录翻倍，损益科目永远清不空。
+    const accountsLocal = [
+      { id: 'a-6001', code: '6001', name: '主营业务收入', direction: 'credit' },
+      { id: 'a-4103', code: '4103', name: '本年利润', direction: 'credit' },
+    ]
+    const items = [
+      makeItem({ id: 'i1', from_code: '6001', to_code: '4103' }), // pair
+      makeItem({ id: 'i2', from_code: null, to_code: '4103' }), // 独立 target
+    ]
+    const balances: Record<string, { end_balance: number }> = {
+      '6001': { end_balance: 501 },
+    }
+
+    const result = buildEntriesFromTransferItems({
+      period: 5,
+      items,
+      accounts: accountsLocal,
+      getBalanceByCode: code => balances[code] || null,
+    })
+
+    // 6001 借方分录应当只出现一次，且金额 = 501（不是 1002）
+    const from6001 = result.entries.filter(e => e.account_code === '6001' && e.direction === 'debit')
+    expect(from6001).toHaveLength(1)
+    expect(from6001[0].amount).toBeCloseTo(501, 2)
+
+    // 借贷总额平衡
+    const debitTotal = result.entries.filter(e => e.direction === 'debit').reduce((s, e) => s + e.amount, 0)
+    const creditTotal = result.entries.filter(e => e.direction === 'credit').reduce((s, e) => s + e.amount, 0)
+    expect(debitTotal).toBeCloseTo(creditTotal, 2)
+    expect(debitTotal).toBeCloseTo(501, 2)
+  })
+
   it('支出结转（一对一模式 pair + 父科目）：父级管理费用 → 本年利润，借贷平衡', () => {
     const accountsWithChild = [
       ...accounts,

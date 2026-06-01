@@ -1,18 +1,15 @@
 <template>
-  <div class="page fund-source-page">
-    <div class="page-header">
-      <h3>资金来源</h3>
-      <div v-if="categoryId">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索编码、名称"
-          clearable
-          class="search-input"
-          size="small"
-        />
-        <el-button type="primary" size="small" @click="openDialog('add')">新增资金来源</el-button>
-      </div>
-    </div>
+  <PageListLayout title="资金来源" class="fund-source-page">
+    <template v-if="categoryId" #actions>
+      <el-input
+        v-model="searchKeyword"
+        placeholder="搜索编码、名称"
+        clearable
+        class="search-input"
+        size="small"
+      />
+      <el-button type="primary" size="small" @click="openDialog('add')">新增资金来源</el-button>
+    </template>
 
     <el-alert
       v-if="!categoryId && !loading"
@@ -31,7 +28,7 @@
       stripe
       border
       size="small"
-      height="calc(100vh - 108px)"
+      height="100%"
       v-loading="loading"
       @header-dragend="onDragEnd"
     >
@@ -72,10 +69,21 @@
         <el-button type="primary" @click="handleSave">保存</el-button>
       </template>
     </el-dialog>
-  </div>
+
+    <AuxItemDeleteBlockDialog
+      v-model="deleteBlockVisible"
+      :detail="deleteBlockDetail"
+      @open-voucher="openBlockedVoucher"
+      @go-init-balance-aux="goInitBalanceAux"
+    />
+    <VoucherEntryDialogHost ref="entryDialogHostRef" />
+  </PageListLayout>
 </template>
 
 <script setup lang="ts">
+import PageListLayout from '@/components/layout/PageListLayout.vue'
+import AuxItemDeleteBlockDialog from '@/components/base/AuxItemDeleteBlockDialog.vue'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import request from '@/api/request'
@@ -83,10 +91,19 @@ import { useSystemParamsStore } from '@/stores/systemParams'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+import { useAuxItemDeleteBlock } from '@/composables/useAuxItemDeleteBlock'
 
 const { tableRef, onDragEnd, colWidth, relayoutTable } = useListColumnWidth('base_fund_source')
 const router = useRouter()
 const systemParamsStore = useSystemParamsStore()
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const {
+  deleteBlockVisible,
+  deleteBlockDetail,
+  deleteAuxItemWithDialog,
+  openBlockedVoucher,
+  goInitBalanceAux,
+} = useAuxItemDeleteBlock(entryDialogHostRef)
 
 const categoryId = ref('')
 const list = ref<any[]>([])
@@ -168,12 +185,10 @@ async function handleSave() {
 async function handleDelete(row: any) {
   const confirmed = await useDeleteConfirm(`资金来源「${row.code} ${row.name}」`)
   if (!confirmed) return
-  try {
-    await request.delete(`/base/aux-items/${row.id}`)
+  const result = await deleteAuxItemWithDialog(row.id, '删除资金来源')
+  if (result === 'success') {
     showSuccess('删除成功')
     await fetchData()
-  } catch (error) {
-    showOperationError('删除资金来源', error)
   }
 }
 

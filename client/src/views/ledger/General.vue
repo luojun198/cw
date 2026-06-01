@@ -8,7 +8,7 @@
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="开始日期"
-          style="width: 150px"
+          class="filter-ctl--md"
           @change="fetchData"
         />
         <el-date-picker
@@ -16,14 +16,14 @@
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="结束日期"
-          style="width: 150px"
+          class="filter-ctl--md"
           @change="fetchData"
         />
         <el-input
           v-model="filters.account_code"
           placeholder="科目编码"
           clearable
-          style="width: 140px"
+          class="filter-ctl--sm"
           @clear="fetchData"
           @keyup.enter="fetchData"
         />
@@ -31,7 +31,7 @@
           v-model="filters.account_level"
           placeholder="科目级次"
           clearable
-          style="width: 120px"
+          class="filter-ctl--xs"
           @change="fetchData"
         >
           <el-option label="展开到1级" :value="1" />
@@ -68,6 +68,8 @@
       </div>
     </div>
 
+    <AccountScopeAlert />
+
     <div class="print-title-row">
       <h2 class="print-title">科目余额表</h2>
       <p class="print-date-range">{{ printDateLabel }}</p>
@@ -77,9 +79,10 @@
       <div v-for="i in 8" :key="i" class="skeleton skeleton-row" />
     </div>
 
-    <div v-else v-loading="loading" class="table-summary-scroll table-summary-scroll--wide">
+    <div v-else v-loading="loading" ref="tableContainerRef" class="table-summary-scroll table-summary-scroll--wide table-summary-scroll--flow">
     <el-table
       ref="tableRef"
+      :height="tableHeight"
       :data="list"
       :style="{ width: `${ledgerTableWidth}px` }"
       :fit="false"
@@ -238,11 +241,12 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
-import { useRouter } from 'vue-router'
+import { useDrillDownNavigate } from '@/composables/useDrillDownNavigate'
 import { Printer, Search, Download } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import type { TableColumnCtx } from 'element-plus'
 import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
 import { formatAmount } from '@/utils/format'
 import { exportStyledTable } from '@/utils/exportStyledExcel'
 import {
@@ -250,8 +254,9 @@ import {
   buildGeneralLedgerSummaryValues,
 } from '@/utils/ledgerExportBuilders'
 import { getSummaryAccountRows } from '@/utils/exportLedgerHelpers'
+import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
 
-const router = useRouter()
+const { drillDown } = useDrillDownNavigate()
 const list = ref<any[]>([])
 const loading = ref(false)
 const initialLoaded = ref(false)
@@ -270,8 +275,10 @@ const ledgerColumnDefs = computed(() => [
   { key: 'end_balance', fallback: 100 },
 ])
 
+const { containerRef: tableContainerRef, tableHeight, relayoutAfterData } = useFillHeightTable({ flow: true })
+
 const { tableRef, colWidth, ledgerTableWidth, handleHeaderDragEnd, afterTableLayout } =
-  useLedgerWideTable('ledger_general', ledgerColumnDefs)
+  useLedgerWideTable('ledger_general', ledgerColumnDefs, { afterLayout: relayoutAfterData })
 
 const year = new Date().getFullYear()
 
@@ -359,14 +366,11 @@ function formatBalanceDirection(netBalance: number): string {
   return netBalance > 0 ? '借' : '贷'
 }
 
-/** 合计行应参与的科目：有限定级次时取顶层（已含下级汇总），否则取叶节点 */
+/** 合计行应参与的科目：优先一级科目（已含下级汇总），避免展开深层级时叶节点重复/方向不一致 */
 function getSummaryRows(data: any[]) {
   if (!data.length) return []
-  const maxLevel = filters.value.account_level
-  if (maxLevel) {
-    const topLevel = Math.min(...data.map(r => r.level))
-    return data.filter(row => row.level === topLevel)
-  }
+  const level1Rows = data.filter(row => row.level === 1)
+  if (level1Rows.length > 0) return level1Rows
   return data.filter(
     row =>
       !data.some(
@@ -456,14 +460,17 @@ function handleRowDblClick(row: any) {
   // 双击行跳转到明细账页面
   const query: any = {}
   if (row.account_id) query.account_id = row.account_id
+  else if (row.code) query.account_code = row.code
 
   // 传递当前的日期范围（如果有的话）
   if (filters.value.start_date) query.start_date = filters.value.start_date
   if (filters.value.end_date) query.end_date = filters.value.end_date
 
-  router.push({
-    path: '/ledger/detail',
-    query,
+  drillDown('/ledger/detail', query, '科目余额表', {
+    start_date: filters.value.start_date || '',
+    end_date: filters.value.end_date || '',
+    account_code: filters.value.account_code || '',
+    account_level: filters.value.account_level ? String(filters.value.account_level) : '',
   })
 }
 
@@ -484,11 +491,6 @@ onMounted(() => {
 }
 .page-header h3 {
   margin: 0;
-}
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
 }
 
 .print-title-row {

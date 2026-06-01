@@ -307,30 +307,34 @@ export function buildBalanceSheetExportColumns(
 }
 
 export function buildBalanceSheetSummaryValues(data: Array<Record<string, any>>, displayMonths: number[]) {
-  const calcInitDebit = data.reduce(
+  // 叶节点 = 数据集中没有任何以本科目编码为前缀的子项，避免父子科目重复求和
+  const leaf = data.filter(
+    r => !data.some(o => o.account_code !== r.account_code && o.account_code.startsWith(r.account_code))
+  )
+  const calcInitDebit = leaf.reduce(
     (s, r) => s + (r.direction === 'debit' && r.init_balance > 0 ? r.init_balance : 0),
     0
   )
-  const calcInitCredit = data.reduce(
+  const calcInitCredit = leaf.reduce(
     (s, r) => s + (r.direction === 'credit' && r.init_balance > 0 ? r.init_balance : 0),
     0
   )
-  const calcEndDebit = data.reduce(
+  const calcEndDebit = leaf.reduce(
     (s, r) => s + (r.direction === 'debit' && r.end_balance > 0 ? r.end_balance : 0),
     0
   )
-  const calcEndCredit = data.reduce(
+  const calcEndCredit = leaf.reduce(
     (s, r) => s + (r.direction === 'credit' && r.end_balance > 0 ? r.end_balance : 0),
     0
   )
-  const calcYearDebit = data.reduce((s, r) => s + (r.year_debit || 0), 0)
-  const calcYearCredit = data.reduce((s, r) => s + (r.year_credit || 0), 0)
+  const calcYearDebit = leaf.reduce((s, r) => s + (r.year_debit || 0), 0)
+  const calcYearCredit = leaf.reduce((s, r) => s + (r.year_credit || 0), 0)
 
   const values: (string | number)[] = ['', '', calcInitDebit || '', calcInitCredit || '']
   for (const month of displayMonths) {
     values.push(
-      data.reduce((s, r) => s + (r[`month${month}_debit`] || 0), 0),
-      data.reduce((s, r) => s + (r[`month${month}_credit`] || 0), 0)
+      leaf.reduce((s, r) => s + (r[`month${month}_debit`] || 0), 0),
+      leaf.reduce((s, r) => s + (r[`month${month}_credit`] || 0), 0)
     )
   }
   values.push(
@@ -451,4 +455,75 @@ export function buildInitBalanceAuxExportColumns(
     )
   }
   return columns
+}
+
+function flattenExportLeafColumns<T>(columns: ExportColumnDef<T>[]): ExportColumnDef<T>[] {
+  const leaves: ExportColumnDef<T>[] = []
+  for (const column of columns) {
+    if (column.children?.length) {
+      leaves.push(...flattenExportLeafColumns(column.children))
+      continue
+    }
+    leaves.push(column)
+  }
+  return leaves
+}
+
+/** 辅助项目余额表导出合计行：与叶子列数对齐（col0 由导出器写入「合计」） */
+export function buildAuxBalanceExportSummaryValues(
+  categoryColumnCount: number,
+  totals: {
+    init_balance?: number
+    current_debit?: number
+    current_credit?: number
+    end_balance?: number
+  } | null | undefined
+): (string | number)[] {
+  const leafCount = 2 + categoryColumnCount + 6
+  const values: (string | number)[] = Array(leafCount).fill('')
+  const base = 2 + categoryColumnCount
+  const initTotal = totals?.init_balance ?? 0
+  const endTotal = totals?.end_balance ?? 0
+  values[base] = initTotal === 0 ? '' : initTotal > 0 ? '借' : '贷'
+  values[base + 1] = formatSignedBalanceAmount(initTotal, false)
+  values[base + 2] = totals?.current_debit ?? 0
+  values[base + 3] = totals?.current_credit ?? 0
+  values[base + 4] = endTotal === 0 ? '' : endTotal > 0 ? '借' : '贷'
+  values[base + 5] = formatSignedBalanceAmount(endTotal, false)
+  return values
+}
+
+/** 辅助项目明细账导出合计行：按可见导出列顺序填充，与界面 show-summary 一致 */
+export function buildAuxDetailExportSummaryValues(
+  columns: ExportColumnDef[],
+  rows: Array<Record<string, any>>,
+  formatRunningBalanceDirection: (row: Record<string, any>) => string,
+  formatBalanceDisplay: (balance: number | undefined) => string
+): (string | number)[] {
+  const leaves = flattenExportLeafColumns(columns)
+  const normalEntries = rows.filter(
+    row => !row.is_monthly_subtotal && !row.is_yearly_subtotal && !row.is_opening_balance
+  )
+  const lastEntry = normalEntries[normalEntries.length - 1]
+  return leaves.map((col, index) => {
+    if (index === 0) return ''
+    switch (col.label) {
+      case '借方':
+        return normalEntries.reduce(
+          (sum, row) => sum + (row.direction === 'debit' ? row.amount : 0),
+          0
+        )
+      case '贷方':
+        return normalEntries.reduce(
+          (sum, row) => sum + (row.direction === 'credit' ? row.amount : 0),
+          0
+        )
+      case '方向':
+        return lastEntry ? formatRunningBalanceDirection(lastEntry) : ''
+      case '余额':
+        return lastEntry ? formatBalanceDisplay(lastEntry.running_balance) : formatBalanceDisplay(0)
+      default:
+        return ''
+    }
+  })
 }

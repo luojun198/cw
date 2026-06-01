@@ -1,20 +1,36 @@
 <template>
   <div class="page">
+    <div v-if="showVoucherAuditReturn" class="voucher-audit-return-zone">
+      <button type="button" class="voucher-audit-return-btn" @click="returnToVoucherAudit">
+        <span class="voucher-audit-return-btn__icon-wrap" aria-hidden="true">
+          <el-icon class="voucher-audit-return-btn__icon"><Back /></el-icon>
+        </span>
+        <span class="voucher-audit-return-btn__content">
+          <span class="voucher-audit-return-btn__eyebrow">凭证记账未完成</span>
+          <span class="voucher-audit-return-btn__title">返回凭证管理</span>
+          <span class="voucher-audit-return-btn__desc">{{ voucherAuditReturnHint }}</span>
+        </span>
+        <span class="voucher-audit-return-btn__action">
+          <span>立即返回</span>
+          <el-icon><ArrowRight /></el-icon>
+        </span>
+      </button>
+    </div>
+
     <div class="page-header">
-      <div class="header-title-block">
+      <div class="header-left">
         <h3>期初余额录入</h3>
-        <div class="year-context">
-          <el-select v-model="selectedYear" class="year-select" size="small" @change="onYearChange">
-            <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-          </el-select>
-          <el-tag v-if="isMidYear" type="warning" size="small" effect="plain">
-            年中开账 · 第{{ startMonth }}期
-          </el-tag>
-        </div>
+        <el-select v-model="selectedYear" class="year-select" size="small" @change="onYearChange">
+          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
+        </el-select>
+        <el-tag v-if="isMidYear" type="warning" size="small" effect="plain">
+          年中开账 · 第{{ startMonth }}期
+        </el-tag>
       </div>
 
       <div class="toolbar">
-        <div class="toolbar-group toolbar-group--tree">
+        <div class="toolbar-track">
+          <div class="toolbar-nav">
           <el-button-group>
             <el-button plain size="small" title="全部收拢 (Ctrl+\)" @click="collapseAll">
               <el-icon><Fold /></el-icon>
@@ -33,167 +49,176 @@
               底层
             </el-button>
           </el-button-group>
-        </div>
+          </div>
+
+          <div class="toolbar-actions">
+        <el-input
+          v-model="keyword"
+          placeholder="科目编码 / 名称"
+          class="search-input"
+          size="small"
+          clearable
+          @input="onSearchInput"
+          @clear="onSearchClear"
+        >
+          <template #prefix>
+            <el-icon><Search /></el-icon>
+          </template>
+        </el-input>
+        <el-button
+          :type="filterAuxOnly ? 'warning' : 'default'"
+          :plain="!filterAuxOnly"
+          size="small"
+          @click="toggleAuxFilter"
+        >
+          <el-icon><Filter /></el-icon>
+          辅助期初
+        </el-button>
+        <el-checkbox v-model="showZeroValue" size="small" class="zero-filter-checkbox">
+          零值显示
+        </el-checkbox>
 
         <el-divider direction="vertical" class="toolbar-divider" />
 
-        <div class="toolbar-group toolbar-group--filter">
-          <el-input
-            v-model="keyword"
-            placeholder="科目编码 / 名称"
-            class="search-input"
-            size="small"
-            clearable
-            @input="onSearchInput"
-            @clear="onSearchClear"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-          </el-input>
-          <el-badge
-            v-if="auxLeafCount > 0"
-            :value="auxLeafCount"
-            :type="filterAuxOnly ? 'danger' : 'info'"
-            class="aux-filter-badge"
-          >
-            <el-button
-              :type="filterAuxOnly ? 'warning' : 'default'"
-              :plain="!filterAuxOnly"
-              size="small"
-              @click="toggleAuxFilter"
-            >
-              <el-icon><Filter /></el-icon>
-              辅助期初
-            </el-button>
-          </el-badge>
-          <el-button
-            v-else
-            :type="filterAuxOnly ? 'warning' : 'default'"
-            :plain="!filterAuxOnly"
-            size="small"
-            @click="toggleAuxFilter"
-          >
-            <el-icon><Filter /></el-icon>
-            辅助期初
-          </el-button>
-          <el-checkbox v-model="showZeroValue" size="small" class="zero-filter-checkbox">
-            零值显示
-          </el-checkbox>
-        </div>
+        <el-button type="info" plain size="small" @click="fetchData">
+          <el-icon><Refresh /></el-icon>
+          刷新
+        </el-button>
+        <el-button type="success" size="small" @click="checkBalance">
+          <el-icon><CircleCheck /></el-icon>
+          校验平衡
+        </el-button>
 
         <el-divider direction="vertical" class="toolbar-divider" />
 
-        <div class="toolbar-group toolbar-group--check">
-          <el-button type="info" plain size="small" @click="fetchData">
-            <el-icon><Refresh /></el-icon>
-            刷新
-          </el-button>
-          <el-button type="success" size="small" @click="checkBalance">
-            <el-icon><CircleCheck /></el-icon>
-            校验平衡
-          </el-button>
-        </div>
+        <el-button plain size="small" :disabled="locked" @click="downloadTemplate">
+          <el-icon><Download /></el-icon>
+          模板
+        </el-button>
+        <el-button size="small" :disabled="locked" @click="openImportDialog">
+          <el-icon><Upload /></el-icon>
+          导入
+        </el-button>
+        <el-button type="danger" plain size="small" :disabled="locked" @click="openClearDialog">
+          <el-icon><Delete /></el-icon>
+          清理
+        </el-button>
 
         <el-divider direction="vertical" class="toolbar-divider" />
 
-        <div class="toolbar-group toolbar-group--import">
-          <el-button plain size="small" :disabled="locked" @click="downloadTemplate">
-            <el-icon><Download /></el-icon>
-            下载模板
-          </el-button>
-          <el-button size="small" :disabled="locked" @click="importDialogVisible = true">
-            <el-icon><Upload /></el-icon>
-            导入
-          </el-button>
-        </div>
+        <el-button plain size="small" :disabled="list.length === 0" @click="exportData">
+          <el-icon><Download /></el-icon>
+          导出
+        </el-button>
+        <el-button
+          plain
+          size="small"
+          :disabled="auxLeafCount === 0"
+          :loading="exportingAux"
+          @click="exportAllAuxData"
+        >
+          <el-icon><Download /></el-icon>
+          导出辅助
+        </el-button>
 
         <el-divider direction="vertical" class="toolbar-divider" />
 
-        <div class="toolbar-group toolbar-group--export">
-          <el-button plain size="small" :disabled="list.length === 0" @click="exportData">
-            <el-icon><Download /></el-icon>
-            导出
-          </el-button>
-          <el-button
-            plain
-            size="small"
-            :disabled="auxLeafCount === 0"
-            :loading="exportingAux"
-            @click="exportAllAuxData"
-          >
-            <el-icon><Download /></el-icon>
-            导出辅助期初
-          </el-button>
-        </div>
-
-        <el-divider direction="vertical" class="toolbar-divider" />
-
-        <div class="toolbar-group toolbar-group--save">
-          <el-button type="primary" size="small" :disabled="locked" :loading="saving" @click="saveAll">
-            <el-icon><DocumentChecked /></el-icon>
-            保存全部
-          </el-button>
+        <el-button type="primary" size="small" :disabled="locked" :loading="saving" @click="saveAll">
+          <el-icon><DocumentChecked /></el-icon>
+          保存全部
+        </el-button>
+          </div>
         </div>
       </div>
     </div>
 
-    <el-alert v-if="locked" type="warning" show-icon :closable="false" style="margin-bottom: 12px">
-      {{ lockReason }}
-    </el-alert>
+    <AccountScopeAlert :accounts-count="list.length" />
 
+    <EmptyState
+      v-if="isScopeBlocked && initDataLoaded"
+      type="account"
+      :description="scopeEmptyDescription"
+      class="init-balance-scope-empty"
+    />
+
+    <template v-else>
+    <div class="table-wrap">
     <div class="balance-check-bar">
-      <div :class="['balance-check-inner', balanceCheck?.balanced ? 'balanced' : 'unbalanced']">
-        <span class="balance-check-icon">{{
-          balanceCheck ? (balanceCheck.balanced ? '✅' : '⚠️') : '📋'
-        }}</span>
-        <span class="balance-check-text">
-          借贷平衡检验：借方合计 {{ formatMoney(balanceCheck?.totalDebit || 0) }} / 贷方合计
+      <div
+        :class="[
+          'balance-check-row',
+          locked ? 'is-locked' : '',
+          !locked && balanceCheck && balanceCheck.balanced && balanceCheck.auxCategoryConsistent
+            ? 'is-ok'
+            : '',
+          !locked && balanceCheck && (!balanceCheck.balanced || !balanceCheck.auxCategoryConsistent)
+            ? 'has-error'
+            : '',
+        ]"
+      >
+        <span v-if="locked" class="balance-check-segment balance-check-segment--lock" :title="lockReason">
+          <span class="balance-check-icon">⚠️</span>
+          {{ lockReason }}
+        </span>
+
+        <span v-if="locked" class="balance-check-divider">|</span>
+
+        <span class="balance-check-segment">
+          <span class="balance-check-icon">{{
+            balanceCheck ? (balanceCheck.balanced ? '✅' : '⚠️') : '📋'
+          }}</span>
+          借贷平衡：借 {{ formatMoney(balanceCheck?.totalDebit || 0) }} / 贷
           {{ formatMoney(balanceCheck?.totalCredit || 0) }}
           <template v-if="balanceCheck">
             — {{ balanceCheck.balanced ? '平衡' : '不平衡' }}
             <template v-if="!balanceCheck.balanced">
-              ，差额 {{ formatMoney(Math.abs((balanceCheck.totalDebit || 0) - (balanceCheck.totalCredit || 0))) }}
+              ，差额
+              {{
+                formatMoney(
+                  Math.abs((balanceCheck.totalDebit || 0) - (balanceCheck.totalCredit || 0))
+                )
+              }}
             </template>
           </template>
-          <template v-else> — 点击"校验平衡"开始检验</template>
+          <template v-else> — 点击「校验平衡」</template>
         </span>
-      </div>
-      <div
-        v-if="balanceCheck"
-        :class="[
-          'balance-check-inner',
-          'balance-check-inner--aux',
-          balanceCheck.auxCategoryConsistent ? 'balanced' : 'unbalanced',
-        ]"
-      >
-        <span class="balance-check-icon">{{
-          balanceCheck.auxCategoryConsistent ? '✅' : '⚠️'
-        }}</span>
-        <div class="balance-check-text">
-          <span>
-            辅助类目检验：
-            <template v-if="balanceCheck.auxCategoryConsistent">各科目不同辅助类目合计一致</template>
-            <template v-else>
-              {{ balanceCheck.auxCategoryMismatches?.length || 0 }} 个科目不一致
-            </template>
-          </span>
-          <ul
-            v-if="!balanceCheck.auxCategoryConsistent && balanceCheck.auxCategoryMismatches?.length"
-            class="aux-mismatch-list"
+
+        <span class="balance-check-divider">|</span>
+
+        <span class="balance-check-segment">
+          <span class="balance-check-icon">{{
+            balanceCheck ? (balanceCheck.auxCategoryConsistent ? '✅' : '⚠️') : '📋'
+          }}</span>
+          辅助类目：
+          <template v-if="!balanceCheck">点击「校验平衡」</template>
+          <template v-else-if="balanceCheck.auxCategoryConsistent">各科目不同辅助类目合计一致</template>
+          <el-tooltip
+            v-else
+            placement="bottom"
+            :disabled="!balanceCheck.auxCategoryMismatches?.length"
           >
-            <li v-for="item in balanceCheck.auxCategoryMismatches" :key="item.account_id">
-              {{ formatAuxMismatchSummary(item) }}
-            </li>
-          </ul>
-        </div>
+            <template #content>
+              <div v-for="item in balanceCheck.auxCategoryMismatches" :key="item.account_id">
+                {{ formatAuxMismatchSummary(item) }}
+              </div>
+            </template>
+            <span class="aux-mismatch-inline">
+              {{ balanceCheck.auxCategoryMismatches?.length || 0 }} 个科目不一致（悬停查看明细）
+            </span>
+          </el-tooltip>
+        </span>
       </div>
     </div>
 
-    <div class="table-summary-scroll">
+    <div
+      ref="tableContainerRef"
+      class="table-summary-scroll table-summary-scroll--wide table-summary-scroll--flow"
+    >
     <el-table
       ref="tableRef"
+      :height="tableHeight"
       :data="displayData"
+      :fit="false"
       stripe
       border
       size="small"
@@ -204,7 +229,7 @@
       row-key="id"
       :tree-props="{ children: 'children', hasChildren: 'hasChildren' }"
       :expand-row-keys="expandedKeys"
-      :class="['balance-table', summaryBalanceClass]"
+      :class="['balance-table', 'compact-data-table', summaryBalanceClass]"
       show-summary
       :summary-method="getSummaries"
       @current-change="handleCurrentRowChange"
@@ -442,13 +467,16 @@
       </el-table-column>
     </el-table>
     </div>
+    </div>
+    </template>
 
     <!-- 导入对话框 -->
     <el-dialog
       v-model="importDialogVisible"
       title="导入期初余额"
-      width="620px"
-      @close="closeImportDialog"
+      width="960px"
+      class="spreadsheet-import-dialog"
+      @closed="resetImportDialog"
     >
       <div class="import-tips">
         <p>
@@ -456,7 +484,7 @@
           <el-link type="primary" @click="downloadTemplate">下载导入模板</el-link
           >，按模板格式填写数据
         </p>
-        <p>2. 按科目编码匹配，已有数据将被覆盖</p>
+        <p>2. 按<strong>科目编码或名称</strong>匹配（优先编码），已有数据将被覆盖</p>
         <p>
           3. 年初借方/贷方只能填一侧{{ isMidYear ? '；账前借方/贷方为年中开账时填写' : '' }}
         </p>
@@ -467,6 +495,7 @@
         :auto-upload="false"
         :limit="1"
         accept=".xlsx,.xls"
+        :disabled="importParsing"
         :on-change="onImportFileChange"
         :on-exceed="() => showError('只能上传一个文件')"
         drag
@@ -478,51 +507,66 @@
         </template>
       </el-upload>
 
+      <div v-if="importParsing" class="import-parsing">
+        <el-progress :percentage="importParseProgress" :stroke-width="16" />
+        <p class="import-parsing__text">{{ importParseMessage }}</p>
+      </div>
+
       <div v-if="importPreview.length > 0" class="import-preview">
-        <el-alert
-          :title="`解析成功：${importPreview.length} 条数据（匹配到 ${importMatched} 个科目）`"
-          type="success"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 12px"
+        <SpreadsheetImportSummaryAlert
+          :summary="importSummary"
+          :issue-count="importIssueCount"
+          @view-issues="openImportIssuesDialog"
         />
-        <el-table :data="importPreview.slice(0, 10)" stripe border size="small" max-height="240">
+        <el-table :data="importPreview.slice(0, 15)" stripe border size="small" max-height="280">
+          <el-table-column prop="rowIndex" label="行号" width="60" />
           <el-table-column prop="code" label="科目编码" width="100" />
           <el-table-column prop="name" label="科目名称" min-width="140" />
-          <el-table-column prop="opening_debit" label="年初借方" width="110" align="right" />
-          <el-table-column prop="opening_credit" label="年初贷方" width="110" align="right" />
+          <el-table-column prop="opening_debit" label="年初借方" width="110" align="right">
+            <template #default="{ row }">{{ formatAmount(row.opening_debit || 0) }}</template>
+          </el-table-column>
+          <el-table-column prop="opening_credit" label="年初贷方" width="110" align="right">
+            <template #default="{ row }">{{ formatAmount(row.opening_credit || 0) }}</template>
+          </el-table-column>
           <el-table-column
-            v-if="isMidYear"
+            v-if="showImportPreBookColumns"
             prop="pre_book_debit"
             label="帐前借方"
             width="110"
             align="right"
-          />
+          >
+            <template #default="{ row }">{{ formatAmount(row.pre_book_debit || 0) }}</template>
+          </el-table-column>
           <el-table-column
-            v-if="isMidYear"
+            v-if="showImportPreBookColumns"
             prop="pre_book_credit"
             label="帐前贷方"
             width="110"
             align="right"
-          />
-          <el-table-column prop="matched" label="匹配" width="70" align="center">
+          >
+            <template #default="{ row }">{{ formatAmount(row.pre_book_credit || 0) }}</template>
+          </el-table-column>
+          <el-table-column prop="matched" label="状态" width="90" align="center">
             <template #default="{ row }">
-              <el-tag :type="row.matched ? 'success' : 'danger'" size="small">{{
-                row.matched ? '是' : '否'
-              }}</el-tag>
+              <el-tag :type="row.matched ? 'success' : 'danger'" size="small">
+                {{ row.matched ? '有效' : row.error || '无效' }}
+              </el-tag>
             </template>
           </el-table-column>
         </el-table>
-        <div
-          v-if="importPreview.length > 10"
-          style="color: #909399; font-size: 12px; margin-top: 4px"
-        >
-          仅展示前 10 条，共 {{ importPreview.length }} 条
+        <div v-if="importPreview.length > 15" class="import-preview-more">
+          预览仅显示前 15 行，共 {{ importPreview.length }} 行；异常明细请点「查看异常说明」
         </div>
       </div>
 
       <template #footer>
         <el-button @click="closeImportDialog">取消</el-button>
+        <el-button
+          v-if="importIssueCount > 0"
+          @click="openImportIssuesDialog"
+        >
+          查看异常说明
+        </el-button>
         <el-button
           type="primary"
           :disabled="importMatched === 0"
@@ -533,12 +577,66 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <SpreadsheetImportIssuesDialog
+      v-model:visible="importIssuesDialogVisible"
+      :issues="importIssues"
+      :loading="importIssuesLoading"
+      :total-count="importIssueCount > 0 ? importIssueCount : null"
+      intro="以下行未能通过校验，不会写入期初余额。同类问题已合并展示；请按说明修正模板后重新上传。"
+    />
+
+    <el-dialog
+      v-model="clearDialogVisible"
+      title="批量清理期初"
+      width="520px"
+      @open="loadClearPreview"
+    >
+      <el-alert type="warning" show-icon :closable="false" style="margin-bottom: 16px">
+        清理后数据不可恢复，请确认导错后再操作。已有已审核/已记账凭证的年度无法清理。
+      </el-alert>
+      <el-radio-group v-model="clearMode" class="clear-mode-group" @change="loadClearPreview">
+        <el-radio value="direct_all">
+          清空全部科目期初
+          <span class="clear-count">（{{ clearPreview.directAll }} 条）</span>
+        </el-radio>
+        <el-radio value="aux_all">
+          清空全部辅助期初明细
+          <span class="clear-count">（{{ clearPreview.auxAll }} 条）</span>
+        </el-radio>
+        <el-radio
+          value="direct_filtered"
+          :disabled="filteredDirectClearCount === 0"
+        >
+          清空当前筛选结果的科目期初
+          <span class="clear-count">（{{ clearPreview.directFiltered }} 条）</span>
+        </el-radio>
+      </el-radio-group>
+      <template #footer>
+        <el-button @click="clearDialogVisible = false">取消</el-button>
+        <el-button
+          type="danger"
+          :loading="clearing"
+          :disabled="currentClearCount === 0"
+          @click="confirmBatchClear"
+        >
+          确认清理（{{ currentClearCount }} 条）
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <TaskProgressDialog
+      v-model="taskProgressVisible"
+      :task-id="currentTaskId"
+      :task-type="currentTaskType"
+      @completed="handleTaskCompleted"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted, onActivated, onBeforeUnmount, nextTick } from 'vue'
-import { useRouter, useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   Upload,
   Download,
@@ -551,12 +649,36 @@ import {
   Bottom,
   CircleCheck,
   DocumentChecked,
+  Delete,
+  Back,
+  ArrowRight,
 } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { useAsyncBatchTask } from '@/composables/useAsyncBatchTask'
+import TaskProgressDialog from '@/components/task/TaskProgressDialog.vue'
+import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
+import EmptyState from '@/components/EmptyState.vue'
+import SpreadsheetImportSummaryAlert from '@/components/common/SpreadsheetImportSummaryAlert.vue'
+import SpreadsheetImportIssuesDialog from '@/components/common/SpreadsheetImportIssuesDialog.vue'
+import {
+  buildInitBalanceImportSummary,
+  buildInitBalanceNameMap,
+  collectInitBalanceImportIssues,
+  describeInitBalanceRowIssue,
+  parseInitBalanceImportRowsAsync,
+  type InitBalanceImportRow,
+} from '@/utils/initBalanceImport'
+import { aggregateImportIssuesAsync } from '@/utils/spreadsheetImportReport'
+import { yieldToMain } from '@/utils/asyncChunk'
+import { useAccountScopeHint } from '@/composables/useAccountScopeHint'
 import { showSuccess, showError, showOperationError } from '@/composables/useMessage'
+import { useVoucherAuditReturnStore } from '@/stores/voucherAuditReturn'
+import { useConfirm } from '@/composables/useConfirm'
 import { formatAmount } from '@/utils/format'
 import { formatAuxMismatchSummary } from '@/utils/balanceCheckAlert'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
 import { normalizeOpeningDebitCredit } from '@/utils/initBalanceOpening'
+import { normalizeImportCode } from '@/utils/textNormalize'
 import { exportStyledTable, exportStyledWorkbook } from '@/utils/exportStyledExcel'
 import {
   buildInitBalanceExportColumns,
@@ -566,8 +688,50 @@ import type { TableColumnCtx, UploadFile } from 'element-plus'
 
 const router = useRouter()
 const route = useRoute()
+const voucherAuditReturnStore = useVoucherAuditReturnStore()
+
+const showVoucherAuditReturn = computed(
+  () => route.query.from === 'voucher-audit' && Boolean(voucherAuditReturnStore.peek())
+)
+
+const voucherAuditReturnHint = computed(() => {
+  const ctx = voucherAuditReturnStore.peek()
+  if (!ctx) return '已保留筛选、分页与勾选状态'
+  if (ctx.selectAllMode) return '已保留「全选所有页」的批量记账选择'
+  if (ctx.selectedVoucherIds.length > 0) {
+    return `已保留 ${ctx.selectedVoucherIds.length} 张凭证勾选，期初配平后可继续记账`
+  }
+  return '已保留筛选与分页条件，期初配平后可继续记账'
+})
+
+function returnToVoucherAudit() {
+  router.push({ name: 'VoucherAudit', query: { restoreAudit: '1' } })
+}
+
+function applyInitBalanceEntryYear() {
+  const qYear = Number(route.query.year)
+  if (qYear) {
+    selectedYear.value = qYear
+    return
+  }
+  const ctx = voucherAuditReturnStore.peek()
+  if (route.query.from === 'voucher-audit' && ctx?.targetYear) {
+    selectedYear.value = ctx.targetYear
+  }
+}
+const {
+  taskProgressVisible,
+  currentTaskId,
+  currentTaskType,
+  startAsyncTask,
+} = useAsyncBatchTask()
 
 const list = ref<any[]>([])
+const initDataLoaded = ref(false)
+const listCount = computed(() => list.value.length)
+const { isBlocked: isScopeBlocked, emptyDescription: scopeEmptyDescription } = useAccountScopeHint({
+  accountsCount: listCount,
+})
 const balanceCheck = ref<any>(null)
 const isMidYear = ref(false)
 const startMonth = ref(1)
@@ -577,8 +741,9 @@ const lockReason = ref('')
 const keyword = ref('')
 const filterAuxOnly = ref(false)
 /** 勾选后显示全零科目；默认不勾选，仅显示有期初/账前金额的科目 */
-const showZeroValue = ref(false)
+const showZeroValue = ref(true)
 const tableRef = ref<any>(null)
+const { containerRef: tableContainerRef, tableHeight, relayoutAfterData } = useFillHeightTable({ flow: true })
 
 const expandedSet = ref<Set<string>>(new Set())
 const expandedKeys = computed(() => [...expandedSet.value].map(String))
@@ -592,11 +757,41 @@ const years = Array.from({ length: 10 }, (_, i) => currentYear - i)
 
 // 导入相关
 const importDialogVisible = ref(false)
-const importPreview = ref<any[]>([])
+const importPreview = ref<InitBalanceImportRow[]>([])
 const importUploadRef = ref<any>(null)
 const importing = ref(false)
+const importIssuesDialogVisible = ref(false)
+const importBlankSkipped = ref(0)
+const importTemplateWarning = ref<string | null>(null)
+const importParsing = ref(false)
+const importParseProgress = ref(0)
+const importParseMessage = ref('')
+const importIssues = ref<ReturnType<typeof collectInitBalanceImportIssues>>([])
+const importIssuesLoading = ref(false)
+let importIssuesBuildToken = 0
 const exportingAux = ref(false)
+const clearDialogVisible = ref(false)
+const clearing = ref(false)
+const clearMode = ref<'direct_all' | 'aux_all' | 'direct_filtered'>('direct_all')
+const clearPreview = ref({ directAll: 0, auxAll: 0, directFiltered: 0 })
 const importMatched = computed(() => importPreview.value.filter(r => r.matched).length)
+const importIssueCount = computed(() => importPreview.value.filter(r => !r.matched).length)
+const importSummary = computed(() =>
+  buildInitBalanceImportSummary({
+    contentRowCount: importPreview.value.length,
+    validCount: importMatched.value,
+    issueCount: importIssueCount.value,
+    blankSkipped: importBlankSkipped.value,
+    templateWarning: importTemplateWarning.value,
+  })
+)
+const showImportPreBookColumns = computed(
+  () =>
+    isMidYear.value ||
+    importPreview.value.some(
+      r => Math.abs(r.pre_book_debit || 0) > 0.000001 || Math.abs(r.pre_book_credit || 0) > 0.000001
+    )
+)
 
 function formatMoney(val: number) {
   return '¥' + formatAmount(val || 0)
@@ -1432,8 +1627,11 @@ async function fetchData() {
     })
     await nextTick()
     recalcParentTotals()
+    initDataLoaded.value = true
+    await relayoutAfterData()
   } catch (error) {
     showOperationError('获取期初余额', error)
+    initDataLoaded.value = true
   }
 }
 
@@ -1521,16 +1719,115 @@ async function saveAll() {
       return
     }
 
-    await request.post('/base/init-balances/batch', {
-      year: selectedYear.value,
-      items,
-    })
-    await checkBalance()
-    showSuccess(`期初余额保存成功，共 ${items.length} 条`)
+    await startAsyncTask('init-balance-import', () =>
+      request.post('/base/init-balances/batch-async', {
+        year: selectedYear.value,
+        items,
+      })
+    )
   } catch (error) {
     showOperationError('保存期初余额', error)
   } finally {
     saving.value = false
+  }
+}
+
+const filteredDirectClearAccountIds = computed(() => {
+  const kw = keyword.value.trim().toLowerCase()
+  return list.value
+    .filter(r => !parentIdSet.value.has(r.id))
+    .filter(r => !isAuxLeafAccount(r))
+    .filter(r => {
+      if (!kw) return true
+      return (
+        String(r.code).toLowerCase().includes(kw) || String(r.name).toLowerCase().includes(kw)
+      )
+    })
+    .map(r => r.id)
+})
+
+const filteredDirectClearCount = computed(() => clearPreview.value.directFiltered)
+
+const currentClearCount = computed(() => {
+  if (clearMode.value === 'aux_all') return clearPreview.value.auxAll
+  if (clearMode.value === 'direct_filtered') return clearPreview.value.directFiltered
+  return clearPreview.value.directAll
+})
+
+function openClearDialog() {
+  clearMode.value = 'direct_all'
+  clearDialogVisible.value = true
+}
+
+async function loadClearPreview() {
+  try {
+    const [directAllRes, auxAllRes, filteredRes] = await Promise.all([
+      request.get('/base/init-balances/clear-preview', {
+        params: { year: selectedYear.value, mode: 'direct' },
+      }) as Promise<any>,
+      request.get('/base/init-balances/clear-preview', {
+        params: { year: selectedYear.value, mode: 'aux' },
+      }) as Promise<any>,
+      filteredDirectClearAccountIds.value.length
+        ? (request.get('/base/init-balances/clear-preview', {
+            params: {
+              year: selectedYear.value,
+              mode: 'direct',
+              account_ids: filteredDirectClearAccountIds.value.join(','),
+            },
+          }) as Promise<any>)
+        : Promise.resolve({ data: { count: 0 } }),
+    ])
+    clearPreview.value = {
+      directAll: directAllRes.data?.count || 0,
+      auxAll: auxAllRes.data?.count || 0,
+      directFiltered: filteredRes.data?.count || 0,
+    }
+  } catch (error) {
+    showOperationError('获取清理预览', error)
+  }
+}
+
+async function confirmBatchClear() {
+  const count = currentClearCount.value
+  if (count <= 0) {
+    showError('没有可清理的数据')
+    return
+  }
+
+  const scopeLabel =
+    clearMode.value === 'aux_all'
+      ? '全部辅助期初明细'
+      : clearMode.value === 'direct_filtered'
+        ? '当前筛选结果的科目期初'
+        : '全部科目期初'
+
+  const confirmed = await useConfirm({
+    title: '批量清理确认',
+    message: `确定要清理 ${selectedYear.value} 年的「${scopeLabel}」吗？共 ${count} 条记录，此操作不可恢复。`,
+    type: 'warning',
+    confirmButtonText: '确认清理',
+    cancelButtonText: '取消',
+  })
+  if (!confirmed) return
+
+  clearing.value = true
+  try {
+    const payload: Record<string, unknown> = {
+      year: selectedYear.value,
+      mode: clearMode.value === 'aux_all' ? 'aux' : 'direct',
+    }
+    if (clearMode.value === 'direct_filtered') {
+      payload.account_ids = filteredDirectClearAccountIds.value
+    }
+    await startAsyncTask('init-balance-clear', () =>
+      request.post('/base/init-balances/batch-clear-async', payload)
+    )
+    clearDialogVisible.value = false
+  } catch (error) {
+    showOperationError('批量清理期初', error)
+  } finally {
+    clearing.value = false
   }
 }
 
@@ -1729,70 +2026,115 @@ async function downloadTemplate() {
   writeFile(wb, `期初余额导入模板_${selectedYear.value}年.xlsx`)
 }
 
-async function onImportFileChange(file: UploadFile) {
-  if (!file.raw) return
+function resetImportDialog() {
+  importPreview.value = []
+  importBlankSkipped.value = 0
+  importTemplateWarning.value = null
+  importIssuesDialogVisible.value = false
+  importIssues.value = []
+  importParsing.value = false
+  importParseProgress.value = 0
+  importParseMessage.value = ''
+  importing.value = false
+  importUploadRef.value?.clearFiles()
+}
+
+async function refreshImportIssuesAsync() {
+  const token = ++importIssuesBuildToken
+  importIssuesLoading.value = true
+  importIssues.value = []
   try {
-    const { utils, read } = await import('xlsx')
+    await nextTick()
+    await yieldToMain()
+    importIssues.value = await aggregateImportIssuesAsync(
+      importPreview.value,
+      describeInitBalanceRowIssue
+    )
+  } finally {
+    if (token === importIssuesBuildToken) importIssuesLoading.value = false
+  }
+}
+
+async function openImportIssuesDialog() {
+  importIssuesDialogVisible.value = true
+  await refreshImportIssuesAsync()
+}
+
+function openImportDialog() {
+  resetImportDialog()
+  importDialogVisible.value = true
+}
+
+function closeImportDialog() {
+  importDialogVisible.value = false
+}
+
+async function onImportFileChange(file: UploadFile) {
+  if (!file.raw || importParsing.value) return
+  importParsing.value = true
+  importParseProgress.value = 0
+  importParseMessage.value = '正在读取 Excel 文件…'
+  try {
+    await nextTick()
+    await yieldToMain()
     const arrayBuffer = await file.raw.arrayBuffer()
+    await yieldToMain()
+    importParseMessage.value = '正在解析工作表…'
+    const { utils, read } = await import('xlsx')
     const workbook = read(arrayBuffer, { type: 'array' })
     const sheetName = workbook.SheetNames[0]
     const sheet = workbook.Sheets[sheetName]
-    const rawData: any[] = utils.sheet_to_json(sheet)
+    await yieldToMain()
+    importParseMessage.value = '正在校验导入数据…'
+    const rawData: Record<string, unknown>[] = utils.sheet_to_json(sheet, { defval: '' })
 
     if (rawData.length === 0) {
       showError('文件中没有数据')
+      resetImportDialog()
       return
     }
 
-    // 建立科目编码 -> 科目的映射
-    const codeMap = new Map(list.value.map(a => [String(a.code).trim(), a]))
-
-    const parsed = rawData
-      .map((row: any) => {
-        const code = String(row['科目编码'] || '').trim()
-        const account = codeMap.get(code)
-        if (account && isAuxLeafAccount(account)) {
-          return null
-        }
-        let opening_debit = Number(row['年初借方']) || 0
-        let opening_credit = Number(row['年初贷方']) || 0
-        let matched = !!account
-        let error = ''
-        if (account && opening_debit > 0.005 && opening_credit > 0.005) {
-          matched = false
-          error = '年初借方与年初贷方不能同时填写'
-        }
-        if (matched) {
-          const opening = normalizeOpeningDebitCredit(opening_debit, opening_credit)
-          opening_debit = opening.opening_debit
-          opening_credit = opening.opening_credit
-        }
-        return {
-          code,
-          name: row['科目名称'] || account?.name || '',
-          direction: account?.direction || '',
-          opening_debit,
-          opening_credit,
-          pre_book_debit: Number(row['帐前借方']) || 0,
-          pre_book_credit: Number(row['帐前贷方']) || 0,
-          matched,
-          error,
-          account_id: account?.id,
-        }
-      })
-      .filter((r): r is NonNullable<typeof r> => r != null && !!r.code)
-
-    importPreview.value = parsed
+    const codeMap = new Map(
+      list.value.map(a => [normalizeImportCode(String(a.code)), a] as [string, typeof a])
+    )
+    const nameMap = buildInitBalanceNameMap(list.value)
+    const { rows, blankSkipped, templateWarning } = await parseInitBalanceImportRowsAsync(
+      rawData,
+      codeMap,
+      nameMap,
+      isAuxLeafAccount,
+      isMidYear.value,
+      {
+        onProgress: pct => {
+          importParseProgress.value = pct
+        },
+      }
+    )
+    importBlankSkipped.value = blankSkipped
+    importTemplateWarning.value = templateWarning
+    importPreview.value = rows
+    importIssues.value = []
+    if (rows.length > 0 && rows.every(r => !r.matched) && rows.some(r => r.error)) {
+      void openImportIssuesDialog()
+    }
   } catch (error) {
     showError('文件解析失败，请检查文件格式')
     console.error('Import parse error:', error)
+    resetImportDialog()
+  } finally {
+    importParsing.value = false
+    importParseMessage.value = ''
   }
 }
 
 async function handleImport() {
   const matched = importPreview.value.filter(r => r.matched)
-  if (matched.length === 0) return
+  if (matched.length === 0) {
+    if (importIssueCount.value > 0) void openImportIssuesDialog()
+    return
+  }
   importing.value = true
+  const skipped = importPreview.value.length - matched.length
 
   try {
     const items = matched.map(r => {
@@ -1807,38 +2149,37 @@ async function handleImport() {
       }
     })
 
-    await request.post('/base/init-balances/batch', {
-      year: selectedYear.value,
-      items,
-    })
-
-    showSuccess(`导入成功，共 ${matched.length} 条`)
+    await startAsyncTask('init-balance-import', () =>
+      request.post('/base/init-balances/batch-async', {
+        year: selectedYear.value,
+        items,
+      })
+    )
+    if (skipped > 0) {
+      showSuccess(`已提交 ${matched.length} 条期初导入，另有 ${skipped} 行未通过校验已跳过`)
+    }
     closeImportDialog()
-    await fetchData()
-    await checkBalance()
   } catch (error) {
     showOperationError('导入期初余额', error)
+    importUploadRef.value?.clearFiles()
   } finally {
     importing.value = false
   }
 }
 
-function closeImportDialog() {
-  importDialogVisible.value = false
-  importPreview.value = []
-  importUploadRef.value?.clearFiles()
+async function handleTaskCompleted() {
+  await fetchData()
+  await checkBalance()
 }
 
 onMounted(() => {
-  const qYear = Number(route.query.year)
-  if (qYear) selectedYear.value = qYear
+  applyInitBalanceEntryYear()
   fetchData()
   checkCanEdit()
   window.addEventListener('keydown', handleKeydown)
 })
 onActivated(() => {
-  const qYear = Number(route.query.year)
-  if (qYear) selectedYear.value = qYear
+  applyInitBalanceEntryYear()
   fetchData()
   checkCanEdit()
 })
@@ -1849,7 +2190,7 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .page {
-  height: calc(100vh - 60px);
+  height: 100%;
   padding: 12px;
   display: flex;
   flex-direction: column;
@@ -1857,132 +2198,237 @@ onBeforeUnmount(() => {
   background: var(--el-fill-color-lighter);
   box-sizing: border-box;
 }
-.page-header {
+.voucher-audit-return-zone {
+  flex-shrink: 0;
+  margin-bottom: 10px;
+}
+.voucher-audit-return-btn {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 12px 16px;
+  border: 1px solid #b3d8ff;
+  border-radius: 10px;
+  background: linear-gradient(135deg, #ecf5ff 0%, #f0f9ff 55%, #ffffff 100%);
+  box-shadow:
+    0 4px 14px rgba(64, 158, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    transform 0.18s ease,
+    box-shadow 0.18s ease,
+    border-color 0.18s ease;
+}
+.voucher-audit-return-btn:hover {
+  transform: translateY(-1px);
+  border-color: #79bbff;
+  box-shadow:
+    0 8px 20px rgba(64, 158, 255, 0.22),
+    inset 0 1px 0 rgba(255, 255, 255, 0.95);
+}
+.voucher-audit-return-btn:active {
+  transform: translateY(0);
+}
+.voucher-audit-return-btn__icon-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 46px;
+  border-radius: 12px;
+  background: linear-gradient(145deg, #409eff, #337ecc);
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: 0 4px 10px rgba(64, 158, 255, 0.35);
+}
+.voucher-audit-return-btn__icon {
+  font-size: 22px;
+}
+.voucher-audit-return-btn__content {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  margin-bottom: 8px;
-  flex-shrink: 0;
-  padding: 8px 10px;
-  background: var(--el-bg-color);
-  border: 1px solid var(--el-border-color-light);
-  border-radius: 6px;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
 }
-.header-title-block {
+.voucher-audit-return-btn__eyebrow {
+  font-size: 12px;
+  line-height: 1.3;
+  color: #e6a23c;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+.voucher-audit-return-btn__title {
+  font-size: 17px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: #1f2d3d;
+}
+.voucher-audit-return-btn__desc {
+  font-size: 13px;
+  line-height: 1.45;
+  color: #606266;
+}
+.voucher-audit-return-btn__action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 14px;
+  border-radius: 999px;
+  background: #409eff;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
+  box-shadow: 0 2px 8px rgba(64, 158, 255, 0.35);
+  transition: background 0.18s ease;
+}
+.voucher-audit-return-btn:hover .voucher-audit-return-btn__action {
+  background: #337ecc;
+}
+.page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.header-title-block h3 {
-  margin: 0;
-  font-size: 16px;
-  line-height: 1.25;
-  color: #303133;
-}
-.year-context {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.year-select {
-  width: 120px;
-}
-.toolbar {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px 4px;
-}
-.toolbar-group {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 4px 6px;
+  flex-wrap: nowrap;
+  gap: 12px;
+  margin-bottom: 6px;
+  flex-shrink: 0;
+  padding: 6px 10px;
+  background: var(--el-bg-color);
+  border: 1px solid var(--el-border-color-light);
   border-radius: 6px;
-  background: #fff;
-  border: 1px solid #ebeef5;
+  min-width: 0;
+  overflow: hidden;
 }
-.toolbar-group--tree {
-  border-color: #dcdfe6;
+.header-left {
+  display: flex;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  flex-shrink: 0;
 }
-.toolbar-group--filter {
-  border-color: #faecd8;
-  background: #fffcf5;
-}
-.toolbar-group--check {
-  border-color: #d1edc4;
-  background: #f6ffed;
-}
-.toolbar-group--import {
-  border-color: #d9ecff;
-  background: #f0f9ff;
-}
-.toolbar-group--save {
-  border: none;
-  background: transparent;
-  padding: 0 4px;
-  margin-left: auto;
-}
-.toolbar-divider {
-  height: 24px;
-  margin: 0 2px;
-}
-.search-input {
-  width: 190px;
-}
-.aux-filter-badge {
-  margin-left: 2px;
-}
-.zero-filter-checkbox {
-  margin-left: 4px;
+.header-left h3 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1;
+  color: #303133;
   white-space: nowrap;
 }
-.toolbar-group--save .el-button {
-  min-width: 108px;
-  font-weight: 600;
+.year-select {
+  width: 96px;
+}
+.toolbar {
+  margin-left: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.toolbar-track {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: max-content;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+.toolbar-nav,
+.toolbar-actions {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.toolbar-actions {
+  justify-content: flex-end;
+}
+.toolbar-divider {
+  height: 20px;
+  margin: 0 2px;
+  flex-shrink: 0;
+}
+.search-input {
+  width: 150px;
+  flex-shrink: 0;
+}
+.zero-filter-checkbox {
+  margin-left: 2px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.toolbar :deep(.el-button--small) {
+  padding: 5px 8px;
 }
 .balance-check-bar {
-  position: sticky;
-  top: 0;
-  z-index: 10;
   margin-bottom: 6px;
   flex-shrink: 0;
 }
-.balance-check-inner {
+.balance-check-row {
   display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 10px;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 10px;
+  padding: 5px 10px;
   border-radius: 6px;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
+  line-height: 1.4;
+  background: #f4f4f5;
+  border: 1px solid #e4e7ed;
+  color: #606266;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
-.balance-check-inner--aux {
-  margin-top: 6px;
+.balance-check-segment {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
-.aux-mismatch-list {
-  margin: 4px 0 0;
-  padding-left: 18px;
-  font-weight: 500;
-  line-height: 1.5;
+.balance-check-row.is-locked {
+  background: #fdf6ec;
+  border-color: #faecd8;
+  color: #e6a23c;
 }
-.aux-mismatch-list li + li {
-  margin-top: 2px;
-}
-.balance-check-inner.balanced {
+.balance-check-row.is-ok {
   background: #f0f9eb;
-  border: 1px solid #c2e7b0;
+  border-color: #c2e7b0;
   color: #67c23a;
 }
-.balance-check-inner.unbalanced {
+.balance-check-row.has-error {
   background: #fef0f0;
-  border: 1px solid #fbc4c4;
+  border-color: #fbc4c4;
   color: #f56c6c;
 }
+.balance-check-segment--lock {
+  max-width: 42%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.balance-check-divider {
+  color: #c0c4cc;
+  font-weight: 400;
+  flex-shrink: 0;
+}
+.aux-mismatch-inline {
+  cursor: help;
+  text-decoration: underline dotted;
+}
 .balance-check-icon {
-  font-size: 14px;
+  font-size: 13px;
+  flex-shrink: 0;
 }
 .balance-debit {
   font-weight: 600;
@@ -2052,6 +2498,30 @@ onBeforeUnmount(() => {
 .import-preview {
   margin-top: 16px;
 }
+.import-preview-more {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+.import-parsing {
+  margin-top: 12px;
+}
+.import-parsing__text {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+}
+.clear-mode-group {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+.clear-count {
+  color: #909399;
+  font-size: 12px;
+}
 
 .balance-table {
   border-radius: 6px;
@@ -2077,8 +2547,10 @@ onBeforeUnmount(() => {
 :deep(.balance-table th.el-table__cell) {
   padding: 5px 0 !important;
   background: var(--el-fill-color-light) !important;
-  color: var(--el-text-color-regular);
-  font-weight: 600;
+  color: var(--cw-text-primary);
+  font-family: var(--cw-table-header-font-family);
+  font-size: var(--cw-table-header-font-size);
+  font-weight: var(--cw-table-header-font-weight);
 }
 
 :deep(.balance-table .el-table__footer-wrapper td.el-table__cell) {

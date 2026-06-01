@@ -1,3 +1,10 @@
+/**
+ * ⚠️ 已废弃 — 请勿在 index.ts 重新挂载
+ *
+ * 静态净资产变动表 / 财政拨款收入支出表已被动态报表取代。
+ * 静态实现依赖 reportBalance.getBalance / getPeriodSum，与
+ * account_balances.end_balance 跨期错误共用同一数据源（见代码评审 P0-2/P0-3）。
+ */
 import { Router } from 'express'
 import { authMiddleware, AuthRequest } from '../middleware/index.js'
 import { getDb } from '../db/index.js'

@@ -12,13 +12,29 @@ import {
   constants,
   copyFileSync,
 } from 'fs'
-import { resolve, join } from 'path'
+import { resolve, join, basename } from 'path'
 import { exec } from 'child_process'
 import { promisify } from 'util'
 import multer from 'multer'
 import Database from 'better-sqlite3'
-import { getDb, DB_PATH, initDatabase, closeAndResetDb } from '../db/index.js'
-import { authMiddleware, AuthRequest, requirePermission, operationLog } from '../middleware/index.js'
+import { getDb, DB_PATH, initDatabase, closeAndResetDb, DEPLOY_DIR } from '../db/index.js'
+import {
+  formatCompatibilityUpgradeSummary,
+  upgradeDatabaseCompatibility,
+  type CompatibilityUpgradeResult,
+} from '../db/databaseCompatibility.js'
+import {
+  BACKUP_ATTACHMENT_TABLE,
+  detectBackupScope,
+  formatAccountSetRestoreSummary,
+  restoreSingleAccountSetFromBackup,
+} from '../services/accountSetBackupRestore.js'
+import {
+  authMiddleware,
+  AuthRequest,
+  requirePermission,
+  operationLog,
+} from '../middleware/index.js'
 
 const execAsync = promisify(exec)
 
@@ -186,13 +202,15 @@ router.get('/backups/select-folder', async (req: AuthRequest, res) => {
     } else {
       // Linux: 使用 zenity
       try {
-        const { stdout } = await execAsync('zenity --file-selection --directory --title="选择备份文件夹"')
+        const { stdout } = await execAsync(
+          'zenity --file-selection --directory --title="选择备份文件夹"'
+        )
         folderPath = stdout.trim()
       } catch (err: any) {
         // zenity 可能未安装，返回错误
         return res.status(500).json({
           code: 500,
-          message: '系统未安装文件选择器工具（zenity），请手动输入路径'
+          message: '系统未安装文件选择器工具（zenity），请手动输入路径',
         })
       }
     }
@@ -267,9 +285,9 @@ router.get('/backups', (req: AuthRequest, res) => {
   const startDate = req.query.start_date as string
   const endDate = req.query.end_date as string
 
-  // 构建查询条件
-  let whereClause = 'WHERE b.account_set_id=?'
-  const params: any[] = [req.accountSetId]
+  // 完整备份为全库备份，记录列表不按当前账套过滤
+  let whereClause = 'WHERE 1=1'
+  const params: any[] = []
 
   if (startDate) {
     whereClause += ' AND DATE(b.created_at) >= ?'
@@ -281,19 +299,21 @@ router.get('/backups', (req: AuthRequest, res) => {
   }
 
   // 查询总数
-  const total = (
-    db
-      .prepare(`SELECT COUNT(*) as cnt FROM backups b ${whereClause}`)
-      .get(...params) as any
-  )?.cnt || 0
+  const total =
+    (db.prepare(`SELECT COUNT(*) as cnt FROM backups b ${whereClause}`).get(...params) as any)
+      ?.cnt || 0
 
   // 查询分页数据
   const list = db
     .prepare(
       `
-    SELECT b.*, u.nickname as operator_name, u.username as operator_username
+    SELECT b.*,
+           u.nickname as operator_name,
+           u.username as operator_username,
+           a.name as account_set_name
     FROM backups b
     LEFT JOIN users u ON b.created_by = u.id
+    LEFT JOIN account_sets a ON b.account_set_id = a.id
     ${whereClause}
     ORDER BY b.created_at DESC
     LIMIT ? OFFSET ?
@@ -308,34 +328,19 @@ router.get('/backups', (req: AuthRequest, res) => {
 router.get('/backups/stats', (req: AuthRequest, res) => {
   const db = getDb()
   const total =
-    (
-      db
-        .prepare('SELECT COUNT(*) as cnt FROM backups WHERE account_set_id=?')
-        .get(req.accountSetId) as any
-    )?.cnt || 0
+    ((db.prepare('SELECT COUNT(*) as cnt FROM backups').get() as any)?.cnt || 0) as number
   const totalSize =
-    (
-      db
-        .prepare('SELECT COALESCE(SUM(size), 0) as total FROM backups WHERE account_set_id=?')
-        .get(req.accountSetId) as any
-    )?.total || 0
+    ((db.prepare('SELECT COALESCE(SUM(size), 0) as total FROM backups').get() as any)?.total ||
+      0) as number
   const autoCount =
-    (
-      db
-        .prepare("SELECT COUNT(*) as cnt FROM backups WHERE account_set_id=? AND type='auto'")
-        .get(req.accountSetId) as any
-    )?.cnt || 0
+    ((db.prepare("SELECT COUNT(*) as cnt FROM backups WHERE type='auto'").get() as any)?.cnt ||
+      0) as number
   const manualCount =
-    (
-      db
-        .prepare("SELECT COUNT(*) as cnt FROM backups WHERE account_set_id=? AND type='manual'")
-        .get(req.accountSetId) as any
-    )?.cnt || 0
+    ((db.prepare("SELECT COUNT(*) as cnt FROM backups WHERE type='manual'").get() as any)?.cnt ||
+      0) as number
   const lastBackup = db
-    .prepare(
-      'SELECT created_at, filename FROM backups WHERE account_set_id=? ORDER BY created_at DESC LIMIT 1'
-    )
-    .get(req.accountSetId) as any
+    .prepare('SELECT created_at, filename FROM backups ORDER BY created_at DESC LIMIT 1')
+    .get() as any
 
   res.json({
     code: 0,
@@ -366,8 +371,15 @@ async function doBackup(
   accountSetId: string,
   type: 'manual' | 'auto',
   userId?: string,
-  customPath?: string
-): Promise<{ id: string; filename: string; filepath: string; size: number; error?: string } | null> {
+  customPath?: string,
+  options?: { filenamePrefix?: string }
+): Promise<{
+  id: string
+  filename: string
+  filepath: string
+  size: number
+  error?: string
+} | null> {
   const db = getDb()
 
   // 确定备份路径：优先使用自定义路径，否则使用系统设置
@@ -385,11 +397,17 @@ async function doBackup(
       )?.param_value || ''
 
     // 如果配置的路径包含 Windows 盘符（如 C:\），但当前系统不是 Windows，则使用默认路径
-    if (backupPathSetting && backupPathSetting.match(/^[A-Z]:\\/i) && process.platform !== 'win32') {
-      console.warn(`配置的备份路径是 Windows 路径 "${backupPathSetting}"，但当前系统是 ${process.platform}，使用默认路径`)
-      baseDir = resolve(process.cwd(), 'backups')
+    if (
+      backupPathSetting &&
+      backupPathSetting.match(/^[A-Z]:\\/i) &&
+      process.platform !== 'win32'
+    ) {
+      console.warn(
+        `配置的备份路径是 Windows 路径 "${backupPathSetting}"，但当前系统是 ${process.platform}，使用默认路径`
+      )
+      baseDir = resolve(DEPLOY_DIR, 'backups')
     } else {
-      baseDir = backupPathSetting ? resolve(backupPathSetting) : resolve(process.cwd(), 'backups')
+      baseDir = backupPathSetting ? resolve(backupPathSetting) : resolve(DEPLOY_DIR, 'backups')
     }
   }
 
@@ -416,7 +434,11 @@ async function doBackup(
   const id = uuidv4()
   const now = new Date()
   const timeStr = formatBackupTime(now)
-  const filename = type === 'auto' ? `自动备份_${timeStr}.db` : `手动备份_${timeStr}.db`
+  const filename = options?.filenamePrefix
+    ? `${options.filenamePrefix}_${timeStr}.db`
+    : type === 'auto'
+      ? `自动备份_${timeStr}.db`
+      : `手动备份_${timeStr}.db`
   const filepath = join(baseDir, filename)
 
   return new Promise(resolve => {
@@ -449,6 +471,60 @@ async function doBackup(
         resolve({ id: '', filename: '', filepath: '', size: 0, error: errorMsg })
       })
   })
+}
+
+/** 恢复前先强制完整备份，再从指定文件覆盖当前库 */
+async function restoreDatabaseFromFile(params: {
+  accountSetId: string
+  userId?: string
+  sourcePath: string
+}): Promise<{ preBackupFilename: string; compatibilityUpgrade: CompatibilityUpgradeResult }> {
+  const { accountSetId, userId, sourcePath } = params
+
+  const preBackup = await doBackup(accountSetId, 'manual', userId, undefined, {
+    filenamePrefix: '恢复前备份',
+  })
+  if (!preBackup?.id || preBackup.error) {
+    throw new Error(preBackup?.error || '恢复前自动备份失败')
+  }
+
+  const validation = validateDatabaseFile(sourcePath)
+  if (!validation.valid) {
+    throw new Error(`备份文件无效: ${validation.message}`)
+  }
+
+  const db = getDb()
+  const tempBackupPath = `${DB_PATH}.restore_backup_${Date.now()}.tmp`
+  try {
+    await db.backup(tempBackupPath)
+  } catch (err: any) {
+    throw new Error(`无法创建临时备份: ${err.message}`)
+  }
+
+  try {
+    closeAndResetDb()
+    const backupData = readFileSync(sourcePath)
+    writeFileSync(DB_PATH, backupData)
+    initDatabase()
+    const compatibilityUpgrade = upgradeDatabaseCompatibility()
+
+    try {
+      unlinkSync(tempBackupPath)
+    } catch {
+      /* ignore */
+    }
+
+    return { preBackupFilename: preBackup.filename, compatibilityUpgrade }
+  } catch (err: any) {
+    try {
+      copyFileSync(tempBackupPath, DB_PATH)
+      unlinkSync(tempBackupPath)
+      initDatabase()
+    } catch (rollbackErr: any) {
+      console.error('回滚失败:', rollbackErr)
+    }
+    throw new Error(`恢复失败: ${err.message}`)
+  }
 }
 
 // 清理过期备份
@@ -493,27 +569,20 @@ function cleanupOldBackups(accountSetId: string) {
   }
 }
 
-// 手动备份
-router.post('/backups', requirePermission('system:backup'), operationLog('手动备份', '数据安全'), async (req: AuthRequest, res) => {
-  try {
-    const { customPath, download } = req.body
+// 单账套备份（只导出当前账套的数据）
+router.post(
+  '/backups/account-set',
+  requirePermission('system:backup'),
+  operationLog('单账套备份', '数据安全'),
+  async (req: AuthRequest, res) => {
+    try {
+      const result = await doAccountSetBackup(req.accountSetId!, req.userId)
 
-    // 如果提供了自定义路径，验证其有效性
-    if (customPath) {
-      const validation = validateBackupPath(customPath)
-      if (!validation.valid) {
-        return res.status(400).json({ code: 400, message: `自定义路径无效: ${validation.message}` })
+      if (!result || result.error) {
+        return res.status(500).json({ code: 500, message: result?.error || '备份失败' })
       }
-    }
 
-    const result = await doBackup(req.accountSetId!, 'manual', req.userId, customPath)
-
-    if (!result || result.error) {
-      return res.status(500).json({ code: 500, message: result?.error || '备份失败，请检查备份路径设置' })
-    }
-
-    // 如果请求下载，返回文件流
-    if (download || req.headers.accept?.includes('application/octet-stream')) {
+      // 返回文件流供下载
       const backupFilePath = result.filepath
 
       if (!existsSync(backupFilePath)) {
@@ -521,23 +590,90 @@ router.post('/backups', requirePermission('system:backup'), operationLog('手动
       }
 
       res.setHeader('Content-Type', 'application/octet-stream')
-      res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(result.filename)}"`)
+      res.setHeader(
+        'Content-Disposition',
+        `attachment; filename="${encodeURIComponent(result.filename)}"`
+      )
       res.setHeader('Content-Length', result.size)
+      if (result.stats) {
+        res.setHeader('X-Backup-Stats', encodeURIComponent(JSON.stringify(result.stats)))
+      }
 
       const fileStream = readFileSync(backupFilePath)
-      return res.send(fileStream)
-    }
 
-    // 否则返回 JSON 响应
-    res.json({
-      code: 0,
-      message: `备份成功！文件名: ${result.filename}，大小: ${(result.size / 1024 / 1024).toFixed(2)} MB`,
-      data: result,
-    })
-  } catch (err: any) {
-    res.status(500).json({ code: 500, message: '备份失败: ' + err.message })
+      // 发送文件后删除临时文件
+      res.on('finish', () => {
+        try {
+          unlinkSync(backupFilePath)
+        } catch (err) {
+          console.error('删除临时备份文件失败:', err)
+        }
+      })
+
+      return res.send(fileStream)
+    } catch (err: any) {
+      res.status(500).json({ code: 500, message: '单账套备份失败: ' + err.message })
+    }
   }
-})
+)
+
+// 手动备份（完整数据库备份）
+router.post(
+  '/backups',
+  requirePermission('system:backup'),
+  operationLog('手动备份', '数据安全'),
+  async (req: AuthRequest, res) => {
+    try {
+      const { customPath, download } = req.body
+
+      // 如果提供了自定义路径，验证其有效性
+      if (customPath) {
+        const validation = validateBackupPath(customPath)
+        if (!validation.valid) {
+          return res
+            .status(400)
+            .json({ code: 400, message: `自定义路径无效: ${validation.message}` })
+        }
+      }
+
+      const result = await doBackup(req.accountSetId!, 'manual', req.userId, customPath)
+
+      if (!result || result.error) {
+        return res
+          .status(500)
+          .json({ code: 500, message: result?.error || '备份失败，请检查备份路径设置' })
+      }
+
+      // 如果请求下载，返回文件流
+      if (download || req.headers.accept?.includes('application/octet-stream')) {
+        const backupFilePath = result.filepath
+
+        if (!existsSync(backupFilePath)) {
+          return res.status(404).json({ code: 404, message: `备份文件不存在: ${backupFilePath}` })
+        }
+
+        res.setHeader('Content-Type', 'application/octet-stream')
+        res.setHeader(
+          'Content-Disposition',
+          `attachment; filename="${encodeURIComponent(result.filename)}"`
+        )
+        res.setHeader('Content-Length', result.size)
+
+        const fileStream = readFileSync(backupFilePath)
+        return res.send(fileStream)
+      }
+
+      // 否则返回 JSON 响应
+      res.json({
+        code: 0,
+        message: `备份成功！文件名: ${result.filename}，大小: ${(result.size / 1024 / 1024).toFixed(2)} MB`,
+        data: result,
+      })
+    } catch (err: any) {
+      res.status(500).json({ code: 500, message: '备份失败: ' + err.message })
+    }
+  }
+)
 
 // 恢复备份
 router.post(
@@ -547,9 +683,7 @@ router.post(
   async (req: AuthRequest, res) => {
     const { id } = req.params
     const db = getDb()
-    const backup = db
-      .prepare('SELECT * FROM backups WHERE id=? AND account_set_id=?')
-      .get(id, req.accountSetId) as any
+    const backup = db.prepare('SELECT * FROM backups WHERE id=?').get(id) as any
     if (!backup) {
       return res.status(404).json({ code: 404, message: '备份文件不存在' })
     }
@@ -557,67 +691,48 @@ router.post(
       return res.status(404).json({ code: 404, message: '备份文件已丢失' })
     }
 
-    // 验证备份文件是否有效
-    const validation = validateDatabaseFile(backup.filepath)
-    if (!validation.valid) {
-      return res.status(400).json({ code: 400, message: `备份文件无效: ${validation.message}` })
-    }
-
-    // 创建当前数据库的临时备份（用 db.backup 而非 copyFileSync，保证 WAL 安全的一致性快照）
-    const tempBackupPath = `${DB_PATH}.restore_backup_${Date.now()}.tmp`
     try {
-      await db.backup(tempBackupPath)
+      const result = await restoreDatabaseFromFile({
+        accountSetId: req.accountSetId!,
+        userId: req.userId,
+        sourcePath: backup.filepath,
+      })
+      const compatibilitySummary = formatCompatibilityUpgradeSummary(result.compatibilityUpgrade)
+      res.json({
+        code: 0,
+        message: `恢复成功，已自动备份当前数据为「${result.preBackupFilename}」。${compatibilitySummary}。请重新登录`,
+        data: {
+          requireRelogin: true,
+          preBackupFilename: result.preBackupFilename,
+          compatibilityUpgrade: result.compatibilityUpgrade,
+        },
+      })
     } catch (err: any) {
-      return res
-        .status(500)
-        .json({ code: 500, message: `无法创建临时备份: ${err.message}` })
-    }
-
-    try {
-      closeAndResetDb()
-      const backupData = readFileSync(backup.filepath)
-      writeFileSync(DB_PATH, backupData)
-      initDatabase()
-
-      // 恢复成功，删除临时备份
-      try {
-        unlinkSync(tempBackupPath)
-      } catch {
-        /* ignore */
-      }
-
-      res.json({ code: 0, message: '恢复成功，请刷新页面' })
-    } catch (err: any) {
-      // 恢复失败，回滚到临时备份
-      try {
-        copyFileSync(tempBackupPath, DB_PATH)
-        unlinkSync(tempBackupPath)
-        initDatabase()
-      } catch (rollbackErr: any) {
-        console.error('回滚失败:', rollbackErr)
-      }
-      res.status(500).json({ code: 500, message: `恢复失败: ${err.message}` })
+      res.status(500).json({ code: 500, message: err.message || '恢复失败' })
     }
   }
 )
 
 // 删除备份
-router.delete('/backups/:id', requirePermission('system:backup'), operationLog('删除备份', '数据安全'), (req: AuthRequest, res) => {
-  const { id } = req.params
-  const db = getDb()
-  const backup = db
-    .prepare('SELECT * FROM backups WHERE id=? AND account_set_id=?')
-    .get(id, req.accountSetId) as any
-  if (backup && existsSync(backup.filepath)) {
-    try {
-      unlinkSync(backup.filepath)
-    } catch {
-      /* ignore */
+router.delete(
+  '/backups/:id',
+  requirePermission('system:backup'),
+  operationLog('删除备份', '数据安全'),
+  (req: AuthRequest, res) => {
+    const { id } = req.params
+    const db = getDb()
+    const backup = db.prepare('SELECT * FROM backups WHERE id=?').get(id) as any
+    if (backup && existsSync(backup.filepath)) {
+      try {
+        unlinkSync(backup.filepath)
+      } catch {
+        /* ignore */
+      }
     }
+    db.prepare('DELETE FROM backups WHERE id=?').run(id)
+    res.json({ code: 0, message: '删除成功' })
   }
-  db.prepare('DELETE FROM backups WHERE id=? AND account_set_id=?').run(id, req.accountSetId)
-  res.json({ code: 0, message: '删除成功' })
-})
+)
 
 // ===================== 上传备份并恢复 =====================
 
@@ -634,7 +749,9 @@ router.post(
     // 检查文件扩展名
     const ext = req.file.originalname.toLowerCase().slice(req.file.originalname.lastIndexOf('.'))
     if (ext !== '.db' && ext !== '.sqlite' && ext !== '.sqlite3') {
-      return res.status(400).json({ code: 400, message: '不支持的文件类型，仅支持 .db / .sqlite / .sqlite3 文件' })
+      return res
+        .status(400)
+        .json({ code: 400, message: '不支持的文件类型，仅支持 .db / .sqlite / .sqlite3 文件' })
     }
 
     // 将上传的文件保存到临时位置进行验证
@@ -656,44 +773,90 @@ router.post(
       return res.status(400).json({ code: 400, message: `上传文件无效: ${validation.message}` })
     }
 
-    // 创建当前数据库的临时备份（用 db.backup 而非 copyFileSync，保证 WAL 安全的一致性快照）
-    const tempBackupPath = `${DB_PATH}.restore_backup_${Date.now()}.tmp`
+    let backupScope
     try {
-      await getDb().backup(tempBackupPath)
+      backupScope = detectBackupScope(tempUploadPath)
     } catch (err: any) {
       try {
         unlinkSync(tempUploadPath)
       } catch {
         /* ignore */
       }
-      return res.status(500).json({ code: 500, message: `无法创建临时备份: ${err.message}` })
+      return res.status(400).json({ code: 400, message: err.message || '无法识别备份文件' })
+    }
+
+    // 单账套备份：合并恢复到当前账套，避免全库覆盖导致数据“丢失”
+    if (backupScope.type === 'single_account_set') {
+      try {
+        const preBackup = await doBackup(req.accountSetId!, 'manual', req.userId, undefined, {
+          filenamePrefix: '单账套恢复前备份',
+        })
+        if (!preBackup?.id || preBackup.error) {
+          throw new Error(preBackup?.error || '恢复前自动备份失败')
+        }
+
+        const stats = restoreSingleAccountSetFromBackup({
+          targetAccountSetId: req.accountSetId!,
+          sourcePath: tempUploadPath,
+          userId: req.userId,
+        })
+
+        try {
+          unlinkSync(tempUploadPath)
+        } catch {
+          /* ignore */
+        }
+
+        const summary = formatAccountSetRestoreSummary(stats)
+        return res.json({
+          code: 0,
+          message: `单账套恢复成功，已导入到当前账套「${stats.sourceAccountSetName || '未知'}」：${summary}。恢复前已自动备份为「${preBackup.filename}」`,
+          data: {
+            restoreType: 'single_account_set',
+            preBackupFilename: preBackup.filename,
+            stats,
+          },
+        })
+      } catch (err: any) {
+        try {
+          unlinkSync(tempUploadPath)
+        } catch {
+          /* ignore */
+        }
+        return res.status(500).json({ code: 500, message: err.message || '单账套恢复失败' })
+      }
     }
 
     try {
-      closeAndResetDb()
-      copyFileSync(tempUploadPath, DB_PATH)
-      initDatabase()
+      const result = await restoreDatabaseFromFile({
+        accountSetId: req.accountSetId!,
+        userId: req.userId,
+        sourcePath: tempUploadPath,
+      })
 
-      // 恢复成功，删除临时文件
       try {
-        unlinkSync(tempBackupPath)
         unlinkSync(tempUploadPath)
       } catch {
         /* ignore */
       }
 
-      res.json({ code: 0, message: '恢复成功，请刷新页面' })
+      const compatibilitySummary = formatCompatibilityUpgradeSummary(result.compatibilityUpgrade)
+      res.json({
+        code: 0,
+        message: `恢复成功，已自动备份当前数据为「${result.preBackupFilename}」。${compatibilitySummary}。请重新登录`,
+        data: {
+          requireRelogin: true,
+          preBackupFilename: result.preBackupFilename,
+          compatibilityUpgrade: result.compatibilityUpgrade,
+        },
+      })
     } catch (err: any) {
-      // 恢复失败，回滚到临时备份
       try {
-        copyFileSync(tempBackupPath, DB_PATH)
-        unlinkSync(tempBackupPath)
         unlinkSync(tempUploadPath)
-        initDatabase()
-      } catch (rollbackErr: any) {
-        console.error('回滚失败:', rollbackErr)
+      } catch {
+        /* ignore */
       }
-      res.status(500).json({ code: 500, message: `恢复失败: ${err.message}` })
+      res.status(500).json({ code: 500, message: err.message || '恢复失败' })
     }
   }
 )
@@ -856,22 +1019,26 @@ function updateScheduler(db: ReturnType<typeof getDb>) {
 router.post('/database/cleanup', requirePermission('system:backup'), (req: AuthRequest, res) => {
   try {
     const db = getDb()
-    const beforePages = db.prepare('PRAGMA page_count').get() as { 'page_count': number }
-    const freelist = db.prepare('PRAGMA freelist_count').get() as { 'freelist_count': number }
+    const beforePages = db.prepare('PRAGMA page_count').get() as { page_count: number }
+    const freelist = db.prepare('PRAGMA freelist_count').get() as { freelist_count: number }
 
     // 1. 清理30天前的操作日志
-    const deletedLogs = db.prepare(
-      "DELETE FROM operation_logs WHERE created_at < datetime('now', '-30 days')"
-    ).run()
+    const deletedLogs = db
+      .prepare("DELETE FROM operation_logs WHERE created_at < datetime('now', '-30 days')")
+      .run()
 
     // 2. 重建 FTS 索引
-    try { db.exec("INSERT INTO vouchers_fts(vouchers_fts) VALUES('rebuild')") } catch (_) {}
-    try { db.exec("INSERT INTO voucher_entries_fts(voucher_entries_fts) VALUES('rebuild')") } catch (_) {}
+    try {
+      db.exec("INSERT INTO vouchers_fts(vouchers_fts) VALUES('rebuild')")
+    } catch (_) {}
+    try {
+      db.exec("INSERT INTO voucher_entries_fts(voucher_entries_fts) VALUES('rebuild')")
+    } catch (_) {}
 
     // 3. VACUUM 回收空间
     db.exec('VACUUM')
 
-    const afterPages = db.prepare('PRAGMA page_count').get() as { 'page_count': number }
+    const afterPages = db.prepare('PRAGMA page_count').get() as { page_count: number }
     const pageSize = 4096
     const savedBytes = (beforePages.page_count - afterPages.page_count) * pageSize
 
@@ -889,7 +1056,9 @@ router.post('/database/cleanup', requirePermission('system:backup'), (req: AuthR
     })
   } catch (error) {
     console.error('[cleanup] error:', error)
-    res.status(500).json({ code: 500, message: error instanceof Error ? error.message : '清理失败' })
+    res
+      .status(500)
+      .json({ code: 500, message: error instanceof Error ? error.message : '清理失败' })
   }
 })
 
@@ -906,7 +1075,448 @@ function startScheduler() {
   }
 }
 
+function insertRowsIntoTable(
+  targetDb: Database.Database,
+  table: string,
+  rows: Record<string, unknown>[]
+) {
+  if (rows.length === 0) return
+  const cols = Object.keys(rows[0]).join(', ')
+  const placeholders = Object.keys(rows[0])
+    .map(() => '?')
+    .join(', ')
+  const insertStmt = targetDb.prepare(`INSERT INTO ${table} (${cols}) VALUES (${placeholders})`)
+  for (const row of rows) {
+    insertStmt.run(...Object.values(row))
+  }
+}
+
+function copyRowsByAccountSetId(
+  sourceDb: Database.Database,
+  targetDb: Database.Database,
+  table: string,
+  accountSetId: string
+) {
+  try {
+    const rows = sourceDb
+      .prepare(`SELECT * FROM ${table} WHERE account_set_id = ?`)
+      .all(accountSetId) as Record<string, unknown>[]
+    insertRowsIntoTable(targetDb, table, rows)
+  } catch {
+    // 表可能不存在或没有 account_set_id 字段
+  }
+}
+
+function collectAccountSetUserIds(sourceDb: Database.Database, accountSetId: string): string[] {
+  const userIds = new Set<string>()
+
+  const addValue = (value: unknown) => {
+    if (typeof value === 'string' && value) {
+      userIds.add(value)
+    }
+  }
+
+  try {
+    for (const row of sourceDb
+      .prepare('SELECT DISTINCT user_id FROM user_roles WHERE account_set_id = ?')
+      .all(accountSetId) as Array<{ user_id: string }>) {
+      addValue(row.user_id)
+    }
+  } catch {
+    // user_roles 可能不存在
+  }
+
+  for (const row of sourceDb
+    .prepare('SELECT id FROM users WHERE account_set_id = ?')
+    .all(accountSetId) as Array<{ id: string }>) {
+    addValue(row.id)
+  }
+
+  for (const row of sourceDb
+    .prepare(
+      'SELECT DISTINCT owner_user_id FROM roles WHERE account_set_id = ? AND owner_user_id IS NOT NULL'
+    )
+    .all(accountSetId) as Array<{ owner_user_id: string }>) {
+    addValue(row.owner_user_id)
+  }
+
+  for (const row of sourceDb
+    .prepare(
+      `SELECT DISTINCT user_id FROM (
+        SELECT maker_id AS user_id FROM vouchers WHERE account_set_id = ? AND maker_id IS NOT NULL
+        UNION SELECT auditor_id FROM vouchers WHERE account_set_id = ? AND auditor_id IS NOT NULL
+        UNION SELECT poster_id FROM vouchers WHERE account_set_id = ? AND poster_id IS NOT NULL
+      )`
+    )
+    .all(accountSetId, accountSetId, accountSetId) as Array<{ user_id: string }>) {
+    addValue(row.user_id)
+  }
+
+  try {
+    for (const row of sourceDb
+      .prepare(
+        'SELECT DISTINCT created_by AS user_id FROM voucher_templates WHERE account_set_id = ? AND created_by IS NOT NULL'
+      )
+      .all(accountSetId) as Array<{ user_id: string }>) {
+      addValue(row.user_id)
+    }
+  } catch {
+    // voucher_templates 可能不存在
+  }
+
+  return [...userIds]
+}
+
+// 单账套备份函数：只导出指定账套的数据
+export type AccountSetBackupStats = {
+  auxCategories: number
+  auxItems: number
+  accounts: number
+  vouchers: number
+  initBalances: number
+  reportDefinitions: number
+  voucherAttachments: number
+  /** 实际写入备份库内嵌表的附件文件数 */
+  attachmentFilesEmbedded: number
+}
+
+export function formatAccountSetBackupStatsSummary(stats: AccountSetBackupStats): string {
+  const parts = [`科目 ${stats.accounts} 个`]
+  if (stats.vouchers > 0) parts.push(`凭证 ${stats.vouchers} 张`)
+  if (stats.auxCategories > 0 || stats.auxItems > 0) {
+    parts.push(`辅助类目 ${stats.auxCategories} 个、辅助项目 ${stats.auxItems} 条`)
+  }
+  if (stats.initBalances > 0) parts.push(`期初 ${stats.initBalances} 条`)
+  if (stats.reportDefinitions > 0) parts.push(`动态报表 ${stats.reportDefinitions} 个`)
+  if (stats.voucherAttachments > 0) {
+    const embedded = stats.attachmentFilesEmbedded
+    const missing = stats.voucherAttachments - embedded
+    if (missing > 0) {
+      parts.push(
+        `附件 ${stats.voucherAttachments} 条（已打包 ${embedded} 个，${missing} 个源文件缺失）`
+      )
+    } else {
+      parts.push(`附件 ${stats.voucherAttachments} 条（已打包 ${embedded} 个文件）`)
+    }
+  }
+  return parts.join('，')
+}
+
+function countAccountSetBackupRows(db: Database.Database, accountSetId: string): AccountSetBackupStats {
+  const count = (sql: string, ...params: unknown[]) =>
+    ((db.prepare(sql).get(...params) as { c: number } | undefined)?.c || 0) as number
+
+  const reportDefinitions = tableExistsInDb(db, 'report_definitions')
+    ? count('SELECT COUNT(*) as c FROM report_definitions WHERE account_set_id = ?', accountSetId)
+    : 0
+  const voucherAttachments = tableExistsInDb(db, 'voucher_attachments')
+    ? count('SELECT COUNT(*) as c FROM voucher_attachments WHERE account_set_id = ?', accountSetId)
+    : 0
+
+  return {
+    auxCategories: count('SELECT COUNT(*) as c FROM aux_categories WHERE account_set_id = ?', accountSetId),
+    auxItems: count('SELECT COUNT(*) as c FROM aux_items WHERE account_set_id = ?', accountSetId),
+    accounts: count('SELECT COUNT(*) as c FROM accounts WHERE account_set_id = ?', accountSetId),
+    vouchers: count('SELECT COUNT(*) as c FROM vouchers WHERE account_set_id = ?', accountSetId),
+    initBalances: count('SELECT COUNT(*) as c FROM init_balances WHERE account_set_id = ?', accountSetId),
+    reportDefinitions,
+    voucherAttachments,
+    attachmentFilesEmbedded: 0,
+  }
+}
+
+function tableExistsInDb(db: Database.Database, table: string): boolean {
+  const row = db
+    .prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?")
+    .get(table) as { name?: string } | undefined
+  return !!row?.name
+}
+
+function embedAttachmentFilesInBackupDb(
+  sourceDb: Database.Database,
+  backupDb: Database.Database,
+  accountSetId: string
+): number {
+  try {
+    backupDb.exec(
+      `CREATE TABLE IF NOT EXISTS ${BACKUP_ATTACHMENT_TABLE} (
+        filename TEXT PRIMARY KEY,
+        content BLOB NOT NULL
+      )`
+    )
+
+    const attachments = sourceDb
+      .prepare('SELECT filename FROM voucher_attachments WHERE account_set_id = ?')
+      .all(accountSetId) as Array<{ filename: string }>
+
+    if (attachments.length === 0) return 0
+
+    const insert = backupDb.prepare(
+      `INSERT OR REPLACE INTO ${BACKUP_ATTACHMENT_TABLE} (filename, content) VALUES (?, ?)`
+    )
+    const uploadDir = join(DEPLOY_DIR, 'uploads', 'attachments')
+    let embedded = 0
+
+    for (const att of attachments) {
+      const safeName = basename(att.filename)
+      if (!safeName || safeName.includes('..')) continue
+      const filePath = join(uploadDir, safeName)
+      if (existsSync(filePath)) {
+        insert.run(safeName, readFileSync(filePath))
+        embedded++
+      }
+    }
+    return embedded
+  } catch (err) {
+    console.warn('嵌入凭证附件到备份库失败:', err)
+    return 0
+  }
+}
+
+function copyReportDefinitionTables(
+  sourceDb: Database.Database,
+  targetDb: Database.Database,
+  accountSetId: string
+) {
+  const reportDefs = sourceDb
+    .prepare('SELECT * FROM report_definitions WHERE account_set_id = ?')
+    .all(accountSetId) as Record<string, unknown>[]
+  insertRowsIntoTable(targetDb, 'report_definitions', reportDefs)
+
+  const defIds = reportDefs.map(row => row.id).filter(Boolean) as string[]
+  if (defIds.length === 0) return
+
+  const placeholders = defIds.map(() => '?').join(', ')
+  const sheets = sourceDb
+    .prepare(`SELECT * FROM report_sheets WHERE report_definition_id IN (${placeholders})`)
+    .all(...defIds) as Record<string, unknown>[]
+  insertRowsIntoTable(targetDb, 'report_sheets', sheets)
+
+  const sheetIds = sheets.map(row => row.id).filter(Boolean) as string[]
+  if (sheetIds.length > 0) {
+    const sheetPh = sheetIds.map(() => '?').join(', ')
+    const cells = sourceDb
+      .prepare(`SELECT * FROM report_cells WHERE report_sheet_id IN (${sheetPh})`)
+      .all(...sheetIds) as Record<string, unknown>[]
+    insertRowsIntoTable(targetDb, 'report_cells', cells)
+  }
+
+  const sources = sourceDb
+    .prepare(`SELECT * FROM report_template_sources WHERE report_definition_id IN (${placeholders})`)
+    .all(...defIds) as Record<string, unknown>[]
+  insertRowsIntoTable(targetDb, 'report_template_sources', sources)
+
+  copyRowsByAccountSetId(sourceDb, targetDb, 'report_formula_functions', accountSetId)
+}
+
+async function doAccountSetBackup(
+  accountSetId: string,
+  userId?: string
+): Promise<{
+  id: string
+  filename: string
+  filepath: string
+  size: number
+  stats?: AccountSetBackupStats
+  error?: string
+} | null> {
+  const db = getDb()
+
+  // 获取账套信息
+  const accountSet = db.prepare('SELECT * FROM account_sets WHERE id = ?').get(accountSetId) as any
+  if (!accountSet) {
+    return { id: '', filename: '', filepath: '', size: 0, error: '账套不存在' }
+  }
+
+  const now = new Date()
+  const timeStr = formatBackupTime(now)
+  const filename = `${accountSet.name}_${timeStr}.db`
+  const tempDir = resolve(DEPLOY_DIR, 'backups', 'temp')
+
+  // 确保临时目录存在
+  try {
+    if (!existsSync(tempDir)) {
+      mkdirSync(tempDir, { recursive: true })
+    }
+  } catch (err: any) {
+    return {
+      id: '',
+      filename: '',
+      filepath: '',
+      size: 0,
+      error: `无法创建临时目录: ${err.message}`,
+    }
+  }
+
+  const filepath = join(tempDir, filename)
+
+  try {
+    // 创建新的数据库文件
+    const newDb = new Database(filepath)
+
+    // 复制表结构（只复制必要的表）
+    const tables = [
+      'account_sets',
+      'users',
+      'roles',
+      'user_roles',
+      'role_account_scopes',
+      'user_account_scopes',
+      'user_login_sessions',
+      'accounts',
+      'voucher_types',
+      'aux_categories',
+      'aux_category_fields',
+      'aux_items',
+      'init_balances',
+      'vouchers',
+      'voucher_entries',
+      'transfer_types',
+      'transfer_items',
+      'report_templates',
+      'report_template_items',
+      'report_definitions',
+      'report_sheets',
+      'report_cells',
+      'report_template_sources',
+      'report_formula_functions',
+      'print_templates',
+      'voucher_templates',
+      'voucher_attachments',
+      'account_balances',
+      'period_closing',
+      'budget_surplus_adjustments',
+      'cash_flow_items',
+      'auto_transfer_runs',
+      'ai_config',
+      'system_params',
+      'operation_logs',
+    ]
+
+    // 获取表结构并创建
+    for (const table of tables) {
+      try {
+        const createSql = db
+          .prepare(`SELECT sql FROM sqlite_master WHERE type='table' AND name=?`)
+          .get(table) as any
+
+        if (createSql?.sql) {
+          newDb.exec(createSql.sql)
+        }
+      } catch (err) {
+        console.warn(`跳过表 ${table}:`, err)
+      }
+    }
+
+    // 复制索引
+    const indexes = db
+      .prepare(`SELECT sql FROM sqlite_master WHERE type='index' AND sql IS NOT NULL`)
+      .all() as any[]
+
+    for (const idx of indexes) {
+      try {
+        newDb.exec(idx.sql)
+      } catch (err) {
+        // 忽略索引创建错误
+      }
+    }
+
+    // 复制数据（只复制当前账套的数据，顺序需满足外键依赖）
+    let attachmentFilesEmbedded = 0
+    const transaction = newDb.transaction(() => {
+      // 1. 账套信息
+      const accountSetData = db.prepare('SELECT * FROM account_sets WHERE id = ?').get(accountSetId)
+      if (accountSetData) {
+        insertRowsIntoTable(newDb, 'account_sets', [accountSetData as Record<string, unknown>])
+      }
+
+      // 2. 用户（含角色关联、凭证制单人/审核人/过账人等引用）
+      const userIds = collectAccountSetUserIds(db, accountSetId)
+      if (userIds.length > 0) {
+        const placeholders = userIds.map(() => '?').join(', ')
+        const users = db
+          .prepare(`SELECT * FROM users WHERE id IN (${placeholders})`)
+          .all(...userIds) as Record<string, unknown>[]
+        insertRowsIntoTable(newDb, 'users', users)
+      }
+
+      // 3. 角色
+      copyRowsByAccountSetId(db, newDb, 'roles', accountSetId)
+
+      // 4. 用户角色关联
+      copyRowsByAccountSetId(db, newDb, 'user_roles', accountSetId)
+
+      // 5. 凭证类型（必须在 vouchers 之前）
+      copyRowsByAccountSetId(db, newDb, 'voucher_types', accountSetId)
+
+      // 6. 科目
+      copyRowsByAccountSetId(db, newDb, 'accounts', accountSetId)
+
+      // 7. 辅助核算
+      copyRowsByAccountSetId(db, newDb, 'aux_categories', accountSetId)
+      const auxCategoryFields = db
+        .prepare(
+          'SELECT acf.* FROM aux_category_fields acf INNER JOIN aux_categories ac ON acf.category_id = ac.id WHERE ac.account_set_id = ?'
+        )
+        .all(accountSetId) as Record<string, unknown>[]
+      insertRowsIntoTable(newDb, 'aux_category_fields', auxCategoryFields)
+      copyRowsByAccountSetId(db, newDb, 'aux_items', accountSetId)
+
+      // 8. 期初余额
+      copyRowsByAccountSetId(db, newDb, 'init_balances', accountSetId)
+
+      // 9. 结转类型（必须在 transfer_items 之前）
+      copyRowsByAccountSetId(db, newDb, 'transfer_types', accountSetId)
+
+      // 10. 凭证与分录
+      copyRowsByAccountSetId(db, newDb, 'vouchers', accountSetId)
+      copyRowsByAccountSetId(db, newDb, 'voucher_entries', accountSetId)
+
+      // 11. 其余账套数据（按外键顺序）
+      const otherTables = [
+        'transfer_items',
+        'report_templates',
+        'report_template_items',
+        'print_templates',
+        'voucher_templates',
+        'voucher_attachments',
+        'account_balances',
+        'period_closing',
+        'budget_surplus_adjustments',
+        'cash_flow_items',
+        'auto_transfer_runs',
+        'ai_config',
+        'role_account_scopes',
+        'user_account_scopes',
+        'system_params',
+      ]
+
+      copyReportDefinitionTables(db, newDb, accountSetId)
+
+      for (const table of otherTables) {
+        copyRowsByAccountSetId(db, newDb, table, accountSetId)
+      }
+
+      attachmentFilesEmbedded = embedAttachmentFilesInBackupDb(db, newDb, accountSetId)
+    })
+
+    transaction()
+    const backupStats = countAccountSetBackupRows(db, accountSetId)
+    backupStats.attachmentFilesEmbedded = attachmentFilesEmbedded
+    newDb.close()
+
+    const fileStats = statSync(filepath)
+    const id = uuidv4()
+
+    return { id, filename, filepath, size: fileStats.size, stats: backupStats }
+  } catch (err: any) {
+    const errorMsg = `单账套备份失败: ${err.message}`
+    console.error(errorMsg, err)
+    return { id: '', filename: '', filepath: '', size: 0, error: errorMsg }
+  }
+}
+
 // 导出供 server/index.ts 调用（服务器重启时刷新调度器）
-export { startScheduler, updateScheduler, doBackup }
+export { startScheduler, updateScheduler, doBackup, doAccountSetBackup }
 
 export default router

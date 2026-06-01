@@ -1,16 +1,17 @@
 import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import bcrypt from 'bcryptjs'
-import { readdirSync, readFileSync, existsSync } from 'fs'
-import { join, resolve, dirname } from 'path'
-import { getDb, ensureAccountSetSecurityBootstrap } from '../db/index.js'
+import { readdirSync, readFileSync, existsSync, mkdirSync } from 'fs'
+import { join, resolve, dirname, extname } from 'path'
+import multer from 'multer'
+import { getDb, ensureAccountSetSecurityBootstrap, getDeployDir } from '../db/index.js'
 import {
   authMiddleware,
   requirePermission,
   AuthRequest,
   operationLog,
 } from '../middleware/index.js'
-import { buildSystemLogsQuery, buildSystemUsersQuery } from '../services/systemQuery.js'
+import { buildSystemLogsQuery, buildSystemUsersQuery, getUserRoles } from '../services/systemQuery.js'
 import {
   importAcdTemplateToAccountSet,
   type ImportStats,
@@ -18,9 +19,74 @@ import {
 import { importExcelReportsFromTemplate } from '../services/standardTemplateImport.js'
 import { listImportableExcelFiles } from '../utils/reportTemplateFiles.js'
 import { syncAcdReportFormulasToAccountSet } from '../services/acdReportFormulaSync.js'
+import systemReinitializeRoutes from './systemReinitialize.js'
 import { PERMISSIONS, PERMISSION_MODULES } from '../db/permissions.js'
+import {
+  getRoleAccountScopePayload,
+  getUserAccountScopePayload,
+  saveRoleAccountScopes,
+  saveUserAccountScopes,
+} from '../services/accountAuthorization.js'
+import {
+  ACCOUNTING_STANDARD_PARAM_KEY,
+  inferAccountingStandardFromTemplateId,
+  validateSystemParamEntry,
+  getAccountingStandardParam,
+  getDashboardCategoryRulesParam,
+  isAccountingStandardParam,
+} from '../services/accountingStandard.js'
+import {
+  getDashboardCategoryConfig,
+  getResolvedAccountingStandardName,
+  buildPresetDashboardCategoryRules,
+} from '../services/dashboardCategoryConfig.js'
+import { resolveAccountingStandard } from '../services/staticReportConfig.js'
+import {
+  allocateAccountSetCode,
+  bootstrapNewAccountSetDefaults,
+  readAccountSetStartDate,
+  resolveAccountSetStartDate,
+  syncAccountSetStartDate,
+  isValidAccountSetStartDate,
+} from '../services/accountSetDefaults.js'
+import { cleanupAccountSetCascade } from '../services/accountSetCleanup.js'
+import {
+  readGlobalBranding,
+  upsertGlobalBrandParam,
+  validateBrandParam,
+  BRAND_LOGO_URL_KEY,
+  BRAND_TITLE_KEY,
+  BRAND_SUBTITLE_KEY,
+} from '../services/brandingConfig.js'
 
 const router = Router()
+
+const brandUploadDir = join(getDeployDir(), 'uploads', 'branding')
+const brandUpload = multer({
+  storage: multer.diskStorage({
+    destination: (_req, _file, cb) => {
+      if (!existsSync(brandUploadDir)) mkdirSync(brandUploadDir, { recursive: true })
+      cb(null, brandUploadDir)
+    },
+    filename: (_req, file, cb) => {
+      const ext = extname(file.originalname).toLowerCase() || '.png'
+      const safeExt = ['.png', '.jpg', '.jpeg', '.webp', '.svg', '.gif'].includes(ext) ? ext : '.png'
+      cb(null, `logo${safeExt}`)
+    },
+  }),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    if (/^image\//.test(file.mimetype)) cb(null, true)
+    else cb(new Error('仅支持图片文件'))
+  },
+})
+
+/** 登录页 / 导航栏品牌展示（无需登录） */
+router.get('/branding', (_req, res) => {
+  const db = getDb()
+  res.json({ code: 0, data: readGlobalBranding(db) })
+})
+
 router.use(authMiddleware)
 
 // ===================== 账套管理 =====================
@@ -97,17 +163,10 @@ router.post(
     if (existingName) {
       return res.status(400).json({ code: 400, message: '账套名称已存在' })
     }
-    // 自动生成编码（如果未提供）
-    let finalCode = code
-    if (!finalCode) {
-      const count = (db.prepare('SELECT COUNT(*) as cnt FROM account_sets').get() as any).cnt
-      finalCode = `ZT${String(count + 1).padStart(3, '0')}`
-    }
-    const existingCode = db.prepare('SELECT id FROM account_sets WHERE code = ?').get(finalCode)
-    if (existingCode) {
-      return res.status(400).json({ code: 400, message: '账套编码已存在' })
-    }
+    const finalCode = allocateAccountSetCode(db, code)
     const id = uuidv4()
+    const fiscalYear = fiscal_year || new Date().getFullYear()
+    const normalizedStartDate = resolveAccountSetStartDate(start_date, fiscalYear)
     db.prepare(
       `
     INSERT INTO account_sets (id, name, code, credit_code, fiscal_year, start_date, unit_leader, chief_accountant)
@@ -118,8 +177,8 @@ router.post(
       name,
       finalCode,
       credit_code,
-      fiscal_year || new Date().getFullYear(),
-      start_date,
+      fiscalYear,
+      normalizedStartDate,
       unit_leader,
       chief_accountant
     )
@@ -136,19 +195,11 @@ router.post(
       `INSERT OR REPLACE INTO system_params (id, account_set_id, param_key, param_value) VALUES (?, ?, ?, ?)`
     ).run(uuidv4(), id, 'account_code_lengths', JSON.stringify(finalLengths.slice(0, finalLevels)))
 
-    // 初始化默认系统参数
-    const defaultParams = [
-      { key: 'voucher_audit_required', value: 'false' }, // 凭证审核：关闭
-      { key: 'voucher_direct_print', value: 'true' }, // 直接打印：开启
-      { key: 'voucher_sequence_control', value: 'false' }, // 凭证时序控制：关闭
-      { key: 'enable_cash_flow', value: 'false' }, // 启用现金流核算：关闭
-    ]
-    const insertParam = db.prepare(
-      `INSERT OR REPLACE INTO system_params (id, account_set_id, param_key, param_value) VALUES (?, ?, ?, ?)`
-    )
-    for (const param of defaultParams) {
-      insertParam.run(uuidv4(), id, param.key, param.value)
-    }
+    bootstrapNewAccountSetDefaults(db, id, {
+      start_date: normalizedStartDate,
+      fiscal_year: fiscalYear,
+      unit_name: name,
+    })
 
     // 自动创建超级管理员 admin/admin123
     ensureAccountSetSecurityBootstrap(id)
@@ -208,6 +259,9 @@ router.put(
       status,
       id
     )
+    if (start_date) {
+      syncAccountSetStartDate(db, id, resolveAccountSetStartDate(start_date, fiscal_year))
+    }
     res.json({ code: 0, message: '更新成功' })
   }
 )
@@ -230,57 +284,18 @@ router.delete(
     if (!password || !bcrypt.compareSync(password, adminUser.password)) {
       return res.status(400).json({ code: 400, message: '管理员密码错误' })
     }
-    // 级联删除所有关联数据
-    // 先临时关闭外键检查（在事务外执行，事务内PRAGMA foreign_keys=OFF是无效的）
-    // 使用静态 SQL 语句，不拼接表名，避免 SQL 注入风险
-    db.pragma('foreign_keys = OFF')
-    const deleteAll = db.transaction(() => {
-      db.prepare('DELETE FROM print_templates WHERE account_set_id = ?').run(id)
-      try {
-        db.prepare('DELETE FROM cash_flow_items WHERE account_set_id = ?').run(id)
-      } catch {
-        /* table may not exist */
+    try {
+      cleanupAccountSetCascade(db, id)
+    } catch (err: any) {
+      const msg = String(err?.message || err)
+      if (msg.includes('FOREIGN KEY')) {
+        return res.status(500).json({
+          code: 500,
+          message: '删除账套失败：存在未清理的关联数据，请联系管理员或升级至最新版本后重试',
+        })
       }
-      db.prepare('DELETE FROM voucher_templates WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM voucher_entries WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM voucher_attachments WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM auto_transfer_runs WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM vouchers WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM account_balances WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM period_closing WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM init_balances WHERE account_set_id = ?').run(id)
-      db.prepare(
-        'DELETE FROM report_template_items WHERE template_id IN (SELECT id FROM report_templates WHERE account_set_id = ?)'
-      ).run(id)
-      db.prepare(
-        'DELETE FROM report_cells WHERE report_sheet_id IN (SELECT id FROM report_sheets WHERE report_definition_id IN (SELECT id FROM report_definitions WHERE account_set_id = ?))'
-      ).run(id)
-      db.prepare(
-        'DELETE FROM report_template_sources WHERE report_definition_id IN (SELECT id FROM report_definitions WHERE account_set_id = ?)'
-      ).run(id)
-      db.prepare(
-        'DELETE FROM report_sheets WHERE report_definition_id IN (SELECT id FROM report_definitions WHERE account_set_id = ?)'
-      ).run(id)
-      db.prepare('DELETE FROM report_definitions WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM report_templates WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM report_formula_functions WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM transfer_items WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM transfer_types WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM aux_items WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM aux_categories WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM voucher_types WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM system_params WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM ai_config WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM ai_logs WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM backups WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM operation_logs WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM accounts WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM roles WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM users WHERE account_set_id = ?').run(id)
-      db.prepare('DELETE FROM account_sets WHERE id = ?').run(id)
-    })
-    deleteAll()
-    db.pragma('foreign_keys = ON')
+      return res.status(500).json({ code: 500, message: '删除账套失败: ' + msg })
+    }
     res.json({ code: 0, message: '删除成功' })
   }
 )
@@ -297,8 +312,12 @@ function getTemplateDirs(): string[] {
 
 // Helper: resolve standard template directories
 function getStandardTemplateDirs(): string[] {
-  const cwd = process.cwd()
-  return [join(cwd, '标准模版'), resolve(cwd, '..', '标准模版')]
+  const deployDir = getDeployDir()
+  return [
+    join(deployDir, '标准模版'),
+    join(process.cwd(), '标准模版'),
+    resolve(process.cwd(), '..', '标准模版'),
+  ]
 }
 
 // Helper: scan standard templates (folders with ACD + Excel files)
@@ -442,16 +461,7 @@ router.post(
     if (existingName) {
       return res.status(400).json({ code: 400, message: '账套名称已存在' })
     }
-    // 自动生成编码（如果未提供）
-    let finalCode = code
-    if (!finalCode) {
-      const count = (db.prepare('SELECT COUNT(*) as cnt FROM account_sets').get() as any).cnt
-      finalCode = `ZT${String(count + 1).padStart(3, '0')}`
-    }
-    const existingCode = db.prepare('SELECT id FROM account_sets WHERE code = ?').get(finalCode)
-    if (existingCode) {
-      return res.status(400).json({ code: 400, message: '账套编码已存在' })
-    }
+    const finalCode = allocateAccountSetCode(db, code)
 
     // Resolve template file path from template_id (filename)
     const templateFilePath = findTemplateFile(template_id)
@@ -460,6 +470,8 @@ router.post(
     }
 
     const id = uuidv4()
+    const fiscalYear = fiscal_year || new Date().getFullYear()
+    const normalizedStartDate = resolveAccountSetStartDate(start_date, fiscalYear)
     db.prepare(
       `
     INSERT INTO account_sets (id, name, code, credit_code, fiscal_year, start_date, unit_leader, chief_accountant)
@@ -470,8 +482,8 @@ router.post(
       name,
       finalCode,
       credit_code,
-      fiscal_year || new Date().getFullYear(),
-      start_date,
+      fiscalYear,
+      normalizedStartDate,
       unit_leader,
       chief_accountant
     )
@@ -479,19 +491,19 @@ router.post(
     // 自动创建超级管理员 admin/admin123
     ensureAccountSetSecurityBootstrap(id)
 
-    // 初始化默认系统参数
-    const defaultParams = [
-      { key: 'voucher_audit_required', value: 'false' }, // 凭证审核：关闭
-      { key: 'voucher_direct_print', value: 'true' }, // 直接打印：开启
-      { key: 'voucher_sequence_control', value: 'false' }, // 凭证时序控制：关闭
-      { key: 'enable_cash_flow', value: 'false' }, // 启用现金流核算：关闭
-    ]
-    const insertParam = db.prepare(
+    bootstrapNewAccountSetDefaults(db, id, {
+      start_date: normalizedStartDate,
+      fiscal_year: fiscalYear,
+      unit_name: name,
+    })
+    db.prepare(
       `INSERT OR REPLACE INTO system_params (id, account_set_id, param_key, param_value) VALUES (?, ?, ?, ?)`
+    ).run(
+      uuidv4(),
+      id,
+      ACCOUNTING_STANDARD_PARAM_KEY,
+      inferAccountingStandardFromTemplateId(template_id)
     )
-    for (const param of defaultParams) {
-      insertParam.run(uuidv4(), id, param.key, param.value)
-    }
 
     // Read ACD template and import (no vouchers, no init balances)
     try {
@@ -579,7 +591,9 @@ router.post(
 
     const db = getDb()
     const id = uuidv4()
-    const finalCode = code || `AS${Date.now()}`
+    const finalCode = allocateAccountSetCode(db, code)
+    const fiscalYear = fiscal_year || new Date().getFullYear()
+    const normalizedStartDate = resolveAccountSetStartDate(start_date, fiscalYear)
 
     // 创建账套
     db.prepare(
@@ -592,8 +606,8 @@ router.post(
       name,
       finalCode,
       credit_code,
-      fiscal_year || new Date().getFullYear(),
-      start_date,
+      fiscalYear,
+      normalizedStartDate,
       unit_leader,
       chief_accountant
     )
@@ -601,19 +615,11 @@ router.post(
     // 创建管理员账号
     ensureAccountSetSecurityBootstrap(id)
 
-    // 初始化默认系统参数
-    const defaultParams = [
-      { key: 'voucher_audit_required', value: 'false' }, // 凭证审核：关闭
-      { key: 'voucher_direct_print', value: 'true' }, // 直接打印：开启
-      { key: 'voucher_sequence_control', value: 'false' }, // 凭证时序控制：关闭
-      { key: 'enable_cash_flow', value: 'false' }, // 启用现金流核算：关闭
-    ]
-    const insertParam = db.prepare(
-      `INSERT OR REPLACE INTO system_params (id, account_set_id, param_key, param_value) VALUES (?, ?, ?, ?)`
-    )
-    for (const param of defaultParams) {
-      insertParam.run(uuidv4(), id, param.key, param.value)
-    }
+    bootstrapNewAccountSetDefaults(db, id, {
+      start_date: normalizedStartDate,
+      fiscal_year: fiscalYear,
+      unit_name: name,
+    })
 
     // 导入 ACD 文件（会自动推断并设置科目编码长度）
     let acdStats: any = {}
@@ -654,7 +660,11 @@ router.post(
         ? '从标准模板创建成功，但报表导入部分失败'
         : '从标准模板创建成功',
       data: {
+        id,
         accountSetId: id,
+        name,
+        code: finalCode,
+        start_date: readAccountSetStartDate(db, id),
         acdStats: {
           accounts: acdStats.accounts?.inserted + acdStats.accounts?.updated || 0,
           transferTypes: acdStats.transferTypes?.types || 0,
@@ -676,7 +686,31 @@ router.get('/users', (req: AuthRequest, res) => {
   const query = buildSystemUsersQuery({
     currentAccountSetId: req.accountSetId || '',
   })
-  const list = db.prepare(query.sql).all(...query.params)
+  const rawList = db.prepare(query.sql).all(...query.params) as any[]
+  
+  const list = rawList.map(user => {
+    let customPermissions = null
+    if (user.custom_permissions) {
+      try {
+        customPermissions = JSON.parse(user.custom_permissions)
+      } catch {
+        customPermissions = []
+      }
+    }
+    
+    // 查询用户的所有角色
+    const userRoles = getUserRoles(db, user.id, user.account_set_id)
+    const roleIds = userRoles.map(r => r.role_id)
+    const roleNames = userRoles.map(r => r.role_name).join(', ')
+    
+    return {
+      ...user,
+      custom_permissions: customPermissions,
+      role_ids: roleIds,
+      role_names: roleNames,
+    }
+  })
+  
   res.json({ code: 0, data: list })
 })
 
@@ -685,14 +719,12 @@ router.post(
   requirePermission('system:user'),
   operationLog('创建用户', '系统管理'),
   (req: AuthRequest, res) => {
-    const { username, password, nickname, role_id, email, phone } = req.body
+    const { username, password, nickname, role_id, role_ids, email, phone, custom_permissions } = req.body
     const accountSetId = req.accountSetId!
     if (!username || !password) {
       return res.status(400).json({ code: 400, message: '用户名和密码不能为空' })
     }
-    if (!role_id) {
-      return res.status(400).json({ code: 400, message: '请选择角色' })
-    }
+    
     const db = getDb()
     const existing = db
       .prepare('SELECT id FROM users WHERE username = ? AND account_set_id = ?')
@@ -700,20 +732,57 @@ router.post(
     if (existing) {
       return res.status(400).json({ code: 400, message: '用户名已存在' })
     }
-    const role = db
-      .prepare('SELECT id FROM roles WHERE id = ? AND account_set_id = ?')
-      .get(role_id, accountSetId)
-    if (!role) {
-      return res.status(400).json({ code: 400, message: '角色不存在或不属于当前账套' })
+    
+    // 处理角色列表（优先使用 role_ids，向后兼容 role_id）
+    let roleList: string[] = []
+    if (role_ids && Array.isArray(role_ids) && role_ids.length > 0) {
+      roleList = role_ids
+    } else if (role_id) {
+      roleList = [role_id]
     }
+    
+    // 验证至少有角色或自定义权限
+    const hasCustomPerms = custom_permissions && Array.isArray(custom_permissions) && custom_permissions.length > 0
+    if (roleList.length === 0 && !hasCustomPerms) {
+      return res.status(400).json({ code: 400, message: '必须至少指定一个角色或自定义权限' })
+    }
+    
+    // 验证所有角色存在性
+    if (roleList.length > 0) {
+      const placeholders = roleList.map(() => '?').join(',')
+      const roles = db
+        .prepare(`SELECT id FROM roles WHERE id IN (${placeholders}) AND account_set_id = ?`)
+        .all(...roleList, accountSetId) as any[]
+      if (roles.length !== roleList.length) {
+        return res.status(400).json({ code: 400, message: '部分角色不存在或不属于当前账套' })
+      }
+    }
+    
     const id = uuidv4()
     const hash = bcrypt.hashSync(password, 10)
-    db.prepare(
-      `
-    INSERT INTO users (id, username, password, nickname, role_id, account_set_id, email, phone)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-  `
-    ).run(id, username, hash, nickname || username, role_id, accountSetId, email, phone)
+    const customPermsJson = hasCustomPerms ? JSON.stringify(custom_permissions) : null
+    
+    // 使用事务插入用户和角色关联
+    db.transaction(() => {
+      // 插入用户（role_id 设为第一个角色，向后兼容）
+      db.prepare(
+        `
+      INSERT INTO users (id, username, password, nickname, role_id, account_set_id, email, phone, custom_permissions)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `
+      ).run(id, username, hash, nickname || username, roleList[0] || null, accountSetId, email, phone, customPermsJson)
+      
+      // 批量插入 user_roles 记录
+      if (roleList.length > 0) {
+        const insertUserRole = db.prepare(
+          'INSERT INTO user_roles (id, user_id, role_id, account_set_id) VALUES (?, ?, ?, ?)'
+        )
+        for (const roleId of roleList) {
+          insertUserRole.run(uuidv4(), id, roleId, accountSetId)
+        }
+      }
+    })()
+    
     res.json({ code: 0, message: '创建成功', data: { id } })
   }
 )
@@ -724,7 +793,7 @@ router.put(
   operationLog('修改用户', '系统管理'),
   (req: AuthRequest, res) => {
     const { id } = req.params
-    const { password, nickname, role_id, status, email, phone } = req.body
+    const { password, nickname, role_id, role_ids, status, email, phone, custom_permissions } = req.body
     const db = getDb()
     const accountSetId = req.accountSetId!
     const existingUser = db
@@ -733,28 +802,91 @@ router.put(
     if (!existingUser) {
       return res.status(404).json({ code: 404, message: '用户不存在' })
     }
-    // 如果提供了 role_id，必须验证其有效性（不允许设置为空）
-    if (role_id !== undefined) {
-      if (!role_id) {
-        return res.status(400).json({ code: 400, message: '请选择角色' })
+    
+    // 处理角色列表（优先使用 role_ids，向后兼容 role_id）
+    let roleList: string[] | undefined
+    if (role_ids !== undefined) {
+      if (Array.isArray(role_ids)) {
+        roleList = role_ids
+      } else {
+        return res.status(400).json({ code: 400, message: 'role_ids 必须是数组' })
       }
-      const role = db
-        .prepare('SELECT id FROM roles WHERE id = ? AND account_set_id = ?')
-        .get(role_id, accountSetId)
-      if (!role) {
-        return res.status(400).json({ code: 400, message: '角色不存在或不属于当前账套' })
+    } else if (role_id !== undefined) {
+      roleList = role_id ? [role_id] : []
+    }
+    
+    // 验证所有角色存在性
+    if (roleList && roleList.length > 0) {
+      const placeholders = roleList.map(() => '?').join(',')
+      const roles = db
+        .prepare(`SELECT id FROM roles WHERE id IN (${placeholders}) AND account_set_id = ?`)
+        .all(...roleList, accountSetId) as any[]
+      if (roles.length !== roleList.length) {
+        return res.status(400).json({ code: 400, message: '部分角色不存在或不属于当前账套' })
       }
     }
+    
+    // 构建更新语句
+    const updates: string[] = []
+    const params: any[] = []
+    
     if (password) {
-      const hash = bcrypt.hashSync(password, 10)
-      db.prepare(
-        "UPDATE users SET password=?, nickname=?, role_id=?, status=?, email=?, phone=?, updated_at=datetime('now') WHERE id=? AND account_set_id=?"
-      ).run(hash, nickname, role_id, status, email, phone, id, accountSetId)
-    } else {
-      db.prepare(
-        "UPDATE users SET nickname=?, role_id=?, status=?, email=?, phone=?, updated_at=datetime('now') WHERE id=? AND account_set_id=?"
-      ).run(nickname, role_id, status, email, phone, id, accountSetId)
+      updates.push('password=?')
+      params.push(bcrypt.hashSync(password, 10))
     }
+    if (nickname !== undefined) {
+      updates.push('nickname=?')
+      params.push(nickname)
+    }
+    if (roleList !== undefined) {
+      updates.push('role_id=?')
+      params.push(roleList[0] || null)
+    }
+    if (status !== undefined) {
+      updates.push('status=?')
+      params.push(status)
+    }
+    if (email !== undefined) {
+      updates.push('email=?')
+      params.push(email)
+    }
+    if (phone !== undefined) {
+      updates.push('phone=?')
+      params.push(phone)
+    }
+    if (custom_permissions !== undefined) {
+      updates.push('custom_permissions=?')
+      params.push(Array.isArray(custom_permissions) ? JSON.stringify(custom_permissions) : null)
+    }
+    
+    // 使用事务更新用户和角色关联
+    db.transaction(() => {
+      // 更新用户基本信息
+      if (updates.length > 0) {
+        updates.push("updated_at=datetime('now')")
+        params.push(id, accountSetId)
+        const sql = `UPDATE users SET ${updates.join(', ')} WHERE id=? AND account_set_id=?`
+        db.prepare(sql).run(...params)
+      }
+      
+      // 更新角色关联
+      if (roleList !== undefined) {
+        // 删除旧的角色关联
+        db.prepare('DELETE FROM user_roles WHERE user_id = ? AND account_set_id = ?')
+          .run(id, accountSetId)
+        
+        // 插入新的角色关联
+        if (roleList.length > 0) {
+          const insertUserRole = db.prepare(
+            'INSERT INTO user_roles (id, user_id, role_id, account_set_id) VALUES (?, ?, ?, ?)'
+          )
+          for (const roleId of roleList) {
+            insertUserRole.run(uuidv4(), id, roleId, accountSetId)
+          }
+        }
+      }
+    })()
+    
     res.json({ code: 0, message: '更新成功' })
   }
 )
@@ -766,13 +898,72 @@ router.delete(
   (req: AuthRequest, res) => {
     const { id } = req.params
     const db = getDb()
-    const result = db
-      .prepare('DELETE FROM users WHERE id = ? AND account_set_id = ?')
-      .run(id, req.accountSetId)
-    if (result.changes === 0) {
+    
+    // 查询用户信息及其角色信息
+    const user = db
+      .prepare(`
+        SELECT u.id, u.role_id, r.is_personal
+        FROM users u
+        LEFT JOIN roles r ON u.role_id = r.id
+        WHERE u.id = ? AND u.account_set_id = ?
+      `)
+      .get(id, req.accountSetId) as any
+    
+    if (!user) {
       return res.status(404).json({ code: 404, message: '用户不存在' })
     }
+    
+    // 使用事务删除用户及其个人角色
+    db.transaction(() => {
+      // 删除用户
+      db.prepare('DELETE FROM users WHERE id = ? AND account_set_id = ?')
+        .run(id, req.accountSetId)
+      
+      // 如果使用的是个人角色，同时删除该角色
+      if (user.role_id && user.is_personal === 1) {
+        db.prepare('DELETE FROM roles WHERE id = ? AND account_set_id = ?')
+          .run(user.role_id, req.accountSetId)
+      }
+    })()
+    
     res.json({ code: 0, message: '删除成功' })
+  }
+)
+
+router.get(
+  '/users/:id/account-scopes',
+  requirePermission('system:user'),
+  (req: AuthRequest, res) => {
+    const db = getDb()
+    const user = db
+      .prepare('SELECT id FROM users WHERE id=? AND account_set_id=?')
+      .get(req.params.id, req.accountSetId)
+    if (!user) {
+      return res.status(404).json({ code: 404, message: '用户不存在' })
+    }
+    const data = getUserAccountScopePayload(db, req.params.id, req.accountSetId!)
+    res.json({ code: 0, data })
+  }
+)
+
+router.put(
+  '/users/:id/account-scopes',
+  requirePermission('system:user'),
+  operationLog('配置用户科目授权', '系统管理'),
+  (req: AuthRequest, res) => {
+    const { enabled, account_ids } = req.body
+    const db = getDb()
+    const user = db
+      .prepare('SELECT id FROM users WHERE id=? AND account_set_id=?')
+      .get(req.params.id, req.accountSetId)
+    if (!user) {
+      return res.status(404).json({ code: 404, message: '用户不存在' })
+    }
+    saveUserAccountScopes(db, req.params.id, req.accountSetId!, {
+      enabled: !!enabled,
+      account_ids: Array.isArray(account_ids) ? account_ids : [],
+    })
+    res.json({ code: 0, message: '科目授权已保存' })
   }
 )
 
@@ -829,7 +1020,7 @@ router.get('/permissions/available', (req: AuthRequest, res) => {
 router.get('/roles', (req: AuthRequest, res) => {
   const db = getDb()
   const list = db
-    .prepare('SELECT * FROM roles WHERE account_set_id = ? ORDER BY is_system DESC, created_at')
+    .prepare('SELECT * FROM roles WHERE account_set_id = ? AND (is_personal IS NULL OR is_personal = 0) ORDER BY is_system DESC, created_at')
     .all(req.accountSetId)
   res.json({ code: 0, data: list })
 })
@@ -867,6 +1058,15 @@ router.put(
     const { id } = req.params
     const { name, description, permissions } = req.body
     const db = getDb()
+    const role = db
+      .prepare('SELECT * FROM roles WHERE id=? AND account_set_id=?')
+      .get(id, req.accountSetId) as any
+    if (!role) {
+      return res.status(404).json({ code: 404, message: '角色不存在' })
+    }
+    if (role.is_personal) {
+      return res.status(400).json({ code: 400, message: '个人角色不能编辑' })
+    }
     const result = db
       .prepare(
         'UPDATE roles SET name=?, description=?, permissions=? WHERE id=? AND account_set_id=?'
@@ -892,6 +1092,9 @@ router.delete(
     if (!role) {
       return res.status(404).json({ code: 404, message: '角色不存在' })
     }
+    if (role.is_personal) {
+      return res.status(400).json({ code: 400, message: '个人角色不能删除' })
+    }
     if (role.is_system) {
       return res.status(400).json({ code: 400, message: '系统内置角色无法删除' })
     }
@@ -906,7 +1109,111 @@ router.delete(
   }
 )
 
+router.get(
+  '/roles/:id/account-scopes',
+  requirePermission('system:role'),
+  (req: AuthRequest, res) => {
+    const db = getDb()
+    const role = db
+      .prepare('SELECT id FROM roles WHERE id=? AND account_set_id=?')
+      .get(req.params.id, req.accountSetId)
+    if (!role) {
+      return res.status(404).json({ code: 404, message: '角色不存在' })
+    }
+    const data = getRoleAccountScopePayload(db, req.params.id, req.accountSetId!)
+    res.json({ code: 0, data })
+  }
+)
+
+router.put(
+  '/roles/:id/account-scopes',
+  requirePermission('system:role'),
+  operationLog('配置角色科目授权', '系统管理'),
+  (req: AuthRequest, res) => {
+    const { enabled, account_ids } = req.body
+    const db = getDb()
+    const role = db
+      .prepare('SELECT id, is_personal FROM roles WHERE id=? AND account_set_id=?')
+      .get(req.params.id, req.accountSetId) as { id: string; is_personal: number } | undefined
+    if (!role) {
+      return res.status(404).json({ code: 404, message: '角色不存在' })
+    }
+    if (role.is_personal) {
+      return res.status(400).json({ code: 400, message: '个人角色不能配置科目授权' })
+    }
+    saveRoleAccountScopes(db, req.params.id, req.accountSetId!, {
+      enabled: !!enabled,
+      account_ids: Array.isArray(account_ids) ? account_ids : [],
+    })
+    res.json({ code: 0, message: '科目授权已保存' })
+  }
+)
+
 // ===================== 系统参数 =====================
+
+router.get('/dashboard-rules-preview', (req: AuthRequest, res) => {
+  const db = getDb()
+  const standard = String(req.query.standard || '').trim()
+  if (!standard || !isAccountingStandardParam(standard) || standard === 'custom') {
+    return res.status(400).json({ code: 400, message: '无效的会计准则参数' })
+  }
+
+  const resolved =
+    standard === 'auto'
+      ? resolveAccountingStandard(db, req.accountSetId!)
+      : standard
+
+  if (resolved === 'custom') {
+    return res.status(400).json({ code: 400, message: '无法预览自定义准则' })
+  }
+
+  const rules = buildPresetDashboardCategoryRules(db, req.accountSetId!, resolved)
+  res.json({ code: 0, data: rules })
+})
+
+router.put(
+  '/branding',
+  requirePermission('system:init'),
+  operationLog('修改品牌设置', '系统管理'),
+  (req: AuthRequest, res) => {
+    const { title, subtitle } = req.body as { title?: string; subtitle?: string }
+    const titleErr = validateBrandParam(BRAND_TITLE_KEY, String(title ?? ''))
+    if (titleErr) return res.status(400).json({ code: 400, message: titleErr })
+    const subtitleErr = validateBrandParam(BRAND_SUBTITLE_KEY, String(subtitle ?? ''))
+    if (subtitleErr) return res.status(400).json({ code: 400, message: subtitleErr })
+    const db = getDb()
+    upsertGlobalBrandParam(db, BRAND_TITLE_KEY, String(title).trim())
+    upsertGlobalBrandParam(db, BRAND_SUBTITLE_KEY, String(subtitle).trim())
+    res.json({ code: 0, message: '保存成功', data: readGlobalBranding(db) })
+  }
+)
+
+router.post(
+  '/branding/logo',
+  requirePermission('system:init'),
+  brandUpload.single('file'),
+  operationLog('上传品牌 LOGO', '系统管理'),
+  (req: AuthRequest, res) => {
+    if (!req.file) {
+      return res.status(400).json({ code: 400, message: '请选择 LOGO 图片' })
+    }
+    const logoUrl = `/uploads/branding/${req.file.filename}`
+    const db = getDb()
+    upsertGlobalBrandParam(db, BRAND_LOGO_URL_KEY, logoUrl)
+    res.json({ code: 0, message: '上传成功', data: readGlobalBranding(db) })
+  }
+)
+
+router.delete(
+  '/branding/logo',
+  requirePermission('system:init'),
+  operationLog('恢复默认品牌 LOGO', '系统管理'),
+  (_req: AuthRequest, res) => {
+    const db = getDb()
+    upsertGlobalBrandParam(db, BRAND_LOGO_URL_KEY, '')
+    res.json({ code: 0, message: '已恢复默认 LOGO', data: readGlobalBranding(db) })
+  }
+)
 
 router.get('/params', (req: AuthRequest, res) => {
   const db = getDb()
@@ -922,7 +1229,6 @@ router.get('/params', (req: AuthRequest, res) => {
       paramMap.set(item.param_key, item)
     }
   }
-  const list = Array.from(paramMap.values())
 
   // 附带账套基本信息（建账日期）
   const accountSet = db
@@ -947,17 +1253,36 @@ router.get('/params', (req: AuthRequest, res) => {
   }
 
   // 使用单位名称：优先读 system_params 中的 unit_name，没有则回退到账套名称
-  const unitNameParam = list.find((p: any) => p.param_key === 'unit_name') as any
+  const unitNameParam = paramMap.get('unit_name') as any
   const unitName = unitNameParam?.param_value || accountSet?.name || ''
+  const dashboardConfig = getDashboardCategoryConfig(db, asId as string)
+  const startDate = readAccountSetStartDate(db, asId as string)
+
+  const startDateParam = paramMap.get('start_date')
+  if (!startDateParam) {
+    paramMap.set('start_date', {
+      account_set_id: asId,
+      param_key: 'start_date',
+      param_value: startDate,
+      description: '建账日期',
+    })
+  } else if (!isValidAccountSetStartDate(startDateParam.param_value)) {
+    startDateParam.param_value = startDate
+  }
+  const list = Array.from(paramMap.values())
 
   res.json({
     code: 0,
     data: list,
     meta: {
       unit_name: unitName,
-      start_date: accountSet?.start_date || '',
+      start_date: startDate,
       current_year: currentYear,
       current_period: currentPeriod,
+      resolved_accounting_standard_name: getResolvedAccountingStandardName(db, asId as string),
+      dashboard_rules_editable: true,
+      dashboard_effective_rules: dashboardConfig.rules,
+      dashboard_category_rules: getDashboardCategoryRulesParam(db, asId as string),
     },
   })
 })
@@ -969,10 +1294,17 @@ router.put(
   (req: AuthRequest, res) => {
     const { params } = req.body
     const db = getDb()
+    const paramList = Array.isArray(params) ? params : []
+    for (const p of paramList) {
+      const error = validateSystemParamEntry(p.param_key, String(p.param_value ?? ''), paramList)
+      if (error) {
+        return res.status(400).json({ code: 400, message: error })
+      }
+    }
     const upsert = db.prepare(
       'INSERT OR REPLACE INTO system_params (id, account_set_id, param_key, param_value) VALUES (?, ?, ?, ?)'
     )
-    for (const p of params) {
+    for (const p of paramList) {
       const targetAccountSetId = p.account_set_id || req.accountSetId
       const id = p.account_set_id === targetAccountSetId && p.id ? p.id : uuidv4()
       upsert.run(id, targetAccountSetId, p.param_key, p.param_value)
@@ -1091,9 +1423,52 @@ router.put(
 
 // ===================== 操作日志 =====================
 
+router.get('/logs/options', (req: AuthRequest, res) => {
+  const db = getDb()
+  const accountSetId = req.accountSetId || ''
+
+  const actions = db
+    .prepare(
+      `SELECT DISTINCT action FROM operation_logs
+       WHERE account_set_id = ? AND action != ''
+       ORDER BY action`
+    )
+    .all(accountSetId)
+    .map((row: any) => row.action)
+
+  const modules = db
+    .prepare(
+      `SELECT DISTINCT module FROM operation_logs
+       WHERE account_set_id = ? AND module != ''
+       ORDER BY module`
+    )
+    .all(accountSetId)
+    .map((row: any) => row.module)
+
+  const ipAddresses = db
+    .prepare(
+      `SELECT DISTINCT ip_address FROM operation_logs
+       WHERE account_set_id = ? AND ip_address != ''
+       ORDER BY ip_address`
+    )
+    .all(accountSetId)
+    .map((row: any) => row.ip_address)
+
+  res.json({ code: 0, data: { actions, modules, ipAddresses } })
+})
+
 router.get('/logs', (req: AuthRequest, res) => {
   const db = getDb()
-  const { page = 1, pageSize = 50, user_id, action, module, start_date, end_date } = req.query
+  const {
+    page = 1,
+    pageSize = 50,
+    user_id,
+    action,
+    module,
+    ip_address,
+    start_date,
+    end_date,
+  } = req.query
   const query = buildSystemLogsQuery({
     accountSetId: req.accountSetId || '',
     page: Number(page),
@@ -1101,6 +1476,7 @@ router.get('/logs', (req: AuthRequest, res) => {
     userId: user_id as string | undefined,
     action: action as string | undefined,
     module: module as string | undefined,
+    ipAddress: ip_address as string | undefined,
     startDate: start_date as string | undefined,
     endDate: end_date as string | undefined,
   })
@@ -1152,5 +1528,7 @@ router.post(
     })
   }
 )
+
+router.use(systemReinitializeRoutes)
 
 export default router

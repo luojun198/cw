@@ -1,7 +1,11 @@
 import type { Database } from 'better-sqlite3'
 import { getCashFlowMappingConfig } from '../config/staticCashFlowMappings.js'
+import {
+  getAccountingStandardParam,
+} from './accountingStandard.js'
 
-export type StaticReportStandard = 'government' | 'small_business'
+export type StaticReportStandard = 'government' | 'small_business' | 'enterprise'
+export type ResolvedAccountingStandard = StaticReportStandard | 'custom'
 
 export interface BalanceSheetGroup {
   codes: string[]
@@ -40,6 +44,31 @@ type AccountProbe = {
   name: string
 }
 
+/**
+ * FIX-004 / P0-8：按会计准则返回损益类科目编码前缀，用于年结前校验损益必须已结转。
+ *
+ * - enterprise（企业会计准则）：6xxx 损益类（6001 主营业务收入、6601 销售费用、6602 管理费用、6603 财务费用、6701 资产减值损失 等）
+ * - small_business（小企业会计准则）：5xxx 损益类（5001 主营业务收入、5401 主营业务成本、5501 营业费用 等）
+ * - government（政府会计制度，财务会计口径）：4xxx 收入类 + 5xxx 费用类
+ *
+ * 注意：政府会计准则下"业务活动费用"科目编码 5xxx 与"成本"在企业准则下的 5xxx 冲突，
+ *       因此该函数必须依赖 detectStaticReportStandard 的识别结果。
+ */
+export function getProfitLossAccountCodePrefixes(
+  standard: StaticReportStandard
+): string[] {
+  switch (standard) {
+    case 'enterprise':
+      return ['6']
+    case 'small_business':
+      return ['5']
+    case 'government':
+      return ['4', '5']
+    default:
+      return ['6']
+  }
+}
+
 export function detectStaticReportStandard(
   db: Database,
   accountSetId: string
@@ -57,6 +86,15 @@ export function detectStaticReportStandard(
 
   const hasAccount = (code: string, namePart?: string) =>
     rows.some(row => row.code === code && (!namePart || row.name.includes(namePart)))
+
+  if (
+    hasAccount('6001', '主营') ||
+    hasAccount('6401', '主营') ||
+    hasAccount('6601') ||
+    hasAccount('6602')
+  ) {
+    return 'enterprise'
+  }
 
   if (
     hasAccount('5001', '主营业务收入') ||
@@ -77,6 +115,16 @@ export function detectStaticReportStandard(
   }
 
   return 'government'
+}
+
+export function resolveAccountingStandard(
+  db: Database,
+  accountSetId: string
+): ResolvedAccountingStandard {
+  const param = getAccountingStandardParam(db, accountSetId)
+  if (param === 'custom') return 'custom'
+  if (param === 'auto') return detectStaticReportStandard(db, accountSetId)
+  return param
 }
 
 export function getBalanceSheetConfig(standard: StaticReportStandard): BalanceSheetConfig {
@@ -221,6 +269,32 @@ export function getBalanceSheetConfig(standard: StaticReportStandard): BalanceSh
 }
 
 export function getIncomeStatementConfig(standard: StaticReportStandard): IncomeStatementConfig {
+  if (standard === 'enterprise') {
+    return {
+      standard,
+      standardName: '新企业会计准则',
+      revenueGroups: {
+        主营业务收入: ['6001'],
+        其他业务收入: ['6051'],
+        利息收入: ['6011'],
+        公允价值变动损益: ['6101'],
+        投资收益: ['6111'],
+        营业外收入: ['6301'],
+      },
+      expenseGroups: {
+        主营业务成本: ['6401'],
+        其他业务成本: ['6402'],
+        税金及附加: ['6403'],
+        销售费用: ['6601'],
+        管理费用: ['6602'],
+        财务费用: ['6603'],
+        资产减值损失: ['6701'],
+        营业外支出: ['6711'],
+        所得税费用: ['6801'],
+      },
+    }
+  }
+
   if (standard === 'small_business') {
     return {
       standard,
@@ -254,20 +328,24 @@ export function getIncomeStatementConfig(standard: StaticReportStandard): Income
       上级补助收入: ['4201'],
       附属单位上缴收入: ['4301'],
       经营收入: ['4401'],
-      捐赠收入: ['4601'],
-      利息收入: ['4701'],
-      租金收入: ['4801'],
-      其他收入: ['4901'],
+      非同级财政拨款收入: ['4601'],
+      投资收益: ['4602'],
+      // 4603 为官方编码；4601/4701/4801/4901 为旧版账套常见编码，按科目名称匹配
+      捐赠收入: ['4603', '4601'],
+      利息收入: ['4604', '4701'],
+      租金收入: ['4605', '4801'],
+      其他收入: ['4609', '4901'],
     },
     expenseGroups: {
       业务活动费用: ['5001'],
       单位管理费用: ['5101'],
       经营费用: ['5201'],
-      上缴上级费用: ['5301'],
-      对附属单位补助费用: ['5401'],
-      所得税费用: ['5501'],
-      其他费用: ['5601'],
-      资产处置费用: ['5901'],
+      // 5301–5901 段：官方编码 + 旧版账套常见编码（按科目名称区分）
+      资产处置费用: ['5301', '5901'],
+      上缴上级费用: ['5401', '5301'],
+      对附属单位补助费用: ['5501', '5401'],
+      所得税费用: ['5801', '5501'],
+      其他费用: ['5901', '5601'],
     },
   }
 }

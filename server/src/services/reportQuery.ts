@@ -1,3 +1,5 @@
+import { appendAccountScopeCondition, type AccountScopeContext } from './accountAuthorization.js'
+
 type AuxBalanceField = 've.dept_id' | 've.project_id' | 've.supplier_id' | 've.person_id' | 've.func_class_id'
 
 const AUX_FIELD_MAP: Record<string, AuxBalanceField> = {
@@ -18,11 +20,22 @@ export function buildAuxBalanceQuery(filters: {
   period: number
   auxField: AuxBalanceField
   includeUnposted?: boolean
+  accountScope?: AccountScopeContext
 }) {
   // 构建凭证状态过滤条件
   const statusCondition = filters.includeUnposted
     ? "v.status IN ('draft', 'audited', 'posted')"
     : "v.status='posted'"
+
+  const conditions = [
+    've.account_set_id=?',
+    'v.year=?',
+    'v.period=?',
+    statusCondition,
+    `${filters.auxField} IS NOT NULL`,
+  ]
+  const params: Array<string | number> = [filters.accountSetId, filters.year, filters.period]
+  appendAccountScopeCondition(filters.accountScope, 've.account_id', conditions, params)
 
   return {
     sql: `
@@ -36,11 +49,10 @@ export function buildAuxBalanceQuery(filters: {
       FROM voucher_entries ve
       JOIN vouchers v ON v.id = ve.voucher_id
       JOIN accounts a ON a.id = ve.account_id
-      WHERE ve.account_set_id=? AND v.year=? AND v.period=? AND ${statusCondition}
-        AND ${filters.auxField} IS NOT NULL
+      WHERE ${conditions.join(' AND ')}
       GROUP BY ${filters.auxField}, ve.account_code
       ORDER BY ve.account_code
     `,
-    params: [filters.accountSetId, filters.year, filters.period],
+    params,
   }
 }

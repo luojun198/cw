@@ -10,6 +10,10 @@
           style="width: 300px"
           prefix-icon="Search"
         />
+        <el-button type="primary" @click="handleCreate">
+          <el-icon><Plus /></el-icon>
+          新增模版
+        </el-button>
         <el-button plain @click="loadTemplates">
           <el-icon><Refresh /></el-icon>
           刷新
@@ -93,10 +97,16 @@
       :total-debit="totalDebit"
       :total-credit="totalCredit"
       :is-balanced="isBalanced"
-      :aux-items-by-category="auxItemsByCategory"
       :current-entry-aux-categories="currentEntryAuxCategories"
       :is-parent-account="isParentAccount"
       :get-aux-item-names="getAuxItemNames"
+      :get-aux-options="voucherAux.getAuxOptions"
+      :is-aux-select-loading="isAuxSelectLoading"
+      :search-aux-items="voucherAux.searchAuxItems"
+      :on-aux-dropdown-open="voucherAux.onDropdownOpen"
+      :resolve-aux-item-name="voucherAux.resolveAuxItemName"
+      :fetch-next-aux-code="voucherAux.fetchNextAuxCode"
+      :ensure-selected-for-entry="ensureAuxSelectedForEntry"
       :on-account-change="onAccountChange"
       :on-amount-change="onAmountChange"
       :add-entry="addEntry"
@@ -105,14 +115,14 @@
       :attachments="[]"
       :update-attachments="() => {}"
       :submit-loading="submitLoading"
-      @submit="handleEditSubmit"
+      @submit="handleSaveSubmit"
     />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Refresh } from '@element-plus/icons-vue'
+import { Refresh, Plus } from '@element-plus/icons-vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
@@ -121,6 +131,7 @@ import dayjs from 'dayjs'
 import VoucherEntryForm from '@/components/voucher/VoucherEntryForm.vue'
 import { useVoucherForm } from '@/composables/useVoucherForm'
 import { useAuxiliaryAccounting } from '@/composables/useAuxiliaryAccounting'
+import { useVoucherAuxItems } from '@/composables/useVoucherAuxItems'
 import { filterAuxCategoriesForAccount } from '@/utils/accountCashFlow'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
@@ -153,14 +164,24 @@ const {
   removeEntry,
   setCurrentEntry,
   loadVoucher,
+  resetForm,
 } = useVoucherForm(auxCategories)
 
-const { auxItemsByCategory, currentEntryAuxCategories, getAuxItemNames } = useAuxiliaryAccounting(
+const voucherAux = useVoucherAuxItems()
+
+const { currentEntryAuxCategories, getAuxItemNames } = useAuxiliaryAccounting(
   accounts,
   auxCategories,
-  auxItems,
   currentEntry
 )
+
+function isAuxSelectLoading(catId: string) {
+  return !!voucherAux.loadingByCategory.value[catId]
+}
+
+function ensureAuxSelectedForEntry(entry: any) {
+  return voucherAux.ensureSelectedForEntry(entry, currentEntryAuxCategories.value)
+}
 
 // 科目相关的辅助方法
 const isParentAccount = (accountId: string) => {
@@ -209,7 +230,7 @@ async function loadOptions() {
   try {
     const [typeRes, accRes, catRes, auxRes] = await Promise.all([
       request.get<any[]>('/base/voucher-types'),
-      request.get<any[]>('/base/accounts'),
+      request.get<any[]>('/base/accounts', { params: { all: 1 } }),
       request.get<any[]>('/base/aux-categories'),
       request.get<any[]>('/base/aux-items'),
     ])
@@ -220,6 +241,12 @@ async function loadOptions() {
   } catch (error: any) {
     ElMessage.error('加载基础数据失败')
   }
+}
+
+async function handleCreate() {
+  editingTemplateId.value = ''
+  resetForm()
+  editDialogVisible.value = true
 }
 
 async function handleEdit(row: any) {
@@ -253,68 +280,84 @@ async function handleEdit(row: any) {
   }
 }
 
-async function handleEditSubmit() {
+function buildTemplateEntries() {
+  const validEntries = editForm.value.entries.filter(
+    (e: any) => e.account_id && (e.debit_amount > 0 || e.credit_amount > 0)
+  )
+
+  return validEntries.map((e: any) => {
+    const direction = e.debit_amount > 0 ? 'debit' : 'credit'
+    const amount = e.debit_amount > 0 ? e.debit_amount : e.credit_amount
+
+    const auxData: Record<string, any> = {}
+    for (const cat of auxCategories.value) {
+      const itemId = e[`_${cat.code}_id`]
+      if (itemId) {
+        const item = auxItems.value.find((i: any) => i.id === itemId)
+        if (item) {
+          auxData[cat.code] = {
+            id: item.id,
+            name: item.name,
+          }
+        }
+      }
+    }
+
+    return {
+      account_id: e.account_id,
+      account_code: e.account_code,
+      account_name: e.account_name,
+      direction,
+      amount,
+      summary: e.summary,
+      aux_data: Object.keys(auxData).length > 0 ? auxData : null,
+    }
+  })
+}
+
+async function handleSaveSubmit() {
+  if (!editForm.value.voucher_no?.trim()) {
+    ElMessage.warning('请填写模版编号')
+    return
+  }
+  if (!editForm.value.remark?.trim()) {
+    ElMessage.warning('请填写模版说明')
+    return
+  }
+
   if (!isBalanced.value) {
     ElMessage.warning('借贷不平衡，无法保存')
     return
   }
 
-  // 过滤空分录
-  const validEntries = editForm.value.entries.filter(
-    (e: any) => e.account_id && (e.debit_amount > 0 || e.credit_amount > 0)
-  )
-
-  if (validEntries.length === 0) {
+  const entries = buildTemplateEntries()
+  if (entries.length === 0) {
     ElMessage.warning('至少需要一条有效分录')
     return
   }
 
   submitLoading.value = true
   try {
-    // 转换分录格式
-    const entries = validEntries.map((e: any) => {
-      const direction = e.debit_amount > 0 ? 'debit' : 'credit'
-      const amount = e.debit_amount > 0 ? e.debit_amount : e.credit_amount
-
-      // 构建辅助核算数据
-      const auxData: Record<string, any> = {}
-      for (const cat of auxCategories.value) {
-        const itemId = e[`_${cat.code}_id`]
-        if (itemId) {
-          const item = auxItems.value.find((i: any) => i.id === itemId)
-          if (item) {
-            auxData[cat.code] = {
-              id: item.id,
-              name: item.name,
-            }
-          }
-        }
-      }
-
-      return {
-        account_id: e.account_id,
-        account_code: e.account_code,
-        account_name: e.account_name,
-        direction,
-        amount,
-        summary: e.summary,
-        aux_data: Object.keys(auxData).length > 0 ? auxData : null,
-      }
-    })
-
-    await request.put(`/voucher-templates/${editingTemplateId.value}`, {
-      template_no: editForm.value.voucher_no,
-      template_name: editForm.value.remark,
+    const payload = {
+      template_no: editForm.value.voucher_no.trim(),
+      template_name: editForm.value.remark.trim(),
       voucher_type_id: editForm.value.voucher_type_id || null,
       remark: '',
       entries,
-    })
+    }
 
-    ElMessage.success('模版更新成功')
+    if (editingTemplateId.value) {
+      await request.put(`/voucher-templates/${editingTemplateId.value}`, payload)
+      ElMessage.success('模版更新成功')
+    } else {
+      await request.post('/voucher-templates', payload)
+      ElMessage.success('模版创建成功')
+    }
+
     editDialogVisible.value = false
     loadTemplates()
   } catch (error: any) {
-    ElMessage.error(error.response?.data?.message || '更新失败')
+    ElMessage.error(error.response?.data?.message || (editingTemplateId.value ? '更新失败' : '创建失败'))
   } finally {
     submitLoading.value = false
   }

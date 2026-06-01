@@ -1,10 +1,12 @@
-import { ref, computed, watch } from 'vue'
+import { ref, shallowRef, computed, watch } from 'vue'
 import request from '@/api/request'
+import { useDebounce } from '@/composables/useDebounceThrottle'
 import { showSuccess, showError, showOperationError } from '@/composables/useMessage'
 import { normalizeOpeningDebitCredit } from '@/utils/initBalanceOpening'
 import { buildSingleCategoryAuxItemId } from '@/utils/auxItemId'
 import {
   filterAuxGridRows,
+  buildItemSearchCache,
   type AuxGridItem,
   type AuxGridRow,
   type AuxCategoryFieldMeta,
@@ -16,11 +18,20 @@ import {
   syncLineToCombinationStore,
   countCategoryFilled,
   sumCategoryTotals,
-  totalsClose,
   categoryInitBalance,
 } from '@/utils/initBalanceAuxTabRows'
+import { checkAuxCategoryAmountConsistency } from '@/utils/initBalanceAuxCategoryConsistency'
 import { exportStyledTable } from '@/utils/exportStyledExcel'
 import { buildInitBalanceAuxExportColumns } from '@/utils/ledgerExportBuilders'
+import { yieldToMain } from '@/utils/asyncChunk'
+import { isAuxLineItemValid, buildAuxItemIdSetByCategory } from '@/utils/initBalanceAuxItems'
+import {
+  categoryCodeColumn,
+  categoryNameColumn,
+  parseAuxImportRows,
+  type MissingAuxItemDraft,
+} from '@/utils/initBalanceAuxImport'
+import { mergeAuxItemsByCategory } from '@/utils/initBalanceAuxImportLookup'
 
 export interface AuxCategoryMeta {
   id: string
@@ -32,17 +43,7 @@ export interface AuxItemOption extends AuxGridItem {}
 
 export type InitBalanceAuxLine = AuxGridRow
 
-export interface AuxImportPreviewRow {
-  rowIndex: number
-  selection: Record<string, string>
-  selection_labels: Record<string, string>
-  opening_debit: number
-  opening_credit: number
-  pre_book_debit: number
-  pre_book_credit: number
-  matched: boolean
-  error?: string
-}
+export type { AuxImportPreviewRowLike as AuxImportPreviewRow } from '@/utils/initBalanceAuxImport'
 
 let lineKeySeq = 0
 
@@ -57,6 +58,12 @@ export {
 } from '@/utils/initBalanceOpening'
 
 export { lineHasAmount, isLineSelectionComplete } from '@/utils/initBalanceAuxTabRows'
+
+/** 超过此行数改用异步任务保存，避免超大 JSON 与长时间同步请求 */
+const AUX_SAVE_ASYNC_THRESHOLD = 300
+const AUX_SAVE_PAYLOAD_CHUNK = 500
+const AUX_LOAD_LINES_PAGE_SIZE = 20000
+const AUX_LARGE_GRID_THRESHOLD = 3000
 
 export function createEmptyAuxLine(categoryIds: string[]): InitBalanceAuxLine {
   const selection: Record<string, string> = {}
@@ -73,14 +80,6 @@ export function createEmptyAuxLine(categoryIds: string[]): InitBalanceAuxLine {
   }
 }
 
-function categoryCodeColumn(cat: AuxCategoryMeta) {
-  return `${cat.name}编码`
-}
-
-function categoryNameColumn(cat: AuxCategoryMeta) {
-  return `${cat.name}名称`
-}
-
 export function useInitBalanceAux() {
   const loading = ref(false)
   const saving = ref(false)
@@ -92,21 +91,32 @@ export function useInitBalanceAux() {
     name: string
     direction: string
   } | null>(null)
-  const categories = ref<AuxCategoryMeta[]>([])
-  const itemsByCategory = ref<Record<string, AuxItemOption[]>>({})
-  const categoryFields = ref<Record<string, AuxCategoryFieldMeta[]>>({})
-  const codeByCategoryId = ref<Record<string, string>>({})
-  const combinationStore = ref(new Map<string, AuxGridRow>())
-  const gridRows = ref<AuxGridRow[]>([])
+  const categories = shallowRef<AuxCategoryMeta[]>([])
+  const itemsByCategory = shallowRef<Record<string, AuxItemOption[]>>({})
+  const categoryFields = shallowRef<Record<string, AuxCategoryFieldMeta[]>>({})
+  const codeByCategoryId = shallowRef<Record<string, string>>({})
+  const itemSearchCache = ref<Map<string, string> | undefined>(undefined)
+  const combinationStore = shallowRef(new Map<string, AuxGridRow>())
+  const gridRows = shallowRef<AuxGridRow[]>([])
   const activeCategoryId = ref('')
   const combinationCount = ref(0)
   const keyword = ref('')
+  const showZeroValue = ref(true)
+  /** 搜索防抖：避免 Win10 下每键全表 filter 导致输入卡顿 */
+  const debouncedKeyword = useDebounce(keyword, 250)
   const page = ref(1)
   const pageSize = ref(50)
+  const sortField = ref<string>('code')
+  const sortOrder = ref<'ascending' | 'descending'>('ascending')
   const lines = gridRows
 
   const isMidYear = ref(false)
   const selectedYear = ref(new Date().getFullYear())
+  const loadProgress = ref({ loaded: 0, total: 0 })
+  const categoryStatsFromServer = shallowRef<Record<string, { filled: number; total: number }>>({})
+  const useRowIndex = ref(false)
+  const activeCategoryRowKeys = shallowRef<string[]>([])
+  let loadRequestSeq = 0
 
   const useCategoryTabs = computed(() => categories.value.length > 1)
 
@@ -118,27 +128,135 @@ export function useInitBalanceAux() {
     return map
   })
 
-  const filteredRowsAll = computed(() =>
-    filterAuxGridRows({
-      rows: gridRows.value,
-      keyword: keyword.value,
-      categoryIds: categories.value.map(c => c.id),
-      itemsByCategory: itemsByCategory.value,
-      categoryFields: categoryFields.value,
-      codeByCategoryId: codeByCategoryId.value,
-      combinationCount: gridRows.value.length,
-      truncated: false,
-      savedByKey: savedByKey.value,
+  const filteredRowsAll = computed(() => {
+    if (useRowIndex.value) return [] as AuxGridRow[]
+    const kw = debouncedKeyword.value.trim().toLowerCase()
+    let rows = gridRows.value
+    if (kw) {
+      rows = filterAuxGridRows({
+        rows: gridRows.value,
+        keyword: debouncedKeyword.value,
+        categoryIds: categories.value.map(c => c.id),
+        itemsByCategory: itemsByCategory.value,
+        categoryFields: categoryFields.value,
+        codeByCategoryId: codeByCategoryId.value,
+        combinationCount: gridRows.value.length,
+        truncated: false,
+        savedByKey: savedByKey.value,
+        itemSearchCache: itemSearchCache.value,
+      })
+    } else if (!showZeroValue.value) {
+      rows = rows.filter(lineHasAmount)
+    }
+
+    if (rows.length === 0) return rows
+
+    const field = sortField.value
+    const asc = sortOrder.value === 'ascending' ? 1 : -1
+    const activeId = activeCategoryId.value
+    const items = itemsByCategory.value[activeId] || []
+    const codeMap = new Map(items.map(i => [i.id, i.code || '']))
+
+    const mapped = rows.map(row => {
+      let val: string | number = 0
+      if (field === 'code') {
+        const itemId = activeId ? row.selection[activeId] : ''
+        val =
+          (itemId ? codeMap.get(itemId) : '') ||
+          row.display_code ||
+          ''
+      } else if (field === 'balance') {
+        val = (row.opening_debit || 0) + (row.pre_book_debit || 0) - (row.opening_credit || 0) - (row.pre_book_credit || 0)
+      } else {
+        val = Number((row as any)[field]) || 0
+      }
+      return { row, val }
     })
+
+    if (field === 'code') {
+      mapped.sort((a, b) => asc * String(a.val).localeCompare(String(b.val), undefined, { numeric: true }))
+    } else {
+      mapped.sort((a, b) => asc * ((a.val as number) - (b.val as number)))
+    }
+
+    return mapped.map(m => m.row)
+  })
+
+  function rowMatchesKeyword(row: AuxGridRow, kw: string, activeId: string) {
+    const itemId = row.selection[activeId]
+    const parts = [row.display_code, row.display_name]
+    if (itemId && itemSearchCache.value) {
+      parts.push(itemSearchCache.value.get(itemId))
+    }
+    return parts.filter(Boolean).join(' ').toLowerCase().includes(kw)
+  }
+
+  const filteredRowKeys = computed(() => {
+    if (!useRowIndex.value) return [] as string[]
+    const activeId = activeCategoryId.value
+    if (!activeId) return []
+    let keys = activeCategoryRowKeys.value
+    const kw = debouncedKeyword.value.trim().toLowerCase()
+    if (kw) {
+      keys = keys.filter(key => {
+        const row = combinationStore.value.get(key)
+        if (!row?.selection[activeId]) return false
+        return rowMatchesKeyword(row, kw, activeId)
+      })
+    }
+    if (!showZeroValue.value) {
+      keys = keys.filter(key => {
+        const row = combinationStore.value.get(key)
+        return row ? lineHasAmount(row) : false
+      })
+    }
+
+    if (keys.length === 0) return keys
+
+    const field = sortField.value
+    const asc = sortOrder.value === 'ascending' ? 1 : -1
+    const items = itemsByCategory.value[activeId] || []
+    const codeMap = new Map(items.map(i => [i.id, i.code || '']))
+
+    const mapped = keys.map(key => {
+      const row = combinationStore.value.get(key)!
+      let val: string | number = 0
+      if (field === 'code') {
+        val = codeMap.get(row.selection[activeId]) || row.display_code || ''
+      } else if (field === 'balance') {
+        val = (row.opening_debit || 0) + (row.pre_book_debit || 0) - (row.opening_credit || 0) - (row.pre_book_credit || 0)
+      } else {
+        val = (row as any)[field] || 0
+      }
+      return { key, val }
+    })
+
+    if (field === 'code') {
+      mapped.sort((a, b) => asc * String(a.val).localeCompare(String(b.val), undefined, { numeric: true }))
+    } else {
+      mapped.sort((a, b) => asc * ((a.val as number) - (b.val as number)))
+    }
+
+    return mapped.map(m => m.key)
+  })
+
+  const displayTotal = computed(() =>
+    useRowIndex.value ? filteredRowKeys.value.length : filteredRowsAll.value.length
   )
 
-  const displayTotal = computed(() => filteredRowsAll.value.length)
-
   const displayRows = computed(() => {
-    const all = filteredRowsAll.value
-    if (pageSize.value === -1) return all
     const start = (page.value - 1) * pageSize.value
-    return all.slice(start, start + pageSize.value)
+    if (useRowIndex.value) {
+      const activeId = activeCategoryId.value
+      return filteredRowKeys.value.slice(start, start + pageSize.value).map(key => {
+        const row = combinationStore.value.get(key)!
+        return {
+          ...row,
+          selection: { [activeId]: row.selection[activeId] },
+        }
+      })
+    }
+    return filteredRowsAll.value.slice(start, start + pageSize.value)
   })
 
   function syncActiveCategoryTab() {
@@ -153,17 +271,37 @@ export function useInitBalanceAux() {
 
   function rebuildGridForActiveCategory() {
     syncActiveCategoryTab()
-    const catIds = categories.value.map(c => c.id)
     const activeId = activeCategoryId.value
-    if (!activeId || catIds.length === 0) {
+    if (!activeId || categories.value.length === 0) {
       gridRows.value = []
+      activeCategoryRowKeys.value = []
+      useRowIndex.value = false
+      combinationCount.value = combinationStore.value.size
       return
     }
-    gridRows.value = buildTabGridRows({
-      activeCategoryId: activeId,
-      itemsByCategory: itemsByCategory.value,
-      combinationStore: combinationStore.value,
-    })
+
+    let activeCount = 0
+    for (const line of combinationStore.value.values()) {
+      if (line.selection[activeId]) activeCount++
+    }
+
+    if (activeCount > AUX_LARGE_GRID_THRESHOLD) {
+      useRowIndex.value = true
+      const keys: string[] = []
+      for (const line of combinationStore.value.values()) {
+        if (line.selection[activeId]) keys.push(line.key)
+      }
+      activeCategoryRowKeys.value = keys
+      gridRows.value = []
+    } else {
+      useRowIndex.value = false
+      activeCategoryRowKeys.value = []
+      gridRows.value = buildTabGridRows({
+        activeCategoryId: activeId,
+        itemsByCategory: itemsByCategory.value,
+        combinationStore: combinationStore.value,
+      })
+    }
     combinationCount.value = combinationStore.value.size
   }
 
@@ -172,17 +310,27 @@ export function useInitBalanceAux() {
     page.value = 1
   })
 
-  function loadLinesFromSaved(
+  watch([sortField, sortOrder], () => {
+    page.value = 1
+  })
+
+  watch([showZeroValue, keyword], () => {
+    page.value = 1
+  })
+
+  function mergeSavedLinesIntoStore(
     savedLines: Array<{
       selection: Record<string, string>
       opening_debit?: number
       opening_credit?: number
       pre_book_debit?: number
       pre_book_credit?: number
-    }>
+      display_code?: string
+      display_name?: string
+    }>,
+    targetStore: Map<string, AuxGridRow>
   ) {
     const catIds = categories.value.map(c => c.id)
-    const store = new Map<string, AuxGridRow>()
     for (const row of savedLines || []) {
       const opening = normalizeOpeningDebitCredit(
         row.opening_debit || 0,
@@ -194,15 +342,33 @@ export function useInitBalanceAux() {
         if (!itemId) continue
         const key =
           buildSingleCategoryAuxItemId(codeByCategoryId.value, catId, itemId) || newLineKey()
-        store.set(key, {
+        if (targetStore.has(key)) continue
+        targetStore.set(key, {
           key,
           selection: { [catId]: itemId },
           ...opening,
           pre_book_debit: row.pre_book_debit || 0,
           pre_book_credit: row.pre_book_credit || 0,
+          display_code: row.display_code,
+          display_name: row.display_name,
         })
       }
     }
+  }
+
+  function loadLinesFromSaved(
+    savedLines: Array<{
+      selection: Record<string, string>
+      opening_debit?: number
+      opening_credit?: number
+      pre_book_debit?: number
+      pre_book_credit?: number
+      display_code?: string
+      display_name?: string
+    }>
+  ) {
+    const store = new Map<string, AuxGridRow>()
+    mergeSavedLinesIntoStore(savedLines, store)
     combinationStore.value = store
     syncActiveCategoryTab()
     rebuildGridForActiveCategory()
@@ -214,7 +380,9 @@ export function useInitBalanceAux() {
   }
 
   function removeLineByKey(key: string) {
-    combinationStore.value.delete(key)
+    const newStore = new Map(combinationStore.value)
+    newStore.delete(key)
+    combinationStore.value = newStore
     rebuildGridForActiveCategory()
   }
 
@@ -225,6 +393,17 @@ export function useInitBalanceAux() {
   function categoryTabStats(catId: string) {
     return countCategoryFilled(catId, itemsByCategory.value, combinationStore.value)
   }
+
+  /** 标签页标题：优先用服务端统计，避免大数据量下反复扫描 combinationStore */
+  const categoryTabLabels = computed(() => {
+    const labels: Record<string, string> = {}
+    for (const cat of categories.value) {
+      const serverStats = categoryStatsFromServer.value[cat.id]
+      const { filled, total } = serverStats ?? categoryTabStats(cat.id)
+      labels[cat.id] = `${cat.name}（${filled}/${total}）`
+    }
+    return labels
+  })
 
   function categoryHasAnyAmount(catId: string) {
     return [...combinationStore.value.values()].some(
@@ -250,32 +429,31 @@ export function useInitBalanceAux() {
 
   function validateCategoryTotalsMatch(strict = false): string | null {
     if (categories.value.length <= 1) return null
-    const direction = currentAccount.value?.direction || 'debit'
-    const withAmount = categories.value.filter(c => categoryHasAnyAmount(c.id))
-    if (withAmount.length <= 1) return null
-    if (strict && withAmount.length < categories.value.length) {
-      const missing = categories.value
-        .filter(c => !categoryHasAnyAmount(c.id))
-        .map(c => c.name)
-        .join('、')
-      return `请先在「${missing}」标签页录入期初金额`
-    }
-    if (!strict && withAmount.length < categories.value.length) {
-      return null
-    }
-    const ref = sumCategoryTotals(withAmount[0].id, combinationStore.value, true)
-    for (const cat of withAmount.slice(1)) {
-      const t = sumCategoryTotals(cat.id, combinationStore.value, true)
-      if (!totalsClose(direction, ref, t)) {
-        return `「${withAmount[0].name}」与「${cat.name}」期初余额合计不一致（按科目方向折算后应相同）`
+
+    if (strict) {
+      const missing = categories.value.filter(c => !categoryHasAnyAmount(c.id))
+      if (missing.length > 0) {
+        return `请先在「${missing.map(c => c.name).join('、')}」标签页录入期初金额`
       }
+    } else {
+      const withAmount = categories.value.filter(c => categoryHasAnyAmount(c.id))
+      if (withAmount.length <= 1) return null
+      if (withAmount.length < categories.value.length) return null
     }
-    return null
+
+    const totalsByCategoryId = new Map(
+      categories.value.map(cat => [
+        cat.id,
+        sumCategoryTotals(cat.id, combinationStore.value, false),
+      ])
+    )
+    const result = checkAuxCategoryAmountConsistency(categories.value, totalsByCategoryId)
+    return result?.message || null
   }
 
   async function checkCanEdit(year: number) {
     try {
-      const res = (await request.get('/base/init-balances/can-edit', {
+      const res = (await request.get('/base/init-balances/aux-can-edit', {
         params: { year },
       })) as any
       locked.value = !res.canEdit
@@ -286,48 +464,126 @@ export function useInitBalanceAux() {
     }
   }
 
+  function applyAuxDetailsMeta(data: any, accountId: string) {
+    if (data.account?.id !== accountId) {
+      throw new Error('科目数据不匹配，请刷新后重试')
+    }
+    currentAccount.value = data.account
+    categories.value = data.categories || []
+    const items: Record<string, AuxItemOption[]> = {}
+    for (const [catId, list] of Object.entries(data.items || {})) {
+      items[catId] = (list as AuxItemOption[]).map(item => ({
+        ...item,
+        field_values:
+          typeof item.field_values === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(item.field_values as string)
+                } catch {
+                  return {}
+                }
+              })()
+            : item.field_values || {},
+      }))
+    }
+    itemsByCategory.value = items
+    categoryFields.value = data.category_fields || {}
+    codeByCategoryId.value = data.code_by_category_id || {}
+    categoryStatsFromServer.value = data.category_stats || {}
+    if (data.items_omitted) {
+      itemSearchCache.value = new Map()
+    } else {
+      itemSearchCache.value = buildItemSearchCache(itemsByCategory.value, categoryFields.value)
+    }
+    isMidYear.value = !!data.isMidYear
+  }
+
   async function loadDetails(accountId: string, year: number) {
+    const requestSeq = ++loadRequestSeq
     loading.value = true
+    loadProgress.value = { loaded: 0, total: 0 }
     selectedYear.value = year
+    currentAccount.value = null
+    categories.value = []
+    itemsByCategory.value = {}
+    categoryFields.value = {}
+    codeByCategoryId.value = {}
+    itemSearchCache.value = undefined
+    categoryStatsFromServer.value = {}
+    activeCategoryId.value = ''
     combinationStore.value = new Map()
     gridRows.value = []
+    activeCategoryRowKeys.value = []
+    useRowIndex.value = false
     keyword.value = ''
+    page.value = 1
     try {
       await checkCanEdit(year)
-      const res = await request.get<any>('/base/init-balances/aux-details', {
-        params: { year, account_id: accountId },
+      if (requestSeq !== loadRequestSeq) return
+
+      const metaRes = await request.get<any>('/base/init-balances/aux-details', {
+        params: { year, account_id: accountId, lines: 'none' },
       })
-      const data = res.data
-      currentAccount.value = data.account
+      if (requestSeq !== loadRequestSeq) return
 
-      categories.value = data.categories || []
-      const items: Record<string, AuxItemOption[]> = {}
-      for (const [catId, list] of Object.entries(data.items || {})) {
-        items[catId] = (list as AuxItemOption[]).map(item => ({
-          ...item,
-          field_values:
-            typeof item.field_values === 'string'
-              ? (() => {
-                  try {
-                    return JSON.parse(item.field_values as string)
-                  } catch {
-                    return {}
-                  }
-                })()
-              : item.field_values || {},
-        }))
+      applyAuxDetailsMeta(metaRes.data, accountId)
+
+      const totalRows = metaRes.data.db_row_count ?? metaRes.data.line_count ?? 0
+      loadProgress.value = { loaded: 0, total: totalRows }
+
+      if (totalRows === 0) {
+        syncActiveCategoryTab()
+        rebuildGridForActiveCategory()
+        return
       }
-      itemsByCategory.value = items
-      categoryFields.value = data.category_fields || {}
-      codeByCategoryId.value = data.code_by_category_id || {}
 
-      isMidYear.value = !!data.isMidYear
-      loadLinesFromSaved(data.lines || [])
+      const store = new Map<string, AuxGridRow>()
+      if (!metaRes.data.lines_paginated) {
+        const fullRes = await request.get<any>('/base/init-balances/aux-details', {
+          params: { year, account_id: accountId, lines: 'all' },
+        })
+        if (requestSeq !== loadRequestSeq) return
+        mergeSavedLinesIntoStore(fullRes.data.lines || [], store)
+        loadProgress.value = { loaded: totalRows, total: totalRows }
+      } else {
+        for (let offset = 0; offset < totalRows; offset += AUX_LOAD_LINES_PAGE_SIZE) {
+          if (requestSeq !== loadRequestSeq) return
+          const pageRes = await request.get<any>('/base/init-balances/aux-details', {
+            params: {
+              year,
+              account_id: accountId,
+              lines: 'page',
+              offset,
+              limit: AUX_LOAD_LINES_PAGE_SIZE,
+            },
+          })
+          mergeSavedLinesIntoStore(pageRes.data.lines || [], store)
+          combinationStore.value = store
+          loadProgress.value = {
+            loaded: Math.min(offset + AUX_LOAD_LINES_PAGE_SIZE, totalRows),
+            total: totalRows,
+          }
+          if (offset === 0) {
+            syncActiveCategoryTab()
+            rebuildGridForActiveCategory()
+            loading.value = false
+          }
+          await yieldToMain()
+        }
+      }
+
+      combinationStore.value = store
+      syncActiveCategoryTab()
+      rebuildGridForActiveCategory()
     } catch (error) {
+      if (requestSeq !== loadRequestSeq) return
       showOperationError('加载辅助期初', error)
       throw error
     } finally {
-      loading.value = false
+      if (requestSeq === loadRequestSeq) {
+        loading.value = false
+        loadProgress.value = { loaded: 0, total: 0 }
+      }
     }
   }
 
@@ -355,10 +611,40 @@ export function useInitBalanceAux() {
   }
 
   function allSavableLines(): AuxGridRow[] {
+    const validIds = buildAuxItemIdSetByCategory(itemsByCategory.value)
     return [...combinationStore.value.values()].filter(line => {
-      const catId = Object.keys(line.selection).find(id => line.selection[id])
-      return catId && lineHasAmount(line)
+      if (!lineHasAmount(line)) return false
+      return isAuxLineItemValid(line, itemsByCategory.value, validIds)
     })
+  }
+
+  async function buildSavePayloadLines(lines: AuxGridRow[]) {
+    const payloadLines: Array<{
+      active_category_id: string
+      selection: Record<string, string>
+      opening_debit: number
+      opening_credit: number
+      pre_book_debit: number
+      pre_book_credit: number
+    }> = []
+
+    for (let start = 0; start < lines.length; start += AUX_SAVE_PAYLOAD_CHUNK) {
+      const end = Math.min(start + AUX_SAVE_PAYLOAD_CHUNK, lines.length)
+      for (let i = start; i < end; i++) {
+        const line = lines[i]
+        const catId = Object.keys(line.selection).find(id => line.selection[id])!
+        const opening = normalizeOpeningDebitCredit(line.opening_debit || 0, line.opening_credit || 0)
+        payloadLines.push({
+          active_category_id: catId,
+          selection: { [catId]: line.selection[catId] },
+          ...opening,
+          pre_book_debit: line.pre_book_debit || 0,
+          pre_book_credit: line.pre_book_credit || 0,
+        })
+      }
+      await yieldToMain()
+    }
+    return payloadLines
   }
 
   /** @returns null 未选齐维度跳过；true 成功；false 失败 */
@@ -404,6 +690,9 @@ export function useInitBalanceAux() {
           pre_book_credit: line.pre_book_credit || 0,
         },
       })
+      
+      // Trigger shallowRef update for gridRows since a row was modified inline
+      gridRows.value = [...gridRows.value]
       return true
     } catch (error) {
       showOperationError('保存辅助期初', error)
@@ -411,36 +700,39 @@ export function useInitBalanceAux() {
     }
   }
 
-  async function save() {
+  async function save(): Promise<{ summary?: any; taskId?: string } | null> {
     if (!currentAccount.value) return null
     const mismatch = validateCategoryTotalsMatch(true)
     if (mismatch) {
       showError(mismatch)
       return null
     }
+    const lines = allSavableLines()
+    if (lines.length === 0) {
+      showError('没有可保存的有效辅助期初数据')
+      return null
+    }
     saving.value = true
     try {
+      const payloadLines = await buildSavePayloadLines(lines)
       const payload = {
         year: selectedYear.value,
         account_id: currentAccount.value.id,
-        lines: allSavableLines().map(line => {
-          const catId = Object.keys(line.selection).find(id => line.selection[id])!
-          const opening = normalizeOpeningDebitCredit(
-            line.opening_debit || 0,
-            line.opening_credit || 0
-          )
-          return {
-            active_category_id: catId,
-            selection: { [catId]: line.selection[catId] },
-            ...opening,
-            pre_book_debit: line.pre_book_debit || 0,
-            pre_book_credit: line.pre_book_credit || 0,
-          }
-        }),
+        lines: payloadLines,
       }
+
+      if (payloadLines.length >= AUX_SAVE_ASYNC_THRESHOLD) {
+        const res = await request.post<any>('/base/init-balances/aux-details/batch-save-async', payload)
+        const taskId = res.data?.taskId
+        if (!taskId) {
+          throw new Error('未获取到保存任务 ID')
+        }
+        return { taskId }
+      }
+
       const res = await request.post<any>('/base/init-balances/aux-details', payload)
       showSuccess('辅助期初保存成功')
-      return res.data?.summary || res.data
+      return { summary: res.data?.summary || res.data }
     } catch (error) {
       showOperationError('保存辅助期初', error)
       return null
@@ -539,97 +831,74 @@ export function useInitBalanceAux() {
     showSuccess(`已导出 ${rows.length} 条辅助期初`)
   }
 
-  function parseImportRows(rawData: any[]): AuxImportPreviewRow[] {
-    const results: AuxImportPreviewRow[] = []
-
-    rawData.forEach((row, index) => {
-      const selection: Record<string, string> = {}
-      const selection_labels: Record<string, string> = {}
-      let matched = true
-      let error = ''
-
-      const filledCats: AuxCategoryMeta[] = []
-      for (const cat of categories.value) {
-        const codeKey = categoryCodeColumn(cat)
-        const nameKey = categoryNameColumn(cat)
-        const code = String(row[codeKey] ?? '').trim()
-        const name = String(row[nameKey] ?? '').trim()
-        if (!code) continue
-        const item = itemsByCategory.value[cat.id]?.find(
-          i => String(i.code).trim() === code || (name && i.name === name)
-        )
-        if (!item) {
-          matched = false
-          error = `未找到${cat.name}编码「${code}」`
-          break
-        }
-        selection[cat.id] = item.id
-        selection_labels[cat.id] = `${cat.name}:${item.name}`
-        filledCats.push(cat)
-      }
-
-      if (matched && filledCats.length === 0) {
-        matched = false
-        error = '请至少填写一个辅助类目的项目编码'
-      }
-      if (matched && filledCats.length > 1) {
-        matched = false
-        error = '同一行只能填写一个辅助类目（请分 sheet 或分行按类目导入）'
-      }
-
-      let opening_debit = Number(row['年初借方']) || 0
-      let opening_credit = Number(row['年初贷方']) || 0
-      const pre_book_debit = Number(row['帐前借方']) || 0
-      const pre_book_credit = Number(row['帐前贷方']) || 0
-
-      if (matched && opening_debit > 0.005 && opening_credit > 0.005) {
-        matched = false
-        error = '年初借方与年初贷方不能同时填写'
-      }
-
-      if (matched) {
-        const opening = normalizeOpeningDebitCredit(opening_debit, opening_credit)
-        opening_debit = opening.opening_debit
-        opening_credit = opening.opening_credit
-      }
-
-      const allZero =
-        opening_debit === 0 &&
-        opening_credit === 0 &&
-        pre_book_debit === 0 &&
-        pre_book_credit === 0
-
-      if (matched && allZero) {
-        matched = false
-        error = '金额不能全为 0'
-      }
-
-      results.push({
-        rowIndex: index + 2,
-        selection,
-        selection_labels,
-        opening_debit,
-        opening_credit,
-        pre_book_debit,
-        pre_book_credit,
-        matched,
-        error: matched ? undefined : error,
-      })
-    })
-
-    return results.filter(
-      r =>
-        Object.keys(r.selection).length > 0 ||
-        r.opening_debit !== 0 ||
-        r.opening_credit !== 0
-    )
+  function parseImportRows(
+    rawData: any[],
+    options?: { allowPendingCreate?: boolean }
+  ): {
+    rows: import('@/utils/initBalanceAuxImport').AuxImportPreviewRowLike[]
+    blankSkipped: number
+  } {
+    return parseAuxImportRows(rawData, categories.value, itemsByCategory.value, options)
   }
 
-  function applyImportPreview(preview: AuxImportPreviewRow[]) {
+  async function createMissingAuxItemsFromDrafts(drafts: MissingAuxItemDraft[]) {
+    if (drafts.length === 0) return
+    const byCategory = new Map<string, MissingAuxItemDraft[]>()
+    for (const draft of drafts) {
+      const list = byCategory.get(draft.categoryId) || []
+      list.push(draft)
+      byCategory.set(draft.categoryId, list)
+    }
+
+    for (const [categoryId, items] of byCategory) {
+      const res = (await request.post('/base/aux-items/batch-import', {
+        type: categoryId,
+        items: items.map(({ categoryId: _c, ...rest }) => rest),
+      })) as any
+      const failCount = res.data?.failCount ?? 0
+      if (failCount > 0) {
+        const firstErr = res.data?.errors?.[0]?.reason || '部分项目创建失败'
+        throw new Error(firstErr)
+      }
+      const newItems = { ...itemsByCategory.value }
+      newItems[categoryId] = (fresh.data || []).map(item => ({
+        ...item,
+        field_values:
+          typeof item.field_values === 'string'
+            ? (() => {
+                try {
+                  return JSON.parse(item.field_values as string)
+                } catch {
+                  return {}
+                }
+              })()
+            : item.field_values || {},
+      }))
+      itemsByCategory.value = newItems
+    }
+    itemSearchCache.value = buildItemSearchCache(itemsByCategory.value, categoryFields.value)
+  }
+
+  function applyImportPreview(
+    preview: import('@/utils/initBalanceAuxImport').AuxImportPreviewRowLike[],
+    extraItemsByCategory?: Record<string, AuxItemOption[]>
+  ) {
+    if (extraItemsByCategory && Object.keys(extraItemsByCategory).length > 0) {
+      itemsByCategory.value = mergeAuxItemsByCategory(
+        itemsByCategory.value,
+        extraItemsByCategory
+      )
+      itemSearchCache.value = buildItemSearchCache(itemsByCategory.value, categoryFields.value)
+    }
     const matched = preview.filter(r => r.matched)
+    const skipped = preview.filter(r => !r.matched).length
     if (matched.length === 0) {
-      showError('没有可导入的有效数据')
-      return 0
+      showError(
+        skipped > 0
+          ? '没有可导入的有效行，请先查看异常说明并修正模板'
+          : '没有可导入的有效数据'
+      )
+      return { imported: 0, skipped }
     }
     const store = new Map(combinationStore.value)
     for (const row of matched) {
@@ -650,11 +919,44 @@ export function useInitBalanceAux() {
     combinationStore.value = store
     rebuildGridForActiveCategory()
     page.value = 1
-    return matched.length
+    return { imported: matched.length, skipped }
+  }
+
+  async function previewBatchClear(scope: 'account' | 'category', categoryId?: string) {
+    if (!currentAccount.value) return 0
+    const res = (await request.get('/base/init-balances/aux-details/clear-preview', {
+      params: {
+        year: selectedYear.value,
+        account_id: currentAccount.value.id,
+        scope,
+        category_id: scope === 'category' ? categoryId || activeCategoryId.value : undefined,
+      },
+    })) as any
+    return res.data?.count || 0
+  }
+
+  async function batchClearAsync(
+    scope: 'account' | 'category',
+    categoryId?: string
+  ): Promise<string | null> {
+    if (!currentAccount.value || locked.value) return null
+    try {
+      const res = (await request.post('/base/init-balances/aux-details/batch-clear-async', {
+        year: selectedYear.value,
+        account_id: currentAccount.value.id,
+        scope,
+        category_id: scope === 'category' ? categoryId || activeCategoryId.value : undefined,
+      })) as any
+      return res.data?.taskId || null
+    } catch (error) {
+      showOperationError('批量清理辅助期初', error)
+      return null
+    }
   }
 
   return {
     loading,
+    loadProgress,
     saving,
     locked,
     lockReason,
@@ -667,9 +969,13 @@ export function useInitBalanceAux() {
     displayRows,
     displayTotal,
     keyword,
+    showZeroValue,
     page,
     pageSize,
+    sortField,
+    sortOrder,
     combinationCount,
+    combinationStore,
     useCategoryTabs,
     activeCategoryId,
     lines,
@@ -681,6 +987,7 @@ export function useInitBalanceAux() {
     removeLineByKey,
     countIncompleteLines,
     categoryTabStats,
+    categoryTabLabels,
     categoryTotalsList,
     validateCategoryTotalsMatch,
     saveLine,
@@ -691,7 +998,10 @@ export function useInitBalanceAux() {
     exportData,
     parseImportRows,
     applyImportPreview,
-    categoryCodeColumn,
-    categoryNameColumn,
+    createMissingAuxItemsFromDrafts,
+    previewBatchClear,
+    batchClearAsync,
   }
 }
+
+export { categoryCodeColumn, categoryNameColumn } from '@/utils/initBalanceAuxImport'

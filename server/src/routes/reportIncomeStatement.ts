@@ -1,7 +1,17 @@
+/**
+ * ⚠️ 已废弃 — 请勿在 index.ts 重新挂载
+ *
+ * 静态利润表（/income-statement）已被动态报表取代，且存在已知 BUG（见代码评审 P0-1）：
+ *   - 使用 getBatchBalances 取累计余额，损益类科目结转后值为 0，导致利润表数据全错
+ *   - 正确做法应取本期发生额并排除"结转"凭证类型
+ *
+ * /cash-flow 路由已迁移到 reportCashFlow.ts；本文件保留仅用于历史参考。
+ */
 import { Router } from 'express'
 import { authMiddleware, AuthRequest } from '../middleware/index.js'
 import { getDb } from '../db/index.js'
 import { getBatchBalances, getBatchPeriodRangeSums } from '../services/reportBalance.js'
+import { MONEY_EPSILON } from '../utils/amountUtils.js'
 import type { CashFlowReportScope } from '../services/cashFlowIndirectMethod.js'
 import {
   collectCashFlowCodes,
@@ -38,11 +48,10 @@ router.get('/income-statement', (req: AuthRequest, res) => {
   const allCodes = collectIncomeStatementCodes(config)
   const balanceMap = getBatchBalances(db, accountSetId, allCodes, y, p)
 
-  const calcGroup = (codes: string[], isRevenue: boolean) => {
+  const calcGroup = (codes: string[]) => {
     let total = 0
     for (const code of codes) {
-      const balance = balanceMap.get(code) || 0
-      total += isRevenue ? Math.abs(balance) : balance
+      total += balanceMap.get(code) || 0
     }
     return total
   }
@@ -50,7 +59,7 @@ router.get('/income-statement', (req: AuthRequest, res) => {
   const revenues: Record<string, number> = {}
   let totalRevenue = 0
   for (const [name, codes] of Object.entries(config.revenueGroups)) {
-    const amount = calcGroup(codes, true)
+    const amount = calcGroup(codes)
     if (amount !== 0) {
       revenues[name] = amount
     }
@@ -60,7 +69,7 @@ router.get('/income-statement', (req: AuthRequest, res) => {
   const expenses: Record<string, number> = {}
   let totalExpense = 0
   for (const [name, codes] of Object.entries(config.expenseGroups)) {
-    const amount = calcGroup(codes, false)
+    const amount = calcGroup(codes)
     if (amount !== 0) {
       expenses[name] = amount
     }
@@ -171,13 +180,33 @@ router.get('/cash-flow', (req: AuthRequest, res) => {
   const netCashChange = netOperating + netInvesting + netFinancing
   const cashAccountCodes = expandFlowAccountCodes(db, accountSetId, config.cashCodes)
   const beginPeriod = scope === 'month' && p > 1 ? p - 1 : 0
-  const beginBalanceMapExpanded = getBatchBalances(db, accountSetId, cashAccountCodes, y, beginPeriod)
+  const beginBalanceMapExpanded = getBatchBalances(
+    db,
+    accountSetId,
+    cashAccountCodes,
+    y,
+    beginPeriod
+  )
   const endBalanceMapExpanded = getBatchBalances(db, accountSetId, cashAccountCodes, y, p)
   let beginCash = 0
   let endCash = 0
   for (const code of cashAccountCodes) {
     beginCash += beginBalanceMapExpanded.get(code) || 0
     endCash += endBalanceMapExpanded.get(code) || 0
+  }
+
+  const hasCashBalanceChange = Math.abs(endCash - beginCash) > MONEY_EPSILON
+  const hasNetCashChange = Math.abs(netCashChange) > MONEY_EPSILON
+
+  const cashFlowWarnings: string[] = []
+  if (!hasCashBalanceChange && !hasNetCashChange) {
+    cashFlowWarnings.push(
+      '期初与期末现金余额均为零且无现金流量变动，如本期有现金收支业务，请检查科目是否正确标记为现金/银行科目'
+    )
+  } else if (!hasCashBalanceChange && hasNetCashChange) {
+    cashFlowWarnings.push(
+      '期初与期末现金余额相等，但存在现金流量净变动，请检查现金科目期初/期末余额取数是否正确'
+    )
   }
 
   const reportPayload = {
@@ -194,6 +223,7 @@ router.get('/cash-flow', (req: AuthRequest, res) => {
     beginCash,
     endCash,
     cashBalanceCheck: Math.abs(endCash - beginCash - netCashChange) < 0.01,
+    cashFlowWarnings,
   }
 
   const reconciliation = buildCashFlowReconciliation(db, accountSetId, y, p, reportPayload, scope)

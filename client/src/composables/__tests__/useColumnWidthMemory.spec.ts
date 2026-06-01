@@ -1,6 +1,12 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { nextTick, ref } from 'vue'
-import { resolveTableColumnKey, bindTableColumnLayout, useColumnWidthMemory, useListColumnWidth } from '../useColumnWidthMemory'
+import {
+  resolveTableColumnKey,
+  bindTableColumnLayout,
+  useColumnWidthMemory,
+  useListColumnWidth,
+  measureAuxTableLayoutWidth,
+} from '../useColumnWidthMemory'
 
 describe('useColumnWidthMemory', () => {
   beforeEach(() => {
@@ -51,6 +57,30 @@ describe('useColumnWidthMemory', () => {
     await nextTick()
 
     expect(doLayout).toHaveBeenCalled()
+  })
+
+  it('measureAuxTableLayoutWidth 取表头 th 与 table scrollWidth 较大值', () => {
+    const root = document.createElement('div')
+    root.innerHTML = `
+      <div class="el-table__header-wrapper">
+        <table><thead>
+          <tr>
+            <th class="el-table__cell"></th>
+            <th class="el-table__cell"></th>
+          </tr>
+        </thead></table>
+      </div>
+      <div class="el-table__body-wrapper">
+        <table class="el-table__body"></table>
+      </div>
+    `
+    const th0 = root.querySelector('th')!
+    const th1 = root.querySelectorAll('th')[1]!
+    Object.defineProperty(th0, 'offsetWidth', { value: 100, configurable: true })
+    Object.defineProperty(th1, 'offsetWidth', { value: 150, configurable: true })
+    const headerTable = root.querySelector('.el-table__header-wrapper table') as HTMLElement
+    Object.defineProperty(headerTable, 'scrollWidth', { value: 320, configurable: true })
+    expect(measureAuxTableLayoutWidth(root)).toBe(320)
   })
 
   it('useListColumnWidth 返回 tableRef 与 colWidth', () => {

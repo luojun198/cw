@@ -150,6 +150,48 @@ describe('reportBalance', () => {
       // 借方：(6000+4000) + (1500+500) - (300+200) = 11500
       expect(result.get('1001')).toBe(11500)
     })
+
+    it('期初只录入在父科目、下级叶子无数据时应取父科目汇总行', () => {
+      const db = new Database(':memory:')
+      const accountSetId = 'set-1'
+
+      db.exec(`
+        CREATE TABLE accounts (
+          id TEXT PRIMARY KEY, account_set_id TEXT, code TEXT, name TEXT,
+          direction TEXT, parent_id TEXT, is_enabled INTEGER DEFAULT 1
+        );
+        CREATE TABLE init_balances (
+          id TEXT PRIMARY KEY, account_set_id TEXT, account_id TEXT,
+          year INTEGER, period INTEGER, init_balance REAL,
+          init_debit REAL, init_credit REAL, aux_item_id TEXT DEFAULT ''
+        );
+        CREATE TABLE account_balances (
+          id TEXT PRIMARY KEY, account_set_id TEXT, account_id TEXT,
+          year INTEGER, period INTEGER, current_debit REAL, current_credit REAL
+        );
+        CREATE TABLE voucher_entries (id TEXT, voucher_id TEXT, account_id TEXT, direction TEXT, amount REAL);
+        CREATE TABLE vouchers (id TEXT, account_set_id TEXT, year INTEGER, period INTEGER, status TEXT);
+      `)
+
+      db.prepare(
+        'INSERT INTO accounts (id, account_set_id, code, name, direction, parent_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run('p1001', accountSetId, '1001', '库存现金', 'debit', null)
+      db.prepare(
+        'INSERT INTO accounts (id, account_set_id, code, name, direction, parent_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run('c100101', accountSetId, '100101', '现金', 'debit', 'p1001')
+      db.prepare(
+        'INSERT INTO accounts (id, account_set_id, code, name, direction, parent_id) VALUES (?, ?, ?, ?, ?, ?)'
+      ).run('c100102', accountSetId, '100102', '受托代理资产', 'debit', 'p1001')
+
+      // 期初只录在 1001 父科目（科目期初页常见），叶子无数据
+      db.prepare(
+        'INSERT INTO init_balances (id, account_set_id, account_id, year, period, init_balance, init_debit, init_credit, aux_item_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(uuidv4(), accountSetId, 'p1001', 2026, 1, 15000, 15000, 0, '')
+
+      const result = getBatchBalances(db, accountSetId, ['1001'], 2026, 5)
+      expect(result.get('1001')).toBe(15000)
+      expect(getBalance(db, accountSetId, '1001', 2026, 0)).toBe(15000)
+    })
   })
 
   describe('getBatchPeriodSums', () => {

@@ -1,6 +1,12 @@
 import { ref } from 'vue'
 import request from '@/api/request'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  showInitBalanceUnbalancedAlert,
+  extractErrorMessage,
+  isInitBalanceUnbalancedError,
+  isInitBalanceBlockedResponse,
+} from '@/composables/useMessage'
 
 export function useBatchAuditDialog(fetchData: () => Promise<void>) {
   const batchAuditVisible = ref(false)
@@ -97,18 +103,32 @@ export function useBatchAuditDialog(fetchData: () => Promise<void>) {
     batchAuditing.value = true
     try {
       const endpoint = `/voucher/vouchers/batch-${operation}`
-      const res = await request.post(endpoint, {
-        start_date,
-        end_date,
-        voucher_type_ids: voucherTypeIds,
-        start_no: batchAuditForm.value.start_no,
-        end_no: batchAuditForm.value.end_no,
-      })
+      const res = await request.post(
+        endpoint,
+        {
+          start_date,
+          end_date,
+          voucher_type_ids: voucherTypeIds,
+          start_no: batchAuditForm.value.start_no,
+          end_no: batchAuditForm.value.end_no,
+        },
+        { skipErrorToast: true }
+      )
       ElMessage.success(res.message || `批量${operationLabel}成功`)
       batchAuditVisible.value = false
       batchAuditForm.value = { operation: 'audit', dateRange: [], voucher_type_ids: [], start_no: '', end_no: '' }
       resetPreview()
       await fetchData()
+    } catch (error: any) {
+      const msg = extractErrorMessage(error, `批量${operationLabel[operation] || '操作'}失败`)
+      if (
+        operation === 'post' &&
+        (isInitBalanceBlockedResponse(error) || isInitBalanceUnbalancedError(msg))
+      ) {
+        await showInitBalanceUnbalancedAlert()
+      } else {
+        ElMessage.error(msg)
+      }
     } finally {
       batchAuditing.value = false
     }

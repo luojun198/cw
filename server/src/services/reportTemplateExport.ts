@@ -1,10 +1,16 @@
 import { existsSync, readdirSync } from 'fs'
 import { basename, join, resolve } from 'path'
 import ExcelJS from 'exceljs'
-import JSZip from 'jszip'
 import type { Database } from 'better-sqlite3'
+import type { AccountScopeContext } from './accountAuthorization.js'
 import { executeTemplateSheets } from './reportTemplateExecutor.js'
 import { loadReportTemplateExcelSource } from './reportTemplatePersistence.js'
+import {
+  clearWorksheetOutsideBounds,
+  collectTemplateDataCellKeys,
+  sanitizeTemplateWorkbook,
+  type SheetBounds,
+} from './reportTemplateSanitize.js'
 
 type ReportDefinitionRow = {
   id: string
@@ -107,7 +113,7 @@ function findFileByName(dir: string, fileName: string): string | null {
   return null
 }
 
-function resolveUploadedTemplatePath(sourceFile: string | null | undefined): string | null {
+export function resolveUploadedTemplatePath(sourceFile: string | null | undefined): string | null {
   if (!sourceFile?.trim()) return null
   const fileName = basename(sourceFile.trim())
   if (!fileName) return null
@@ -133,23 +139,25 @@ async function loadWorkbookForExport(
 ): Promise<ExcelJS.Workbook> {
   const workbook = new ExcelJS.Workbook()
 
-  // 导出优先使用磁盘原始模板，避免数据库中历史导入/导出副本污染版式范围
+  // 优先使用数据库中保存的上传副本（导入时已经过 sanitize 净化）；
+  // 历史 source_file 路径可能因目录改名 / 跨机迁移而失效，磁盘上能搜到的
+  // 同名文件未必是净化后的版本，因此把 raw_content 作为 single source of truth。
+  if (storedExcel?.buffer.length) {
+    try {
+      await workbook.xlsx.load(storedExcel.buffer as any)
+      return workbook
+    } catch {
+      // 落到磁盘回退
+    }
+  }
+
+  // 数据库无内容时回退磁盘原模板（旧数据 / 极端故障路径）
   if (templatePath && existsSync(templatePath)) {
     if (/\.xls$/i.test(templatePath) && !/\.xlsx$/i.test(templatePath)) {
       throw new Error('当前仅支持导出 .xlsx 格式模板，请将模板另存为 xlsx 后重新导入')
     }
     await workbook.xlsx.readFile(templatePath)
     return workbook
-  }
-
-  // 无磁盘模板时回退数据库保存的上传副本
-  if (storedExcel?.buffer.length) {
-    try {
-      await workbook.xlsx.load(storedExcel.buffer as any)
-      return workbook
-    } catch {
-      // 继续走下方错误
-    }
   }
 
   throw new Error('未找到可用的 Excel 模板内容')
@@ -209,45 +217,6 @@ function writeExecutedValue(cell: ExcelJS.Cell, executed: ExecutedCell) {
   cell.value = text
 }
 
-type SheetBounds = {
-  minRow: number
-  maxRow: number
-  minCol: number
-  maxCol: number
-}
-
-/** 模板中实际有内容/公式的单元格（不含仅带边框的空格） */
-function isTemplateDataCell(cell: ExcelJS.Cell): boolean {
-  const value = cell.value
-  if (value == null || value === '') return false
-  if (typeof value === 'object') {
-    const v = value as {
-      formula?: unknown
-      sharedFormula?: unknown
-      richText?: Array<{ text?: string }>
-      text?: string
-      result?: unknown
-    }
-    if (v.formula != null || v.sharedFormula != null) return true
-    if (Array.isArray(v.richText) && v.richText.some(seg => seg.text?.trim())) return true
-    if (v.text != null && String(v.text).trim() !== '') return true
-    if (v.result != null && String(v.result).trim() !== '') return true
-  }
-  return true
-}
-
-function collectTemplateDataCellKeys(worksheet: ExcelJS.Worksheet): Set<string> {
-  const keys = new Set<string>()
-  worksheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-    row.eachCell({ includeEmpty: false }, (cell, colNumber) => {
-      if (isTemplateDataCell(cell)) {
-        keys.add(`${rowNumber - 1}:${colNumber - 1}`)
-      }
-    })
-  })
-  return keys
-}
-
 function computeExportBounds(templateKeys: Set<string>, cells: ExecutedCell[]): SheetBounds | null {
   let minRow = Infinity
   let maxRow = -1
@@ -277,158 +246,6 @@ function computeExportBounds(templateKeys: Set<string>, cells: ExecutedCell[]): 
   return { minRow, maxRow, minCol, maxCol }
 }
 
-function columnIndexToLetters(colIndex: number): string {
-  let n = colIndex + 1
-  let letters = ''
-  while (n > 0) {
-    const rem = (n - 1) % 26
-    letters = String.fromCharCode(65 + rem) + letters
-    n = Math.floor((n - 1) / 26)
-  }
-  return letters
-}
-
-function boundsToDimensionRef(bounds: SheetBounds): string {
-  const start = `${columnIndexToLetters(bounds.minCol)}${bounds.minRow + 1}`
-  const end = `${columnIndexToLetters(bounds.maxCol)}${bounds.maxRow + 1}`
-  return `${start}:${end}`
-}
-
-function columnLettersToNumber(colLetters: string): number {
-  let n = 0
-  for (const ch of colLetters.toUpperCase()) {
-    n = n * 26 + (ch.charCodeAt(0) - 64)
-  }
-  return n
-}
-
-function trimWorksheetXml(xml: string, bounds: SheetBounds): string {
-  const maxRow1 = bounds.maxRow + 1
-  const maxCol1 = bounds.maxCol + 1
-  const ref = boundsToDimensionRef(bounds)
-
-  let trimmed = xml
-
-  if (/<dimension[^>]*\sref="/i.test(trimmed)) {
-    trimmed = trimmed.replace(/(<dimension[^>]*\sref=")[^"]*(")/i, `$1${ref}$2`)
-  } else {
-    trimmed = trimmed.replace(/<sheetViews/i, `<dimension ref="${ref}"/>\n<sheetViews`)
-  }
-
-  trimmed = trimmed.replace(/<cols>[\s\S]*?<\/cols>/, full => {
-    const colTags = [...full.matchAll(/<col[^>]*\/>/g)].map(match => match[0])
-    const kept = colTags
-      .filter(tag => {
-        const min = Number(tag.match(/\bmin="(\d+)"/)?.[1] ?? 1)
-        return min <= maxCol1
-      })
-      .map(tag =>
-        tag.replace(/\bmax="(\d+)"/, (_, max) => `max="${Math.min(Number(max), maxCol1)}"`)
-      )
-    return kept.length > 0 ? `<cols>${kept.join('')}</cols>` : ''
-  })
-
-  trimmed = trimmed.replace(/<mergeCells[\s\S]*?<\/mergeCells>/, block => {
-    const items = [...block.matchAll(/<mergeCell ref="([^"]+)"/g)]
-      .map(match => match[1])
-      .filter(refValue => {
-        const [startRef, endRef = startRef] = refValue.split(':')
-        const startCol = columnLettersToNumber(startRef.replace(/\d+/g, ''))
-        const endCol = columnLettersToNumber(endRef.replace(/\d+/g, ''))
-        const startRow = Number(startRef.replace(/[A-Z]+/gi, ''))
-        const endRow = Number(endRef.replace(/[A-Z]+/gi, ''))
-        return startCol <= maxCol1 && endCol <= maxCol1 && startRow <= maxRow1 && endRow <= maxRow1
-      })
-    if (items.length === 0) return ''
-    return `<mergeCells count="${items.length}">${items.map(refValue => `<mergeCell ref="${refValue}"/>`).join('')}</mergeCells>`
-  })
-
-  trimmed = trimmed.replace(/<row\b[^>]*\br="(\d+)"[^>]*>[\s\S]*?<\/row>/g, (rowXml, rowNumStr) => {
-    const rowNum = Number(rowNumStr)
-    if (rowNum > maxRow1) return ''
-
-    let row = rowXml.replace(/\bspans="(\d+):(\d+)"/, (_, start, end) => {
-      return `spans="${start}:${Math.min(Number(end), maxCol1)}"`
-    })
-
-    row = row.replace(/<c r="([A-Z]+)(\d+)"[^>]*(?:\/>|>[\s\S]*?<\/c>)/gi, cellXml => {
-      const refMatch = cellXml.match(/<c r="([A-Z]+)/i)
-      if (!refMatch) return cellXml
-      return columnLettersToNumber(refMatch[1]) > maxCol1 ? '' : cellXml
-    })
-
-    return row
-  })
-
-  return trimmed
-}
-
-/** 清除内容区外的单元格，避免 Excel 渲染多余网格，且不破坏区内样式 */
-function clearWorksheetOutsideBounds(worksheet: ExcelJS.Worksheet, bounds: SheetBounds) {
-  const maxRow1 = bounds.maxRow + 1
-  const maxCol1 = bounds.maxCol + 1
-
-  worksheet.eachRow({ includeEmpty: true }, (row, rowNumber) => {
-    if (rowNumber > maxRow1) {
-      row.eachCell({ includeEmpty: true }, cell => {
-        cell.value = null
-        cell.style = {}
-      })
-      return
-    }
-
-    for (let colNumber = maxCol1 + 1; colNumber <= worksheet.columnCount; colNumber++) {
-      const cell = row.getCell(colNumber)
-      cell.value = null
-      cell.style = {}
-    }
-  })
-
-  if (Array.isArray(worksheet.columns) && worksheet.columns.length > maxCol1) {
-    worksheet.columns = worksheet.columns.slice(0, maxCol1)
-  }
-
-  const model = (
-    worksheet as ExcelJS.Worksheet & {
-      model?: { rows?: unknown[]; cols?: unknown[] }
-    }
-  ).model
-  if (model?.rows && model.rows.length > maxRow1) {
-    model.rows = model.rows.slice(0, maxRow1)
-  }
-  if (model?.cols && Array.isArray(model.cols) && model.cols.length > maxCol1) {
-    model.cols = model.cols.slice(0, maxCol1)
-  }
-}
-
-/** 修正 xlsx worksheet XML 的范围定义（dimension / cols / spans），保留单元格样式 */
-async function patchXlsxWorksheetBounds(buffer: Buffer, boundsList: SheetBounds[]): Promise<Buffer> {
-  const zip = await JSZip.loadAsync(buffer)
-  const sheetFiles = Object.keys(zip.files)
-    .filter(name => /^xl\/worksheets\/sheet\d+\.xml$/i.test(name))
-    .sort()
-
-  for (let i = 0; i < sheetFiles.length; i++) {
-    const bounds = boundsList[i]
-    if (!bounds || bounds.maxRow < 0) continue
-
-    const sheetPath = sheetFiles[i]
-    const file = zip.files[sheetPath]
-    if (!file) continue
-
-    const xml = await file.async('string')
-    zip.file(sheetPath, trimWorksheetXml(xml, bounds))
-  }
-
-  return Buffer.from(
-    await zip.generateAsync({
-      type: 'nodebuffer',
-      compression: 'DEFLATE',
-      compressionOptions: { level: 6 },
-    })
-  )
-}
-
 /**
  * 基于原始 Excel 模板回填取数结果并导出（保留版式、合并、样式）
  */
@@ -438,8 +255,9 @@ export async function exportReportTemplateToBuffer(params: {
   reportCode: string
   year: number
   period: number
+  accountScope?: AccountScopeContext
 }): Promise<{ buffer: Buffer; fileName: string }> {
-  const { db, accountSetId, reportCode, year, period } = params
+  const { db, accountSetId, reportCode, year, period, accountScope } = params
 
   const definition = db
     .prepare(
@@ -530,6 +348,7 @@ export async function exportReportTemplateToBuffer(params: {
       year,
       period,
       unitName: accountSet?.name || '',
+      accountScope,
     }
   )
 
@@ -558,15 +377,36 @@ export async function exportReportTemplateToBuffer(params: {
     if (bounds) {
       clearWorksheetOutsideBounds(worksheet, bounds)
     }
+
+    // 打印/导出：A4 纵向，缩放至单页宽高，保证整表完整落在一张 A4 上
+    worksheet.pageSetup = {
+      ...worksheet.pageSetup,
+      orientation: 'portrait',
+      paperSize: 9, // A4
+      fitToPage: true,
+      fitToWidth: 1,
+      fitToHeight: 1,
+      horizontalCentered: true,
+      margins: {
+        left: 0.2,
+        right: 0.2,
+        top: 0.3,
+        bottom: 0.3,
+        header: 0.1,
+        footer: 0.1,
+      },
+    }
+
     sheetBoundsList.push(
       bounds ?? { minRow: 0, maxRow: -1, minCol: 0, maxCol: -1 }
     )
   }
 
-  let buffer = Buffer.from(await workbook.xlsx.writeBuffer())
-  if (sheetBoundsList.some(bounds => bounds.maxRow >= 0)) {
-    buffer = await patchXlsxWorksheetBounds(buffer, sheetBoundsList)
-  }
+  void sheetBoundsList
+  // ExcelJS 在 writeBuffer 时会重新生成 sheetView 与 dimension，丢掉原模板的
+  // showGridLines=0 与已裁剪边界。导出末尾再走一遍 sanitize 保证最终文件干净。
+  const rawBuffer = Buffer.from(await workbook.xlsx.writeBuffer())
+  const buffer = await sanitizeTemplateWorkbook(rawBuffer)
   const safeName = (definition.name || reportCode).replace(/[\\/:*?"<>|]/g, '_')
   const fileName = `${safeName}_${year}年${period}月.xlsx`
 

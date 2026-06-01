@@ -2,7 +2,7 @@
 import dotenv from 'dotenv'
 import { fileURLToPath } from 'url'
 import { dirname, join } from 'path'
-import { existsSync } from 'fs'
+import { existsSync, readFileSync } from 'fs'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = dirname(__filename)
 // 兼容开发模式（__dirname = server/src/）和部署模式（__dirname = deploy-final/server/）
@@ -31,12 +31,16 @@ import express from 'express'
 import cors from 'cors'
 import multer from 'multer'
 import { basename, resolve } from 'path'
-import { initDatabase } from './db/index.js'
-import { runMigrations } from './db/migrations.js'
-import { migrations } from './db/migrationList.js'
+import { initDatabase, getDeployDir, getDb } from './db/index.js'
+import { expireAllStaleLoginSessions } from './services/loginSession.js'
+import {
+  formatCompatibilityUpgradeSummary,
+  upgradeDatabaseCompatibility,
+} from './db/databaseCompatibility.js'
 import { initDefaultAccountSet } from './scripts/seedAccounts.js'
 import { initDefaultPrintTemplate } from './scripts/initPrintTemplate.js'
 import { log } from './utils/logger.js'
+import { initTaskQueue } from './services/taskQueue.js'
 
 // 路由
 import authRoutes from './routes/auth.js'
@@ -58,16 +62,24 @@ import voucherAiRoutes from './routes/voucherAi.js'
 import voucherAutoTransferRoutes from './routes/voucherAutoTransfer.js'
 import voucherTemplateRoutes from './routes/voucherTemplate.js'
 import taskRoutes from './routes/task.js'
+import sharedTasksRoutes from './routes/sharedTasks.js'
 import ledgerRoutes from './routes/ledger.js'
 import reportRoutes from './routes/report.js'
-import reportBalanceSheetRoutes from './routes/reportBalanceSheet.js'
-import reportIncomeStatementRoutes from './routes/reportIncomeStatement.js'
-import reportEquityRoutes from './routes/reportEquity.js'
-import reportAuxRoutes from './routes/reportAux.js'
+import exportRoutes from './routes/export.js'
+// 以下静态报表路由已废弃（前端改用动态报表 DynamicReport + report_definitions 表）
+// import reportBalanceSheetRoutes from './routes/reportBalanceSheet.js'
+// import reportIncomeStatementRoutes from './routes/reportIncomeStatement.js'
+// import reportEquityRoutes from './routes/reportEquity.js'
+// import reportAuxRoutes from './routes/reportAux.js'
+// 仅保留静态现金流量表（估算口径，前端入口：report/cash-flow）
+import reportCashFlowRoutes from './routes/reportCashFlow.js'
 import reportAiRoutes from './routes/reportAi.js'
 import reportTemplateRoutes from './routes/reportTemplate.js'
 import dashboardRoutes from './routes/dashboard.js'
+import cashierRoutes from './routes/cashierJournal.js'
 import backupRoutes from './routes/backup.js'
+import licenseRoutes from './routes/license.js'
+import { licenseMiddleware } from './middleware/licenseMiddleware.js'
 
 // 便携部署：process.execPath = deploy/node/node.exe，client/dist 在 deploy/client/dist/
 // pkg 部署：process.pkg 标识，client/dist 在 exe 同目录/client/dist/
@@ -114,10 +126,11 @@ const upload = multer({
   },
 })
 
-// 中间件
+// 中间件（批量导入核算项目/科目/期初等可能超过 10MB，默认放宽至 50MB，可通过 JSON_BODY_LIMIT 调整）
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || '50mb'
 app.use(cors())
-app.use(express.json({ limit: '10mb' }))
-app.use(express.urlencoded({ extended: true }))
+app.use(express.json({ limit: JSON_BODY_LIMIT }))
+app.use(express.urlencoded({ extended: true, limit: JSON_BODY_LIMIT }))
 
 // 请求日志
 app.use((req, res, next) => {
@@ -128,6 +141,75 @@ app.use((req, res, next) => {
   })
   next()
 })
+
+// === 启动顺序：数据库 → 兼容升级 → 默认数据 → API 路由 → 监听 ===
+initDatabase()
+log.info('数据库初始化完成')
+
+try {
+  const compatibility = upgradeDatabaseCompatibility()
+  log.info(`数据库兼容升级：${formatCompatibilityUpgradeSummary(compatibility)}`)
+  if (!compatibility.after.isCompatible) {
+    log.warn('数据库仍存在未自动修复的结构差异', compatibility.after.issues)
+  }
+} catch (error) {
+  log.error('数据库兼容升级失败:', error)
+}
+
+initTaskQueue()
+
+if (process.env.SEED_DEFAULT_ACCOUNT_SET !== 'false') {
+  initDefaultAccountSet('行政事业单位财务账套')
+  log.info('默认账套初始化完成')
+} else {
+  log.info('已跳过默认账套初始化')
+}
+
+try {
+  initDefaultPrintTemplate()
+  log.info('默认打印模版初始化完成')
+} catch (error) {
+  log.error('默认打印模版初始化失败:', error)
+}
+
+function readDeployBuildStamp(): Record<string, unknown> | null {
+  const stampPath = join(EXE_DIR, 'BUILD_STAMP.json')
+  if (!existsSync(stampPath)) return null
+  try {
+    return JSON.parse(readFileSync(stampPath, 'utf8')) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+// 健康检查（须在挂载 /api 全局 auth 的路由之前注册）
+app.get('/api/health', (req, res) => {
+  const stamp = readDeployBuildStamp()
+  res.json({
+    code: 0,
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    ...(stamp
+      ? {
+          version: stamp.version,
+          build: stamp.build,
+          mode: stamp.mode,
+          gitCommit: stamp.gitCommit,
+          builtAtLocal: stamp.builtAtLocal,
+          clientIndexHash:
+            typeof stamp.clientIndexHash === 'string'
+              ? stamp.clientIndexHash.slice(0, 8)
+              : undefined,
+        }
+      : {}),
+  })
+})
+
+// 软件授权（公开接口，须在 licenseMiddleware 之前注册）
+app.use('/api/license', licenseRoutes)
+
+// 全局授权校验（白名单见 licenseMiddleware.ts）
+app.use(licenseMiddleware)
 
 // API路由
 app.use('/api/auth', authRoutes)
@@ -140,6 +222,7 @@ app.use('/api/base', baseVoucherTypeRoutes)
 app.use('/api/base', baseProjectRoutes)
 app.use('/api/base', baseInitBalanceRoutes)
 app.use('/api/base', basePrintTemplateRoutes)
+app.use('/api', sharedTasksRoutes)
 app.use('/api/voucher', voucherRoutes)
 app.use('/api/voucher', voucherAuditRoutes)
 app.use('/api/voucher', voucherPostingRoutes)
@@ -151,58 +234,29 @@ app.use('/api/voucher', taskRoutes)
 app.use('/api/voucher-templates', voucherTemplateRoutes)
 app.use('/api/ledger', ledgerRoutes)
 app.use('/api/report', reportRoutes)
-app.use('/api/report', reportBalanceSheetRoutes)
-app.use('/api/report', reportIncomeStatementRoutes)
-app.use('/api/report', reportEquityRoutes)
-app.use('/api/report', reportAuxRoutes)
+app.use('/api/export', exportRoutes)
+// 以下静态报表路由已废弃
+// app.use('/api/report', reportBalanceSheetRoutes)
+// app.use('/api/report', reportIncomeStatementRoutes)
+// app.use('/api/report', reportEquityRoutes)
+// app.use('/api/report', reportAuxRoutes)
+app.use('/api/report', reportCashFlowRoutes)
 app.use('/api/report', reportAiRoutes)
 app.use('/api/report', reportTemplateRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/security', backupRoutes)
-
-// 健康检查
-app.get('/api/health', (req, res) => {
-  res.json({ code: 0, status: 'ok', timestamp: new Date().toISOString() })
-})
+app.use('/api', cashierRoutes)
 
 // 静态文件服务（前端页面）
 const clientDist = resolve(EXE_DIR, 'client', 'dist')
-app.use('/uploads', express.static(resolve(process.cwd(), 'uploads')))
+app.use('/uploads', express.static(resolve(getDeployDir(), 'uploads')))
 app.use(express.static(clientDist))
-
-// 初始化数据库
-initDatabase()
-log.info('数据库初始化完成')
-
-// 执行数据库迁移
-try {
-  runMigrations(migrations)
-  log.info('数据库迁移完成')
-} catch (error) {
-  log.error('数据库迁移失败:', error)
-}
 
 // SPA fallback: 所有非API路由返回 index.html
 app.get('*', (req, res, next) => {
   if (req.path.startsWith('/api')) return next()
   res.sendFile(resolve(clientDist, 'index.html'))
 })
-
-// 初始化默认数据
-if (process.env.SEED_DEFAULT_ACCOUNT_SET !== 'false') {
-  initDefaultAccountSet('行政事业单位财务账套')
-  log.info('默认账套初始化完成')
-} else {
-  log.info('已跳过默认账套初始化')
-}
-
-// 初始化默认打印模版
-try {
-  initDefaultPrintTemplate()
-  log.info('默认打印模版初始化完成')
-} catch (error) {
-  log.error('默认打印模版初始化失败:', error)
-}
 
 // 404 处理（必须在所有路由之后）
 import { notFoundHandler, errorHandler } from './middleware/errorHandler.js'
@@ -212,6 +266,14 @@ app.use(notFoundHandler)
 app.use(errorHandler)
 
 const server = app.listen(PORT, () => {
+  try {
+    const expiredCount = expireAllStaleLoginSessions(getDb())
+    if (expiredCount > 0) {
+      log.info(`已清理 ${expiredCount} 条过期登录会话`)
+    }
+  } catch (error) {
+    log.warn('启动时会话清理失败（不影响服务）:', error)
+  }
   log.info(`财务记账系统服务已启动: http://localhost:${PORT}`)
   log.info(`API地址: http://localhost:${PORT}/api`)
 })

@@ -24,7 +24,9 @@ export const useBaseDataStore = defineStore('baseData', () => {
 
   async function loadAccounts(force = false) {
     if (accountsLoaded.value && !force) return
-    const res = await request.get<Account[]>('/base/accounts', { params: { is_enabled: 1 } })
+    const res = await request.get<Account[]>('/base/accounts', {
+      params: { is_enabled: 1, all: 1 },
+    })
     accounts.value = res.data
     accountsLoaded.value = true
   }
@@ -36,10 +38,9 @@ export const useBaseDataStore = defineStore('baseData', () => {
     auxCategoriesLoaded.value = true
   }
 
-  async function loadAuxItems(force = false) {
-    if (auxItemsLoaded.value && !force) return
-    const res = await request.get<AuxItem[]>('/base/aux-items')
-    auxItems.value = res.data
+  /** 不再全量加载辅助项目；请使用 useVoucherAuxItems 或 useAuxItemsPage 按类按需拉取 */
+  async function loadAuxItems(_force = false) {
+    auxItems.value = []
     auxItemsLoaded.value = true
   }
 

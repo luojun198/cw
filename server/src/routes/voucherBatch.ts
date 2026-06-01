@@ -11,6 +11,7 @@ import {
   loadBatchFilteredVouchers,
   validateBatchVoucherFilters,
 } from '../services/voucherEntry.js'
+import { validateInitBalanceBalancedForYears } from '../services/initBalanceTrial.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -30,6 +31,7 @@ router.post(
     const vouchers = loadBatchDraftVouchers({
       db,
       accountSetId: req.accountSetId || '',
+      accountScope: req.accountScope,
       filters,
     })
 
@@ -59,6 +61,7 @@ router.post(
     const vouchers = loadBatchFilteredVouchers({
       db,
       accountSetId: req.accountSetId || '',
+      accountScope: req.accountScope,
       filters,
     })
 
@@ -83,6 +86,7 @@ router.post(
     const vouchers = loadBatchFilteredVouchers({
       db,
       accountSetId: req.accountSetId || '',
+      accountScope: req.accountScope,
       filters,
     })
 
@@ -277,6 +281,15 @@ router.post(
 
     if (vouchers.length === 0) {
       return res.status(400).json({ code: 400, message: '未找到符合条件的已审核凭证' })
+    }
+
+    const initBalanceError = validateInitBalanceBalancedForYears(
+      db,
+      req.accountSetId || '',
+      [...new Set(vouchers.map(v => v.year as number))]
+    )
+    if (initBalanceError) {
+      return res.status(400).json({ code: 400, message: initBalanceError })
     }
 
     // 批量记账逻辑

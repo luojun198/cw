@@ -1,20 +1,28 @@
 <template>
-  <el-table
-    ref="tableRef"
-    :data="flatList"
-    border
-    size="small"
-    class="compact-data-table"
-    height="100%"
-    :row-class-name="getRowClass"
-    :cell-class-name="getCellClassName"
-    :span-method="voucherSpanMethod"
-    @selection-change="onSelect"
-    @row-click="handleRowClick"
-    @row-dblclick="handleRowDblclick"
-    @header-dragend="onHeaderDragEnd"
-  >
-    <el-table-column type="selection" column-key="__selection__" width="40" :selectable="isSelectableRow" />
+  <div ref="containerRef" class="table-fill-wrap">
+    <el-table
+      ref="tableRef"
+      :data="flatList"
+      border
+      size="small"
+      class="compact-data-table"
+      :height="tableHeight"
+      :loading="loading"
+      :row-class-name="getRowClass"
+      :cell-class-name="getCellClassName"
+      :span-method="voucherSpanMethod"
+      @selection-change="onSelect"
+      @row-click="handleRowClick"
+      @row-dblclick="handleRowDblclick"
+      @header-dragend="onHeaderDragEnd"
+    >
+    <el-table-column
+      v-if="mode !== 'query'"
+      type="selection"
+      column-key="__selection__"
+      width="40"
+      :selectable="isSelectableRow"
+    />
     <el-table-column
       v-if="colVisible('voucher_date')"
       column-key="voucher_date"
@@ -43,21 +51,33 @@
       prop="summary"
       label="摘要"
       :width="colWidth('summary', 150)"
-    />
+    >
+      <template v-if="highlightText" #default="{ row }">
+        <span v-html="highlightText(row.summary || '')"></span>
+      </template>
+    </el-table-column>
     <el-table-column
       v-if="colVisible('account_code')"
       column-key="account_code"
       prop="account_code"
       label="科目编码"
       :width="colWidth('account_code', 100)"
-    />
+    >
+      <template v-if="highlightText" #default="{ row }">
+        <span v-html="highlightText(row.account_code || '')"></span>
+      </template>
+    </el-table-column>
     <el-table-column
       v-if="colVisible('account_name')"
       column-key="account_name"
       prop="account_name"
       label="科目名称"
       :width="colWidth('account_name', 160)"
-    />
+    >
+      <template v-if="highlightText" #default="{ row }">
+        <span v-html="highlightText(row.account_name || '')"></span>
+      </template>
+    </el-table-column>
     <el-table-column
       v-if="colVisible('debit_amt')"
       column-key="debit_amt"
@@ -119,12 +139,24 @@
     <el-table-column
       column-key="操作"
       label="操作"
-      :width="colWidth('操作', 172)"
+      :width="colWidth('操作', mode === 'query' ? 120 : 172)"
       fixed="right"
       class-name="audit-action-col"
     >
       <template #default="{ row }">
-        <div class="audit-actions">
+        <div v-if="mode === 'query'" class="audit-actions">
+          <el-button link type="primary" size="small" @click="emit('print', row)">打印</el-button>
+          <el-button
+            v-if="row.status !== 'posted'"
+            link
+            type="danger"
+            size="small"
+            @click="emit('delete', row)"
+          >
+            删除
+          </el-button>
+        </div>
+        <div v-else class="audit-actions">
           <el-button link type="primary" size="small" @click="emit('view-detail', row)">
             查看
           </el-button>
@@ -168,10 +200,12 @@
       </template>
     </el-table-column>
   </el-table>
+  </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref, toRef } from 'vue'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
 import { formatMoney, statusType, statusText } from '@/composables/useVoucherAuditData'
 import { bindTableColumnLayout } from '@/composables/useColumnWidthMemory'
 
@@ -184,6 +218,10 @@ interface Props {
   canUnpost?: boolean
   getColVisible?: (prop: string) => boolean
   columnWidths?: Record<string, number>
+  mode?: 'audit' | 'query'
+  loading?: boolean
+  highlightText?: (text: string | number | null | undefined) => string
+  getCellClassNameFn?: (params: { row: any }) => string
 }
 
 const props = withDefaults(defineProps<Props>(), {
@@ -192,7 +230,11 @@ const props = withDefaults(defineProps<Props>(), {
   canUnpost: true,
   getColVisible: () => () => true,
   columnWidths: () => ({}),
+  mode: 'audit',
+  loading: false,
 })
+
+const { containerRef, tableHeight } = useFillHeightTable()
 
 const emit = defineEmits<{
   'selection-change': [rows: any[]]
@@ -201,6 +243,9 @@ const emit = defineEmits<{
   unaudit: [row: any]
   post: [row: any]
   unpost: [row: any]
+  print: [row: any]
+  delete: [row: any]
+  'row-click': [row: any]
   'row-dblclick': [row: any]
   'header-dragend': [newWidth: number, oldWidth: number, column: any, event: Event]
 }>()
@@ -233,6 +278,7 @@ function isVoucherSelected(row: any) {
 }
 
 function getCellClassName({ row }: { row: any }) {
+  if (props.getCellClassNameFn) return props.getCellClassNameFn({ row })
   return isVoucherSelected(row) ? 'voucher-cell-selected' : ''
 }
 
@@ -241,31 +287,45 @@ function onSelect(rows: any[]) {
   emit('selection-change', rows)
 }
 
-// 监听 selectedRows 变化，外部控制选中（用于批量操作后恢复选中状态）
-watch(
-  () => props.selectedRows?.length,
-  () => {
-    if (!tableRef.value) return
-    if (!props.selectedRows || props.selectedRows.length === 0) return
+function getRowVoucherId(row: any) {
+  return row._voucherId || row.id
+}
 
-    nextTick(() => {
-      isInternalSelection.value = true
-      tableRef.value.clearSelection()
+/** 将表格勾选状态与父组件 selectedRows 对齐，避免批量操作后残留旧勾选 */
+function syncTableSelection() {
+  if (!tableRef.value) return
 
-      const selectedIds = new Set(props.selectedRows.map((r: any) => r.id || r._voucherId))
+  nextTick(() => {
+    isInternalSelection.value = true
+    tableRef.value.clearSelection()
 
-      props.flatList.forEach((row: any) => {
-        if (selectedIds.has(row.id || row._voucherId) && props.isSelectableRow(row)) {
-          tableRef.value.toggleRowSelection(row, true)
-        }
-      })
-
+    const rows = props.selectedRows || []
+    if (rows.length === 0) {
       setTimeout(() => {
         isInternalSelection.value = false
       }, 0)
+      return
+    }
+
+    const selectedIds = new Set(rows.map((r: any) => getRowVoucherId(r)))
+
+    props.flatList.forEach((row: any) => {
+      if (selectedIds.has(getRowVoucherId(row)) && props.isSelectableRow(row)) {
+        tableRef.value.toggleRowSelection(row, true)
+      }
     })
-  }
-)
+
+    setTimeout(() => {
+      isInternalSelection.value = false
+    }, 0)
+  })
+}
+
+// 外部选中变化或列表刷新后，同步表格勾选（清空残留的旧行引用）
+if (props.mode !== 'query') {
+  watch(() => props.selectedRows, syncTableSelection, { deep: true })
+  watch(() => props.flatList, syncTableSelection)
+}
 
 // 检查固定辅助列（部门、项目）是否在凭证中被使用
 const hasUsedDept = computed(() => {
@@ -323,7 +383,16 @@ const visibleAuxColumns = computed(() => {
 })
 
 function handleRowClick(row: any, column: any) {
-  if (column && (column.type === 'selection' || column.label === '操作')) {
+  if (column && column.label === '操作') {
+    return
+  }
+
+  if (props.mode === 'query') {
+    emit('row-click', row)
+    return
+  }
+
+  if (column && column.type === 'selection') {
     return
   }
 
@@ -395,6 +464,10 @@ function voucherSpanMethod({ row, column }: { row: any; column: any }) {
   align-items: center;
   gap: 2px;
   line-height: 1;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
 }
 
 .audit-actions :deep(.el-button.is-link) {
@@ -409,18 +482,18 @@ function voucherSpanMethod({ row, column }: { row: any; column: any }) {
   padding-right: 6px !important;
 }
 
-:deep(.el-table__body tr.is-selected td),
-:deep(.el-table__body tr:has(.el-checkbox.is-checked) td),
-:deep(.el-table__body tr.voucher-selected td),
-:deep(.el-table__body td.voucher-cell-selected) {
+:deep(.el-table__body tr.is-selected td:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)),
+:deep(.el-table__body tr:has(.el-checkbox.is-checked) td:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)),
+:deep(.el-table__body tr.voucher-selected td:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)),
+:deep(.el-table__body td.voucher-cell-selected:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)) {
   background-color: #b3d8ff !important;
   font-weight: 500;
 }
 
-:deep(.el-table__body tr.is-selected:hover td),
-:deep(.el-table__body tr:has(.el-checkbox.is-checked):hover td),
-:deep(.el-table__body tr.voucher-selected:hover td),
-:deep(.el-table__body tr:hover td.voucher-cell-selected) {
+:deep(.el-table__body tr.is-selected:hover td:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)),
+:deep(.el-table__body tr:has(.el-checkbox.is-checked):hover td:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)),
+:deep(.el-table__body tr.voucher-selected:hover td:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)),
+:deep(.el-table__body tr:hover td.voucher-cell-selected:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right)) {
   background-color: #b3d8ff !important;
 }
 </style>

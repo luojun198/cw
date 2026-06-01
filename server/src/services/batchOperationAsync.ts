@@ -16,6 +16,26 @@ import {
   validateVoucherCanPost,
   validateVoucherForUnpost,
 } from './voucherPosting.js'
+import { validateInitBalanceBalancedForYears } from './initBalanceTrial.js'
+import { formatVoucherDisplayLabel } from '../utils/displayLabel.js'
+
+type BatchVoucherError = { id: string; label: string; error: string }
+
+function pushVoucherBatchError(
+  errors: BatchVoucherError[],
+  voucher: { id: string; voucher_no?: string; voucher_date?: string },
+  error: string
+) {
+  errors.push({
+    id: voucher.id,
+    label: formatVoucherDisplayLabel(voucher),
+    error,
+  })
+}
+
+function sliceBatchErrors(errors: BatchVoucherError[]) {
+  return errors.slice(0, 10)
+}
 
 interface BatchOperationParams {
   db: Database
@@ -29,7 +49,7 @@ interface BatchOperationParams {
 
 // 批量审核（异步）
 export async function batchAuditAsync(params: BatchOperationParams): Promise<string> {
-  const task = createTask('batch-audit')
+  const task = createTask('batch-audit', params.accountSetId)
 
   // 异步执行
   setImmediate(async () => {
@@ -42,7 +62,7 @@ export async function batchAuditAsync(params: BatchOperationParams): Promise<str
 
       let success = 0
       let failed = 0
-      const errors: Array<{ id: string; error: string }> = []
+      const errors: BatchVoucherError[] = []
 
       for (let i = 0; i < vouchers.length; i++) {
         const voucher = vouchers[i]
@@ -50,7 +70,7 @@ export async function batchAuditAsync(params: BatchOperationParams): Promise<str
           const validationError = validateVoucherForAudit(voucher, params.userId)
           if (validationError) {
             failed++
-            errors.push({ id: voucher.id, error: validationError })
+            pushVoucherBatchError(errors, voucher, validationError)
           } else {
             applyVoucherAudit({
               db: params.db,
@@ -62,7 +82,7 @@ export async function batchAuditAsync(params: BatchOperationParams): Promise<str
           }
         } catch (error: any) {
           failed++
-          errors.push({ id: voucher.id, error: error.message || '审核失败' })
+          pushVoucherBatchError(errors, voucher, error.message || '审核失败')
         }
 
         // 更新进度
@@ -76,7 +96,7 @@ export async function batchAuditAsync(params: BatchOperationParams): Promise<str
         status: 'completed',
         progress: 100,
         message: `批量审核完成：成功 ${success} 张，失败 ${failed} 张`,
-        result: { success, failed, errors },
+        result: { success, failed, errors: sliceBatchErrors(errors) },
       })
     } catch (error: any) {
       updateTask(task.id, {
@@ -91,7 +111,7 @@ export async function batchAuditAsync(params: BatchOperationParams): Promise<str
 
 // 批量反审核（异步）
 export async function batchUnAuditAsync(params: BatchOperationParams): Promise<string> {
-  const task = createTask('batch-unaudit')
+  const task = createTask('batch-unaudit', params.accountSetId)
 
   setImmediate(async () => {
     try {
@@ -102,7 +122,7 @@ export async function batchUnAuditAsync(params: BatchOperationParams): Promise<s
 
       let success = 0
       let failed = 0
-      const errors: Array<{ id: string; error: string }> = []
+      const errors: BatchVoucherError[] = []
 
       for (let i = 0; i < vouchers.length; i++) {
         const voucher = vouchers[i]
@@ -110,14 +130,14 @@ export async function batchUnAuditAsync(params: BatchOperationParams): Promise<s
           const validationError = validateVoucherForUnAudit(voucher)
           if (validationError) {
             failed++
-            errors.push({ id: voucher.id, error: validationError })
+            pushVoucherBatchError(errors, voucher, validationError)
           } else {
             applyVoucherUnAudit({ db: params.db, voucherId: voucher.id })
             success++
           }
         } catch (error: any) {
           failed++
-          errors.push({ id: voucher.id, error: error.message || '反审核失败' })
+          pushVoucherBatchError(errors, voucher, error.message || '反审核失败')
         }
 
         const processed = i + 1
@@ -129,7 +149,7 @@ export async function batchUnAuditAsync(params: BatchOperationParams): Promise<s
         status: 'completed',
         progress: 100,
         message: `批量反审核完成：成功 ${success} 张，失败 ${failed} 张`,
-        result: { success, failed, errors },
+        result: { success, failed, errors: sliceBatchErrors(errors) },
       })
     } catch (error: any) {
       updateTask(task.id, {
@@ -144,7 +164,7 @@ export async function batchUnAuditAsync(params: BatchOperationParams): Promise<s
 
 // 批量记账（异步）
 export async function batchPostAsync(params: BatchOperationParams): Promise<string> {
-  const task = createTask('batch-post')
+  const task = createTask('batch-post', params.accountSetId)
 
   setImmediate(async () => {
     try {
@@ -185,9 +205,32 @@ export async function batchPostAsync(params: BatchOperationParams): Promise<stri
       const vouchers = queryVouchersForPost(params, queryStatus)
       updateTask(task.id, { total: vouchers.length })
 
+      const initBalanceError = validateInitBalanceBalancedForYears(
+        params.db,
+        params.accountSetId,
+        [...new Set(vouchers.map(v => v.year as number))]
+      )
+      if (initBalanceError) {
+        updateTask(task.id, {
+          status: 'completed',
+          progress: 100,
+          processed: vouchers.length,
+          success: 0,
+          failed: vouchers.length,
+          message: `批量记账失败：${initBalanceError}（共 ${vouchers.length} 张全部未通过）`,
+          result: {
+            success: 0,
+            failed: vouchers.length,
+            initBalanceBlocked: true,
+            reason: initBalanceError,
+          },
+        })
+        return
+      }
+
       let success = 0
       let failed = 0
-      const errors: Array<{ id: string; error: string }> = []
+      const errors: BatchVoucherError[] = []
 
       for (let i = 0; i < vouchers.length; i++) {
         const voucher = vouchers[i]
@@ -199,7 +242,7 @@ export async function batchPostAsync(params: BatchOperationParams): Promise<stri
           )
           if (validationError) {
             failed++
-            errors.push({ id: voucher.id, error: validationError })
+            pushVoucherBatchError(errors, voucher, validationError)
           } else {
             const entries = loadVoucherEntries(params.db, voucher.id)
             applyVoucherPosting(params.db, voucher, entries, {
@@ -213,7 +256,7 @@ export async function batchPostAsync(params: BatchOperationParams): Promise<stri
           }
         } catch (error: any) {
           failed++
-          errors.push({ id: voucher.id, error: error.message || '记账失败' })
+          pushVoucherBatchError(errors, voucher, error.message || '记账失败')
         }
 
         const processed = i + 1
@@ -225,7 +268,7 @@ export async function batchPostAsync(params: BatchOperationParams): Promise<stri
         status: 'completed',
         progress: 100,
         message: `批量记账完成：成功 ${success} 张，失败 ${failed} 张`,
-        result: { success, failed, errors },
+        result: { success, failed, errors: sliceBatchErrors(errors) },
       })
     } catch (error: any) {
       updateTask(task.id, {
@@ -240,7 +283,7 @@ export async function batchPostAsync(params: BatchOperationParams): Promise<stri
 
 // 批量反记账（异步）
 export async function batchUnpostAsync(params: BatchOperationParams): Promise<string> {
-  const task = createTask('batch-unpost')
+  const task = createTask('batch-unpost', params.accountSetId)
 
   setImmediate(async () => {
     try {
@@ -251,7 +294,7 @@ export async function batchUnpostAsync(params: BatchOperationParams): Promise<st
 
       let success = 0
       let failed = 0
-      const errors: Array<{ id: string; error: string }> = []
+      const errors: BatchVoucherError[] = []
 
       const requireAudit = params.db
         .prepare(
@@ -271,7 +314,7 @@ export async function batchUnpostAsync(params: BatchOperationParams): Promise<st
           const validationError = validateVoucherForUnpost(voucher)
           if (validationError) {
             failed++
-            errors.push({ id: voucher.id, error: validationError })
+            pushVoucherBatchError(errors, voucher, validationError)
           } else {
             const entries = loadVoucherEntries(params.db, voucher.id)
             applyVoucherUnpost(params.db, voucher, entries, {
@@ -283,7 +326,7 @@ export async function batchUnpostAsync(params: BatchOperationParams): Promise<st
           }
         } catch (error: any) {
           failed++
-          errors.push({ id: voucher.id, error: error.message || '反记账失败' })
+          pushVoucherBatchError(errors, voucher, error.message || '反记账失败')
         }
 
         const processed = i + 1
@@ -295,7 +338,7 @@ export async function batchUnpostAsync(params: BatchOperationParams): Promise<st
         status: 'completed',
         progress: 100,
         message: `批量反记账完成：成功 ${success} 张，失败 ${failed} 张`,
-        result: { success, failed, errors },
+        result: { success, failed, errors: sliceBatchErrors(errors) },
       })
     } catch (error: any) {
       updateTask(task.id, {

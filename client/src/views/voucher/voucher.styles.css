@@ -1,6 +1,19 @@
 /* 凭证列表页（录入 / 审核 / 查询）紧凑布局 */
 .voucher-list-page {
   padding: 10px 12px !important;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.voucher-list-page > .table-fill-wrap,
+.voucher-list-page > .voucher-audit-table-host {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 0;
+  overflow: hidden;
 }
 
 .voucher-list-page .page-header {
@@ -9,6 +22,16 @@
 
 .voucher-list-page .page-header h3 {
   font-size: 16px;
+}
+
+.voucher-list-page .page-header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.voucher-list-page .page-header-title-row h3 {
+  margin: 0;
 }
 
 /* ========== 分组彩色工具栏 ========== */
@@ -192,6 +215,31 @@
   min-height: 26px !important;
 }
 
+/* 页顶：标题 + 筛选同一行（筛选区横向滚动） */
+.voucher-list-page .voucher-page-top-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.voucher-list-page .voucher-page-top-row .voucher-page-top-title {
+  flex-shrink: 0;
+  margin: 0;
+  padding-top: 3px;
+  white-space: nowrap;
+}
+
+.voucher-list-page .voucher-page-top-row .voucher-filter-card {
+  flex: 1;
+  min-width: 0;
+  margin-bottom: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
 /* 页顶：标题 + 筛选 + 操作按钮 */
 .voucher-list-page .voucher-page-top {
   flex-shrink: 0;
@@ -210,11 +258,19 @@
 }
 
 .voucher-list-page .voucher-page-top .voucher-filter-card .el-card__body {
-  padding: 6px 10px !important;
+  padding: 4px 8px !important;
 }
 
-.voucher-list-page .voucher-page-top .filter-row {
-  width: 100%;
+.voucher-list-page .voucher-page-top .filter-panel-expanded .el-input__wrapper,
+.voucher-list-page .voucher-page-top .filter-panel-expanded .el-select__wrapper,
+.voucher-list-page .voucher-page-top .filter-bar-compact .el-input__wrapper {
+  min-height: 26px !important;
+}
+
+.voucher-list-page .voucher-page-top .filter-bar-actions .voucher-toolbar-btn.el-button {
+  height: 26px !important;
+  padding: 0 8px !important;
+  font-size: 12px !important;
 }
 
 .voucher-list-page .voucher-page-top .filter-panel--grouped {
@@ -310,7 +366,7 @@
 }
 
 .voucher-list-page .draft-card .draft-pagination {
-  margin-top: 8px;
+  margin-top: 4px;
 }
 
 /* 表格行高：在紧凑与默认之间回退约 60%（避免过度压缩） */
@@ -329,8 +385,9 @@
 }
 
 .voucher-list-page .el-table th.el-table__cell .cell {
-  font-size: 13px !important;
-  font-weight: 600;
+  font-family: var(--cw-table-header-font-family) !important;
+  font-size: var(--cw-table-header-font-size) !important;
+  font-weight: var(--cw-table-header-font-weight) !important;
 }
 
 .voucher-list-page .el-table .el-tag {
@@ -366,17 +423,17 @@
 }
 
 /* 选中行（voucher-selected 由 getRowClass 设置，voucher-cell-selected 由 getCellClassName 设置） */
-.voucher-list-page .el-table__body tr.voucher-selected td.el-table__cell,
-.voucher-list-page .el-table__body tr.is-selected td.el-table__cell,
-.voucher-list-page .el-table__body td.voucher-cell-selected {
+.voucher-list-page .el-table__body tr.voucher-selected td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right),
+.voucher-list-page .el-table__body tr.is-selected td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right),
+.voucher-list-page .el-table__body td.voucher-cell-selected:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
   background-color: #b3d8ff !important;
   font-weight: 500;
 }
 
 /* 选中行悬停时保持选中色 */
-.voucher-list-page .el-table__body tr.voucher-selected:hover td.el-table__cell,
-.voucher-list-page .el-table__body tr.is-selected:hover td.el-table__cell,
-.voucher-list-page .el-table__body tr:hover td.voucher-cell-selected {
+.voucher-list-page .el-table__body tr.voucher-selected:hover td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right),
+.voucher-list-page .el-table__body tr.is-selected:hover td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right),
+.voucher-list-page .el-table__body tr:hover td.voucher-cell-selected:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
   background-color: #b3d8ff !important;
 }
 
@@ -386,24 +443,98 @@
   flex-shrink: 0;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   flex-wrap: wrap;
 }
 
-.voucher-list-page .voucher-batch-bar .el-button {
+.voucher-list-page .voucher-batch-bar .batch-selected-text {
+  min-width: 88px;
+  color: #606266;
+  font-size: 12px;
+  font-weight: 500;
+}
+
+.voucher-list-page .voucher-batch-bar__group {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--el-border-color-lighter);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.voucher-list-page .voucher-batch-bar__group--forward {
+  border-color: rgba(64, 158, 255, 0.22);
+  background: rgba(64, 158, 255, 0.06);
+}
+
+.voucher-list-page .voucher-batch-bar__group--reverse {
+  border-color: rgba(245, 108, 108, 0.28);
+  background: rgba(245, 108, 108, 0.06);
+}
+
+.voucher-list-page .voucher-batch-bar__group--print {
+  border-color: var(--el-border-color-lighter);
+  background: rgba(255, 255, 255, 0.85);
+}
+
+.voucher-list-page .voucher-batch-bar__label {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  color: #909399;
+  padding-right: 2px;
+}
+
+.voucher-list-page .voucher-batch-bar .el-button,
+.voucher-list-page .voucher-batch-bar .el-button-group .el-button {
   height: 26px;
   padding: 4px 9px;
   font-size: 12px;
 }
 
-.voucher-list-page .voucher-batch-bar .batch-selected-text {
-  margin-left: 4px;
-  color: #909399;
-  font-size: 12px;
+.voucher-list-page .voucher-batch-btn__hint {
+  margin-left: 2px;
+  font-size: 11px;
+  opacity: 0.88;
+}
+
+.voucher-list-page .voucher-query-summary-bar {
+  gap: 24px;
+  font-size: 13px;
+}
+
+.voucher-list-page .voucher-query-summary-bar .summary-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.voucher-list-page .voucher-query-summary-bar .summary-label {
+  color: #606266;
+  font-weight: 500;
+}
+
+.voucher-list-page .voucher-query-summary-bar .summary-value {
+  color: #303133;
+  font-weight: 600;
+}
+
+.voucher-list-page .voucher-query-summary-bar .summary-debit {
+  color: #e6a23c;
+}
+
+.voucher-list-page .voucher-query-summary-bar .summary-credit {
+  color: #67c23a;
+}
+
+.voucher-list-page .voucher-query-summary-bar .summary-error {
+  color: #f56c6c;
 }
 
 .voucher-list-page .pagination-bar {
-  margin-top: 6px;
+  margin-top: 4px;
 }
 
 /* 凭证列表页：紧凑表与科目管理对齐（覆盖上方 .voucher-list-page .el-table 默认 padding） */
@@ -415,17 +546,20 @@
 
 .voucher-list-page .compact-data-table.el-table--small th.el-table__cell {
   padding: 3px 0 !important;
-  font-size: 11px !important;
-  font-weight: 600;
+  font-family: var(--cw-table-header-font-family) !important;
+  font-size: var(--cw-table-header-font-size) !important;
+  font-weight: var(--cw-table-header-font-weight) !important;
   text-transform: none !important;
   letter-spacing: 0 !important;
 }
 
 .voucher-list-page .compact-data-table.el-table--small th.el-table__cell .cell {
-  min-height: 20px !important;
-  line-height: 20px !important;
+  min-height: 22px !important;
+  line-height: 22px !important;
   padding: 0 6px !important;
-  font-size: 11px !important;
+  font-family: inherit !important;
+  font-size: inherit !important;
+  font-weight: inherit !important;
 }
 
 .voucher-list-page .compact-data-table.el-table--small .el-table__body .el-table__row {

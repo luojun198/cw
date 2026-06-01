@@ -9,6 +9,7 @@ import { getDb } from '../db/index.js'
 import { executeTemplateSheets } from '../services/reportTemplateExecutor.js'
 import { exportReportTemplateToBuffer } from '../services/reportTemplateExport.js'
 import { saveReportTemplateExcelSource } from '../services/reportTemplatePersistence.js'
+import { sanitizeTemplateWorkbook } from '../services/reportTemplateSanitize.js'
 import {
   createReportTask,
   getReportTask,
@@ -161,15 +162,11 @@ function normalizeMergeInfo(raw: unknown): string | null {
 }
 
 function resolveAccountSetId(accountSetId: string, db: ReturnType<typeof getDb>) {
-  return (
-    accountSetId ||
-    ((
-      db.prepare('SELECT id FROM account_sets ORDER BY created_at ASC LIMIT 1').get() as
-        | { id: string }
-        | undefined
-    )?.id ??
-      '')
-  )
+  if (accountSetId) return accountSetId
+  const row = db
+    .prepare('SELECT id FROM account_sets ORDER BY id ASC LIMIT 1')
+    .get() as { id: string } | undefined
+  return row?.id ?? ''
 }
 
 function getDefinitionByCode(
@@ -218,55 +215,170 @@ function getCellsBySheetIds(db: ReturnType<typeof getDb>, sheetIds: string[]) {
 }
 
 router.get('/templates', (req: AuthRequest, res) => {
-  const accountSetId = req.accountSetId || ''
-  const db = getDb()
+  if (!req.accountSetId) {
+    return res.status(400).json({ code: 400, message: '账套未选择，请重新登录' })
+  }
 
-  const resolvedAccountSetId =
-    accountSetId ||
-    ((
-      db.prepare('SELECT id FROM account_sets ORDER BY created_at ASC LIMIT 1').get() as
-        | { id: string }
-        | undefined
-    )?.id ??
-      '')
+  try {
+    const accountSetId = req.accountSetId
+    const db = getDb()
 
-  const definitions = db
-    .prepare(
-      `
+    const definitions = db
+      .prepare(
+        `
       SELECT id, code, name, source, source_file, sort_order, is_enabled
       FROM report_definitions
       WHERE account_set_id = ?
-      ORDER BY code ASC, sort_order ASC
+      ORDER BY sort_order ASC, code ASC
       `
-    )
-    .all(resolvedAccountSetId) as ReportDefinitionRow[]
+      )
+      .all(accountSetId) as ReportDefinitionRow[]
 
-  const formulaFunctions = db
-    .prepare(
-      `
+    const formulaFunctions = db
+      .prepare(
+        `
       SELECT function_name, handler_key, description
       FROM report_formula_functions
       WHERE account_set_id = ?
       ORDER BY function_name ASC
       `
+      )
+      .all(accountSetId) as Array<{
+      function_name: string
+      handler_key: string
+      description: string | null
+    }>
+
+    res.json({
+      code: 0,
+      data: definitions.map(definition => ({
+        ...definition,
+        is_enabled: Boolean(definition.is_enabled),
+      })),
+      summary: {
+        total: definitions.length,
+        formulaFunctionCount: formulaFunctions.length,
+        formulaFunctions,
+      },
+    })
+  } catch (error: any) {
+    console.error('[report/templates]', { accountSetId: req.accountSetId, error })
+    return res.status(500).json({
+      code: 500,
+      message: error?.message || '加载报表模板列表失败',
+    })
+  }
+})
+
+/**
+ * 批量更新报表模板导航顺序（sort_order）。
+ * - orders 必须覆盖当前账套下的全部报表，且 code 不可重复。
+ */
+router.put('/templates/sort-order', (req: AuthRequest, res) => {
+  const db = getDb()
+  const accountSetId = resolveAccountSetId(req.accountSetId || '', db)
+
+  if (!accountSetId) {
+    return res.status(400).json({ code: 400, message: '账套不存在' })
+  }
+
+  const body = (req.body || {}) as { orders?: unknown }
+  if (!Array.isArray(body.orders) || body.orders.length === 0) {
+    return res.status(400).json({ code: 400, message: 'orders 必须为非空数组' })
+  }
+
+  const parsedOrders: { code: string; sort_order: number }[] = []
+  const seenCodes = new Set<string>()
+
+  for (const item of body.orders) {
+    if (!item || typeof item !== 'object') {
+      return res.status(400).json({ code: 400, message: 'orders 项格式无效' })
+    }
+    const code = String((item as { code?: unknown }).code || '').trim()
+    const sortOrderRaw = (item as { sort_order?: unknown }).sort_order
+    const sort_order = Number(sortOrderRaw)
+
+    if (!code) {
+      return res.status(400).json({ code: 400, message: '报表编码不能为空' })
+    }
+    if (!Number.isInteger(sort_order) || sort_order < 1) {
+      return res.status(400).json({ code: 400, message: 'sort_order 必须是大于等于 1 的整数' })
+    }
+    if (seenCodes.has(code)) {
+      return res.status(400).json({ code: 400, message: `报表编码重复: ${code}` })
+    }
+    seenCodes.add(code)
+    parsedOrders.push({ code, sort_order })
+  }
+
+  const existing = db
+    .prepare(
+      `
+      SELECT code
+      FROM report_definitions
+      WHERE account_set_id = ?
+      ORDER BY sort_order ASC, code ASC
+      `
     )
-    .all(resolvedAccountSetId) as Array<{
-    function_name: string
-    handler_key: string
-    description: string | null
+    .all(accountSetId) as Array<{ code: string }>
+
+  if (existing.length === 0) {
+    return res.status(400).json({ code: 400, message: '当前账套没有可排序的报表' })
+  }
+
+  if (parsedOrders.length !== existing.length) {
+    return res.status(400).json({
+      code: 400,
+      message: `orders 必须包含全部 ${existing.length} 个报表`,
+    })
+  }
+
+  const existingCodes = new Set(existing.map(row => row.code))
+  for (const item of parsedOrders) {
+    if (!existingCodes.has(item.code)) {
+      return res.status(400).json({ code: 400, message: `未找到报表: ${item.code}` })
+    }
+  }
+
+  try {
+    db.transaction(() => {
+      const updateStmt = db.prepare(
+        `UPDATE report_definitions SET sort_order = ?, updated_at = datetime('now') WHERE account_set_id = ? AND code = ?`
+      )
+      for (const item of parsedOrders) {
+        updateStmt.run(item.sort_order, accountSetId, item.code)
+      }
+    })()
+  } catch (error: any) {
+    return res.status(500).json({
+      code: 500,
+      message: error?.message || '更新导航顺序失败',
+    })
+  }
+
+  const updated = db
+    .prepare(
+      `
+      SELECT code, name, sort_order, is_enabled
+      FROM report_definitions
+      WHERE account_set_id = ?
+      ORDER BY sort_order ASC, code ASC
+      `
+    )
+    .all(accountSetId) as Array<{
+    code: string
+    name: string
+    sort_order: number
+    is_enabled: number
   }>
 
   res.json({
     code: 0,
-    data: definitions.map(definition => ({
-      ...definition,
-      is_enabled: Boolean(definition.is_enabled),
+    message: '导航顺序已更新',
+    data: updated.map(row => ({
+      ...row,
+      is_enabled: Boolean(row.is_enabled),
     })),
-    summary: {
-      total: definitions.length,
-      formulaFunctionCount: formulaFunctions.length,
-      formulaFunctions,
-    },
   })
 })
 
@@ -551,6 +663,105 @@ router.put('/templates/:code/cells', (req: AuthRequest, res) => {
   res.json({ code: 0, message: '模板单元格保存成功' })
 })
 
+function normalizeSheetSizeArray(
+  input: unknown,
+  expectedLength: number,
+  minValue: number,
+  label: string
+): number[] {
+  if (!Array.isArray(input)) {
+    throw new Error(`${label} 必须是数组`)
+  }
+  if (input.length < expectedLength) {
+    throw new Error(`${label} 长度不能小于 ${expectedLength}`)
+  }
+  return input.slice(0, expectedLength).map((value, index) => {
+    const parsed = Number(value)
+    if (!Number.isFinite(parsed) || parsed < minValue) {
+      throw new Error(`${label}[${index}] 必须是大于等于 ${minValue} 的数字`)
+    }
+    return Math.round(parsed)
+  })
+}
+
+router.patch('/templates/:code/sheets/:sheetId/layout', (req: AuthRequest, res) => {
+  const reportCode = String(req.params.code || '').trim()
+  const sheetId = String(req.params.sheetId || '').trim()
+  const body = req.body || {}
+  const db = getDb()
+  const resolvedAccountSetId = resolveAccountSetId(req.accountSetId || '', db)
+
+  if (!reportCode) {
+    return res.status(400).json({ code: 400, message: '报表编码不能为空' })
+  }
+  if (!sheetId) {
+    return res.status(400).json({ code: 400, message: 'sheetId 不能为空' })
+  }
+
+  const definition = getDefinitionByCode(db, resolvedAccountSetId, reportCode)
+  if (!definition) {
+    return res.status(404).json({ code: 404, message: '未找到对应报表模板' })
+  }
+
+  const sheet = db
+    .prepare(
+      `
+      SELECT id
+      FROM report_sheets
+      WHERE id = ? AND report_definition_id = ?
+      LIMIT 1
+      `
+    )
+    .get(sheetId, definition.id) as { id: string } | undefined
+
+  if (!sheet) {
+    return res.status(404).json({ code: 404, message: '未找到对应工作表' })
+  }
+
+  const bounds = db
+    .prepare(
+      `
+      SELECT MAX(row_index) AS max_row, MAX(col_index) AS max_col
+      FROM report_cells
+      WHERE report_sheet_id = ?
+      `
+    )
+    .get(sheetId) as { max_row: number | null; max_col: number | null } | undefined
+
+  const colCount = Math.max((bounds?.max_col ?? -1) + 1, 1)
+  const rowCount = Math.max((bounds?.max_row ?? -1) + 1, 1)
+
+  try {
+    const colWidths = normalizeSheetSizeArray(body.col_widths, colCount, 24, 'col_widths')
+    const rowHeights = normalizeSheetSizeArray(body.row_heights, rowCount, 16, 'row_heights')
+
+    db.prepare(
+      `
+      UPDATE report_sheets
+      SET col_widths = ?, row_heights = ?
+      WHERE id = ?
+      `
+    ).run(JSON.stringify(colWidths), JSON.stringify(rowHeights), sheetId)
+
+    res.json({
+      code: 0,
+      message: '工作表布局已保存',
+      data: {
+        sheetId,
+        colCount,
+        rowCount,
+        col_widths: colWidths,
+        row_heights: rowHeights,
+      },
+    })
+  } catch (error) {
+    return res.status(400).json({
+      code: 400,
+      message: error instanceof Error ? error.message : '保存工作表布局失败',
+    })
+  }
+})
+
 router.post('/templates/:code/rowcol', (req: AuthRequest, res) => {
   const reportCode = String(req.params.code || '').trim()
   const body = req.body || {}
@@ -689,21 +900,34 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
     if (!reportCode) {
       return res.status(400).json({ code: 400, message: '请提供报表编码 reportCode' })
     }
+
+    // 模板净化：仅保留首个 sheet 并清除边界外脏数据。
+    // 仅 xlsx 走净化（ExcelJS 不支持 xls 二进制格式）；xls 维持原样，由导出环节提示重存为 xlsx。
+    let workingBuffer = uploadedFile.buffer
+    if (ext === 'xlsx') {
+      try {
+        workingBuffer = await sanitizeTemplateWorkbook(uploadedFile.buffer)
+      } catch (sanitizeError) {
+        console.warn('[import] 模板净化失败，回退使用原始 buffer:', sanitizeError)
+        workingBuffer = uploadedFile.buffer
+      }
+    }
+
     const persistedSourceFile = persistUploadedReportTemplate({
       accountSetId: resolvedAccountSetId,
       reportCode,
       originalName: filename,
-      buffer: uploadedFile.buffer,
+      buffer: workingBuffer,
     })
     const xlsx = await import('xlsx')
     const iconv = (await import('iconv-lite')).default
-    const workbook = xlsx.read(uploadedFile.buffer, { type: 'buffer', cellStyles: true, codepage: 936 })
+    const workbook = xlsx.read(workingBuffer, { type: 'buffer', cellStyles: true, codepage: 936 })
 
     const sheetsToImportNames = workbook.SheetNames.slice(0, 1)
     const contentBoundsBySheet = sheetsToImportNames.map(sheetName =>
       getSheetContentBounds(workbook.Sheets[sheetName])
     )
-    const styleBundle = await readExcelStyleBundle(uploadedFile.buffer, contentBoundsBySheet)
+    const styleBundle = await readExcelStyleBundle(workingBuffer, contentBoundsBySheet)
 
     const fontMapsBySheet = new Map<number, Map<string, { bold?: boolean; sz?: number; name?: string }>>()
     for (const [sheetIndex, styleMap] of styleBundle.stylesBySheet.entries()) {
@@ -755,7 +979,7 @@ router.post('/templates/import', excelUpload.single('file'), async (req: AuthReq
         ).run(definitionId, resolvedAccountSetId, reportCode, effectiveName, persistedSourceFile, sortOrder)
       }
 
-      saveReportTemplateExcelSource(db, definitionId, persistedSourceFile, uploadedFile.buffer)
+      saveReportTemplateExcelSource(db, definitionId, persistedSourceFile, workingBuffer)
 
       const sheetsToImport = sheetsToImportNames
       sheetsToImport.forEach((sheetName, sheetIndex) => {
@@ -1101,6 +1325,8 @@ router.post('/templates/:code/execute', (req: AuthRequest, res) => {
   const taskId = uuidv4()
   createReportTask(taskId)
 
+  const accountScope = req.accountScope
+
   // 异步执行报表生成，立即返回任务ID
   setImmediate(async () => {
     try {
@@ -1147,6 +1373,7 @@ router.post('/templates/:code/execute', (req: AuthRequest, res) => {
           year,
           period,
           unitName: (db.prepare('SELECT name FROM account_sets WHERE id = ?').get(resolvedAccountSetId) as any)?.name || '',
+          accountScope,
         }
       )
 
@@ -1221,6 +1448,7 @@ router.get('/templates/:code/export', async (req: AuthRequest, res) => {
       reportCode,
       year,
       period,
+      accountScope: req.accountScope,
     })
 
     const encodedName = encodeURIComponent(fileName)
@@ -1239,7 +1467,7 @@ router.get('/templates/:code/export', async (req: AuthRequest, res) => {
 
 /**
  * 更新报表模板的元数据（code / name / is_enabled）。
- * - 导航栏按 code ASC 排序，修改 code 即改变报表在导航栏的顺序。
+ * - 导航栏按 sort_order ASC 排序，顺序可在「导航顺序」中调整。
  * - 若新 code 已被同账套的另一个报表占用，则**互换**两个报表的 code（用临时值中转，避免 UNIQUE 冲突）。
  * - is_enabled = 0 的报表不会出现在导航栏。
  */

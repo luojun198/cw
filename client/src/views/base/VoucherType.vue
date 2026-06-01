@@ -13,7 +13,7 @@
       stripe
       border
       size="small"
-      height="calc(100vh - 108px)"
+      height="100%"
       class="voucher-type-table"
       :row-style="{ height: '30px' }"
       :cell-style="{ padding: '0' }"
@@ -179,9 +179,10 @@ onMounted(fetchData)
 :deep(.voucher-type-table th.el-table__cell) {
   padding: 5px 0 !important;
   background: var(--el-fill-color-light) !important;
-  color: var(--el-text-color-regular);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--cw-text-primary);
+  font-family: var(--cw-table-header-font-family);
+  font-size: var(--cw-table-header-font-size);
+  font-weight: var(--cw-table-header-font-weight);
 }
 
 :deep(.voucher-type-table .el-table__row) {

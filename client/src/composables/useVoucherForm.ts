@@ -86,6 +86,10 @@ export function useVoucherForm(auxCategories: Ref<any[]>) {
           const dynamicKey = `_${cat.code}_id`
           if (auxData[cat.code]?.id) {
             next[dynamicKey] = auxData[cat.code].id
+            const itemName = auxData[cat.code]?.name
+            if (itemName) {
+              next[`_${cat.code}_name`] = String(itemName)
+            }
           }
           // 恢复自定义字段值
           const catData = auxData[cat.code]

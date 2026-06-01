@@ -125,6 +125,19 @@ export async function downloadReportExport(
   return request.download(`/report/templates/${encodeURIComponent(code)}/export`, { params })
 }
 
+export type SaveSheetLayoutRequest = {
+  col_widths: number[]
+  row_heights: number[]
+}
+
+export async function saveSheetLayout(
+  code: string,
+  sheetId: string,
+  payload: SaveSheetLayoutRequest
+): Promise<void> {
+  await request.patch(`/report/templates/${encodeURIComponent(code)}/sheets/${encodeURIComponent(sheetId)}/layout`, payload)
+}
+
 export async function saveTemplateCells(
   code: string,
   payload: SaveTemplateCellsRequest
@@ -155,6 +168,7 @@ export interface UpdateTemplateMetaResponse {
 
 /**
  * 修改报表模板的 code / name / is_enabled。
+ * - 导航顺序请使用 updateReportTemplateSortOrder 调整。
  * - 若新 code 与同账套另一个报表重复，后端会自动互换两者的 code，并在响应中返回 swapped=true。
  * - is_enabled = false 的报表不会出现在导航栏。
  */
@@ -167,4 +181,21 @@ export async function updateReportTemplateMeta(
     payload
   )
   return { message: res.message || '更新成功', data: res.data }
+}
+
+export type ReportTemplateSortItem = {
+  code: string
+  name: string
+  sort_order: number
+  is_enabled: boolean
+}
+
+/**
+ * 批量更新报表导航顺序（须覆盖当前账套全部报表）。
+ */
+export async function updateReportTemplateSortOrder(
+  orders: { code: string; sort_order: number }[]
+): Promise<{ message: string; data: ReportTemplateSortItem[] }> {
+  const res = await request.put<ReportTemplateSortItem[]>('/report/templates/sort-order', { orders })
+  return { message: res.message || '导航顺序已更新', data: res.data || [] }
 }

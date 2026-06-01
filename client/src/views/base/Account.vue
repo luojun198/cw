@@ -97,9 +97,12 @@
           <el-icon><Download /></el-icon>
           导出
         </el-button>
-        <el-button plain size="small" @click="importDialogVisible = true">
+        <el-button plain size="small" @click="openImportDialog">
           <el-icon><Upload /></el-icon>
           导入
+        </el-button>
+        <el-button plain size="small" @click="handleRepairHierarchy" :loading="repairingHierarchy">
+          修复层级
         </el-button>
         <el-switch
           v-model="showDisabled"
@@ -118,7 +121,7 @@
       border
       size="small"
       highlight-current-row
-      height="calc(100vh - 108px)"
+      height="100%"
       :row-style="{ height: '30px' }"
       :cell-style="{ padding: '0' }"
       :header-cell-style="{ padding: '4px 0' }"
@@ -136,7 +139,7 @@
         <template #default="{ row }">
           <span
             :style="{
-              paddingLeft: `${((row._depth || row.level || 1) - 1) * 14}px`,
+              paddingLeft: `${((row.level || row._depth || 1) - 1) * 14}px`,
               display: 'inline-block',
             }"
             class="account-code"
@@ -148,7 +151,7 @@
         <template #default="{ row }">
           <span
             :style="{
-              paddingLeft: `${((row._depth || row.level || 1) - 1) * 14}px`,
+              paddingLeft: `${((row.level || row._depth || 1) - 1) * 14}px`,
               display: 'inline-block',
             }"
             class="account-name"
@@ -219,8 +222,11 @@
       :children-count="childrenCount"
       :tree-select-data="treeSelectData"
       :get-available-cats="getAvailableCats"
-      :get-aux-items-by-cat="getAuxItemsByCat"
-      :on-aux-cat-change="onAuxCatChange"
+      :get-aux-options="accountAuxSelect.getAuxOptions"
+      :search-aux-items="accountAuxSelect.searchAuxItems"
+      :on-aux-dropdown-open="accountAuxSelect.onDropdownOpen"
+      :is-aux-select-loading="isAccountAuxSelectLoading"
+      :on-aux-cat-change="handleAuxCatChange"
       :add-aux="addAux"
       :remove-aux="removeAux"
       :saving="saving"
@@ -230,7 +236,13 @@
     />
 
     <!-- 批量导入对话框 -->
-    <el-dialog v-model="importDialogVisible" title="批量导入会计科目" width="600px">
+    <el-dialog
+      v-model="importDialogVisible"
+      title="批量导入会计科目"
+      width="960px"
+      class="spreadsheet-import-dialog"
+      @closed="resetImportDialog"
+    >
       <div class="import-tips">
         <p>
           1. 请先
@@ -241,9 +253,11 @@
         <p>3. 每个辅助类别有独立列：辅助-XXX 填"是/否"标识是否启用，默认项目-XXX 填项目名称</p>
       </div>
       <el-upload
+        ref="importUploadRef"
         :auto-upload="false"
         :limit="1"
         accept=".xlsx,.xls"
+        :disabled="importParsing"
         :on-change="onImportFileChange"
         :on-exceed="() => showError('只能上传一个文件')"
         drag
@@ -255,46 +269,77 @@
         </template>
       </el-upload>
 
+      <div v-if="importParsing" class="import-parsing">
+        <el-progress :percentage="importParseProgress" :stroke-width="16" />
+        <p class="import-parsing__text">{{ importParseMessage }}</p>
+      </div>
+
       <div v-if="importPreview.length > 0" class="import-preview">
-        <el-alert
-          :title="`解析成功：${importPreview.length} 条数据`"
-          type="success"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 12px"
+        <SpreadsheetImportSummaryAlert
+          :summary="importSummary"
+          :issue-count="importIssueCount"
+          @view-issues="openImportIssuesDialog"
         />
-        <el-table :data="importPreview.slice(0, 10)" stripe border size="small" max-height="240">
+        <el-table :data="importPreview.slice(0, 15)" stripe border size="small" max-height="280">
+          <el-table-column prop="rowIndex" label="行号" width="60" />
           <el-table-column prop="code" label="科目编码" width="100" />
-          <el-table-column prop="name" label="科目名称" />
-          <el-table-column prop="direction" label="余额方向" width="80" />
+          <el-table-column prop="name" label="科目名称" min-width="120" />
+          <el-table-column label="余额方向" width="80">
+            <template #default="{ row }">{{ row.direction === 'credit' ? '贷方' : '借方' }}</template>
+          </el-table-column>
           <el-table-column prop="parent_code" label="上级编码" width="100" />
-          <el-table-column prop="aux_desc" label="辅助核算" />
+          <el-table-column prop="aux_desc" label="辅助核算" min-width="120" />
+          <el-table-column prop="matched" label="状态" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.matched ? 'success' : 'danger'" size="small">
+                {{ row.matched ? '有效' : row.error || '无效' }}
+              </el-tag>
+            </template>
+          </el-table-column>
         </el-table>
-        <div v-if="importPreview.length > 10" class="import-more-hint">
-          仅展示前 10 条，共 {{ importPreview.length }} 条
+        <div v-if="importPreview.length > 15" class="import-preview-more">
+          预览仅显示前 15 行，共 {{ importPreview.length }} 行；异常明细请点「查看异常说明」
         </div>
       </div>
 
       <template #footer>
+        <el-button @click="closeImportDialog">取消</el-button>
         <el-button
-          @click="importDialogVisible = false; importPreview = []"
-          >取消</el-button
+          v-if="importIssueCount > 0"
+          @click="openImportIssuesDialog"
         >
+          查看异常说明
+        </el-button>
         <el-button
           type="primary"
-          :disabled="importPreview.length === 0"
+          :disabled="importMatchedCount === 0"
           :loading="importing"
           @click="handleImport"
         >
-          确认导入（{{ importPreview.length }} 条）
+          确认导入（{{ importMatchedCount }} 条）
         </el-button>
       </template>
     </el-dialog>
+
+    <SpreadsheetImportIssuesDialog
+      v-model:visible="importIssuesDialogVisible"
+      :issues="importIssues"
+      :loading="importIssuesLoading"
+      :total-count="importIssueCount > 0 ? importIssueCount : null"
+      intro="以下行未能通过校验，不会写入科目表。同类问题已合并展示；请按说明修正模板后重新上传。"
+    />
+
+    <TaskProgressDialog
+      v-model="taskProgressVisible"
+      :task-id="currentTaskId"
+      :task-type="currentTaskType"
+      @completed="handleTaskCompleted"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onActivated, onBeforeUnmount } from 'vue'
+import { ref, computed, shallowRef, onMounted, onActivated, onBeforeUnmount, nextTick } from 'vue'
 import type { UploadFile } from 'element-plus'
 import {
   Upload,
@@ -308,7 +353,21 @@ import {
   CollectionTag,
 } from '@element-plus/icons-vue'
 import request from '@/api/request'
+import { useAsyncBatchTask } from '@/composables/useAsyncBatchTask'
+import { useVoucherAuxItems } from '@/composables/useVoucherAuxItems'
+import TaskProgressDialog from '@/components/task/TaskProgressDialog.vue'
 import AccountDialog from '@/components/base/AccountDialog.vue'
+import SpreadsheetImportSummaryAlert from '@/components/common/SpreadsheetImportSummaryAlert.vue'
+import SpreadsheetImportIssuesDialog from '@/components/common/SpreadsheetImportIssuesDialog.vue'
+import {
+  buildAccountImportSummary,
+  collectAccountImportIssues,
+  describeAccountRowIssue,
+  parseAccountImportRowsAsync,
+  type AccountImportRow,
+} from '@/utils/accountImport'
+import { aggregateImportIssuesAsync } from '@/utils/spreadsheetImportReport'
+import { yieldToMain } from '@/utils/asyncChunk'
 import { useAccountTree } from '@/composables/useAccountTree'
 import { useAccountForm } from '@/composables/useAccountForm'
 import { showSuccess, showError, showOperationError } from '@/composables/useMessage'
@@ -317,6 +376,7 @@ import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
 import { useOperationHistory } from '@/composables/useOperationHistory'
 import { performanceMonitor } from '@/utils/performanceMonitor'
 import { useBaseDataStore } from '@/stores/baseData'
+import { normalizeImportCode } from '@/utils/textNormalize'
 import { filterAuxCategoriesForAccount } from '@/utils/accountCashFlow'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
 import {
@@ -324,6 +384,23 @@ import {
   buildAuxQuickFilterValue,
   filterAccountsWithAncestors,
 } from '@/utils/accountQuickFilter'
+import {
+  collectImportAuxCategoryIds,
+  collectReferencedAuxItemIds,
+  fetchAuxItemsByCategory,
+  fetchAuxItemsForImportDefaults,
+  fetchAuxItemsByIds,
+  findAuxItemByCategoryAndName,
+} from '@/utils/accountAuxLookup'
+
+const {
+  taskProgressVisible,
+  currentTaskId,
+  currentTaskType,
+  startAsyncTask,
+} = useAsyncBatchTask()
+
+const accountAuxSelect = useVoucherAuxItems()
 
 const list = ref<any[]>([])
 const keyword = ref('')
@@ -333,8 +410,12 @@ const tableRef = ref<any>(null)
 const dialogVisible = ref(false)
 const dialogType = ref<'add' | 'edit'>('add')
 const saving = ref(false)
+const repairingHierarchy = ref(false)
 const auxCategories = ref<any[]>([])
-const auxItems = ref<any[]>([])
+const auxItemById = shallowRef(new Map<string, any>())
+const auxItemsByCategory = shallowRef(new Map<string, any[]>())
+const auxCategoriesLoaded = ref(false)
+const auxCategoryLoading = new Set<string>()
 const allAccountsForCode = ref<any[]>([])
 const accountLevels = ref(6)
 const accountCodeLengths = ref([4, 2, 2, 2, 2, 2, 2, 2, 2, 2])
@@ -370,7 +451,6 @@ const {
 const {
   form,
   parentUsage,
-  getAuxItemsByCat,
   getAvailableCats,
   onAuxCatChange,
   addAux,
@@ -379,7 +459,10 @@ const {
   createAddForm,
   createEditForm,
   buildSavePayload,
-} = useAccountForm(auxCategories, auxItems)
+} = useAccountForm(auxCategories, {
+  auxItemById,
+  auxItemsByCategory,
+})
 
 const treeSelectData = computed(() => getTreeSelectData(form.value.id))
 
@@ -445,35 +528,91 @@ function getDisplayText(text: string | number | null | undefined): string {
   return String(text)
 }
 
+async function loadAuxCategoriesOnce() {
+  if (auxCategoriesLoaded.value) return
+  const catRes = await request.get<any[]>('/base/aux-categories')
+  auxCategories.value = filterAuxCategoriesForAccount(catRes.data || [])
+  auxCategoriesLoaded.value = true
+}
+
+function mergeAuxItemsIntoLookup(items: any[]) {
+  if (items.length === 0) return
+  const nextById = new Map(auxItemById.value)
+  const nextByCategory = new Map(auxItemsByCategory.value)
+  for (const item of items) {
+    nextById.set(item.id, item)
+    const catId = item.type
+    if (!catId) continue
+    const existing = nextByCategory.get(catId) || []
+    if (!existing.some(row => row.id === item.id)) {
+      nextByCategory.set(catId, [...existing, item])
+    }
+  }
+  auxItemById.value = nextById
+  auxItemsByCategory.value = nextByCategory
+}
+
+async function loadAuxItemsForCategory(categoryId: string) {
+  if (!categoryId || auxItemsByCategory.value.has(categoryId) || auxCategoryLoading.has(categoryId)) {
+    return
+  }
+  auxCategoryLoading.add(categoryId)
+  try {
+    const items = await fetchAuxItemsByCategory(categoryId)
+    mergeAuxItemsIntoLookup(items)
+  } finally {
+    auxCategoryLoading.delete(categoryId)
+  }
+}
+
+async function syncReferencedAuxItems(accounts: any[]) {
+  const missingIds = collectReferencedAuxItemIds(accounts).filter(id => !auxItemById.value.has(id))
+  if (missingIds.length === 0) return
+  const items = await fetchAuxItemsByIds(missingIds)
+  mergeAuxItemsIntoLookup(items)
+}
+
+async function ensureDialogAuxSelections() {
+  for (const item of form.value.aux_list || []) {
+    if (item.cat_id && item.item_id) {
+      await accountAuxSelect.ensureSelectedItems(item.cat_id, [item.item_id])
+    }
+  }
+}
+
+function isAccountAuxSelectLoading(catId: string) {
+  return !!accountAuxSelect.loadingByCategory.value[catId]
+}
+
+function handleAuxCatChange(item: any, val: string) {
+  onAuxCatChange(item, val)
+  if (item.cat_id && item.item_id) {
+    void accountAuxSelect.ensureSelectedItems(item.cat_id, [item.item_id])
+  }
+}
+
+function getLoadedAuxItemsFlat() {
+  return [...auxItemsByCategory.value.values()].flat()
+}
+
 async function fetchData() {
   const currentSeq = ++fetchDataSeq
   await performanceMonitor.measure('fetchAccountData', async () => {
-    const params: any = { is_enabled: showDisabled.value ? '' : 1 }
+    const params: any = { is_enabled: showDisabled.value ? '' : 1, all: 1 }
     if (keyword.value) params.keyword = keyword.value
-    const [accRes, catRes, auxRes, allAccRes, paramRes] = await Promise.all([
+    const [accRes, allAccRes, paramRes] = await Promise.all([
       request.get<any[]>('/base/accounts', { params }),
-      request.get<any[]>('/base/aux-categories'),
-      request.get<any[]>('/base/aux-items'),
-      request.get<any[]>('/base/accounts', { params: { is_enabled: '' } }),
+      request.get<any[]>('/base/accounts', { params: { is_enabled: '', all: 1 } }),
       request.get<any[]>('/system/params'),
+      loadAuxCategoriesOnce(),
     ])
     if (currentSeq !== fetchDataSeq) return
     list.value = accRes.data
-    auxCategories.value = filterAuxCategoriesForAccount(catRes.data || [])
-    auxItems.value = auxRes.data
     allAccountsForCode.value = allAccRes.data || []
     applyAccountCodeParams(paramRes.data || [])
+    await syncReferencedAuxItems([...list.value, ...allAccountsForCode.value])
     await restoreCurrentRow()
   })
-}
-
-async function fetchAuxOptions() {
-  const [catRes, auxRes] = await Promise.all([
-    request.get<any[]>('/base/aux-categories'),
-    request.get<any[]>('/base/aux-items'),
-  ])
-  auxCategories.value = filterAuxCategoriesForAccount(catRes.data || [])
-  auxItems.value = auxRes.data
 }
 
 function applyAccountCodeParams(params: any[]) {
@@ -506,6 +645,25 @@ function normalizeParentId(parentId: any) {
 function findAccountById(id: string | null | undefined) {
   if (!id) return null
   return allAccountsForCode.value.find(row => row.id === id) || null
+}
+
+function findParentByCodePrefix(account: any | null | undefined) {
+  if (!account?.code) return null
+  const code = String(account.code)
+  let best: any = null
+  for (const row of allAccountsForCode.value) {
+    if (row.id === account.id) continue
+    const parentCode = String(row.code || '')
+    if (
+      parentCode.length > 0 &&
+      parentCode.length < code.length &&
+      code.startsWith(parentCode) &&
+      (!best || parentCode.length > String(best.code || '').length)
+    ) {
+      best = row
+    }
+  }
+  return best
 }
 
 function getSegmentLength(level: number) {
@@ -545,6 +703,12 @@ function validateAccountCodeByParams(): number | null {
     return null
   }
 
+  // 未选上级时，编码长度必须对应顶级科目，避免产生“无父的非顶级科目”
+  if (!parent && expectedLevel !== 1) {
+    showError(`该编码长度对应第${expectedLevel}级科目，请先选择上级科目（顶级科目编码应为${getSegmentLength(1)}位）`)
+    return null
+  }
+
   if (parent && !code.startsWith(String(parent.code || ''))) {
     showError('科目编码必须以上级科目编码开头')
     return null
@@ -562,10 +726,16 @@ function validateAccountCodeByParams(): number | null {
 }
 
 function getAccountLevel(row: any) {
+  const code = String(row?.code || '').trim()
+  const fromCode = getLevelByCodeLength(code)
   const explicitLevel = Number(row?.level)
+  if (fromCode) {
+    if (explicitLevel > 0 && explicitLevel !== fromCode) return fromCode
+    return explicitLevel > 0 ? explicitLevel : fromCode
+  }
   if (explicitLevel > 0) return explicitLevel
 
-  const codeLength = String(row?.code || '').length
+  const codeLength = code.length
   let cumulative = 0
   for (let index = 0; index < accountCodeLengths.value.length; index++) {
     cumulative += Number(accountCodeLengths.value[index]) || 0
@@ -616,7 +786,7 @@ function buildNextRootSiblingCode(currentAccount: any) {
 }
 
 function buildNextSiblingCode(currentAccount: any | null, parent: any | null, level: number) {
-  if (currentAccount && !currentAccount.parent_id) {
+  if (currentAccount && !parent && getAccountLevel(currentAccount) === 1) {
     return buildNextRootSiblingCode(currentAccount)
   }
   return buildNextCode(parent, level)
@@ -625,9 +795,15 @@ function buildNextSiblingCode(currentAccount: any | null, parent: any | null, le
 async function loadParentUsage(parentId: string | null) {
   parentUsage.value = null
   if (!parentId) return
+  // 迁移仅在新增「第一个子科目」时发生：父科目已有子科目则不提示
+  const hasExistingChildren = allAccountsForCode.value.some(a => a.parent_id === parentId)
+  if (hasExistingChildren) return
   try {
     const res = await request.get<any>(`/base/accounts/${parentId}/usage`)
-    if (res.code === 0 && res.data.voucherCount > 0) {
+    if (
+      res.code === 0 &&
+      (res.data.voucherCount > 0 || res.data.initBalanceCount > 0 || res.data.auxInitCount > 0)
+    ) {
       parentUsage.value = res.data
     }
   } catch {
@@ -640,7 +816,7 @@ async function handleAddAccountCommand(command: AddAccountCommand) {
 }
 
 async function openAddDialog(command: AddAccountCommand) {
-  await fetchAuxOptions()
+  await loadAuxCategoriesOnce()
   dialogType.value = 'add'
   parentUsage.value = null
 
@@ -662,9 +838,9 @@ async function openAddDialog(command: AddAccountCommand) {
     parent = currentAccount
     level = currentLevel + 1
     direction = currentAccount.direction || 'debit'
-  } else if (currentAccount?.parent_id) {
-    parent = findAccountById(currentAccount.parent_id)
+  } else if (currentAccount) {
     level = getAccountLevel(currentAccount)
+    parent = findAccountById(currentAccount.parent_id) || findParentByCodePrefix(currentAccount)
     direction = currentAccount.direction || parent?.direction || 'debit'
   }
 
@@ -689,10 +865,11 @@ async function openAddDialog(command: AddAccountCommand) {
 }
 
 async function openDialog(type: 'edit', row?: any) {
-  await fetchAuxOptions()
+  await loadAuxCategoriesOnce()
   dialogType.value = type
   parentUsage.value = null
   form.value = createEditForm(row)
+  await ensureDialogAuxSelections()
   dialogVisible.value = true
 }
 
@@ -805,6 +982,22 @@ async function handleSaveAndAdd() {
   await handleSave({ keepOpen: true })
 }
 
+async function handleRepairHierarchy() {
+  repairingHierarchy.value = true
+  try {
+    const res = await request.post<any>('/base/accounts/repair-hierarchy')
+    if (res.code === 0) {
+      showSuccess(res.message || '科目层级已修复')
+      useBaseDataStore().invalidate()
+      await fetchData()
+    }
+  } catch (error) {
+    showOperationError('修复科目层级', error)
+  } finally {
+    repairingHierarchy.value = false
+  }
+}
+
 async function handleDelete(row: any) {
   const confirmed = await useDeleteConfirm(`科目「${row.code} ${row.name}」`)
   if (!confirmed) return
@@ -821,8 +1014,73 @@ async function handleDelete(row: any) {
 
 // ========== 导入导出 ==========
 const importDialogVisible = ref(false)
-const importPreview = ref<any[]>([])
+const importPreview = ref<AccountImportRow[]>([])
+const importUploadRef = ref<any>(null)
 const importing = ref(false)
+const importIssuesDialogVisible = ref(false)
+const importBlankSkipped = ref(0)
+const importTemplateWarning = ref<string | null>(null)
+const importParsing = ref(false)
+const importParseProgress = ref(0)
+const importParseMessage = ref('')
+const importIssues = ref<ReturnType<typeof collectAccountImportIssues>>([])
+const importIssuesLoading = ref(false)
+let importIssuesBuildToken = 0
+
+const importMatchedCount = computed(() => importPreview.value.filter(r => r.matched).length)
+const importIssueCount = computed(() => importPreview.value.filter(r => !r.matched).length)
+const importSummary = computed(() =>
+  buildAccountImportSummary({
+    contentRowCount: importPreview.value.length,
+    validCount: importMatchedCount.value,
+    issueCount: importIssueCount.value,
+    blankSkipped: importBlankSkipped.value,
+    templateWarning: importTemplateWarning.value,
+  })
+)
+
+function resetImportDialog() {
+  importPreview.value = []
+  importBlankSkipped.value = 0
+  importTemplateWarning.value = null
+  importIssuesDialogVisible.value = false
+  importIssues.value = []
+  importParsing.value = false
+  importParseProgress.value = 0
+  importParseMessage.value = ''
+  importing.value = false
+  importUploadRef.value?.clearFiles()
+}
+
+async function refreshImportIssuesAsync() {
+  const token = ++importIssuesBuildToken
+  importIssuesLoading.value = true
+  importIssues.value = []
+  try {
+    await nextTick()
+    await yieldToMain()
+    importIssues.value = await aggregateImportIssuesAsync(
+      importPreview.value,
+      describeAccountRowIssue
+    )
+  } finally {
+    if (token === importIssuesBuildToken) importIssuesLoading.value = false
+  }
+}
+
+async function openImportIssuesDialog() {
+  importIssuesDialogVisible.value = true
+  await refreshImportIssuesAsync()
+}
+
+function openImportDialog() {
+  resetImportDialog()
+  importDialogVisible.value = true
+}
+
+function closeImportDialog() {
+  importDialogVisible.value = false
+}
 
 // 辅助：根据上级科目编码找到 parent_id
 function findParentId(parentCode: string, flatList: any[]): string | null {
@@ -850,7 +1108,7 @@ function buildExportAuxCols(row: any): Record<string, string> {
     const enabled = cat.id in auxMap
     cols[`辅助-${cat.name}`] = enabled ? '是' : '否'
     if (enabled && auxMap[cat.id]) {
-      const item = auxItems.value.find(i => i.id === auxMap[cat.id])
+      const item = auxItemById.value.get(auxMap[cat.id]!)
       cols[`默认项目-${cat.name}`] = item ? item.name : ''
     } else {
       cols[`默认项目-${cat.name}`] = ''
@@ -869,7 +1127,8 @@ function parseImportAuxCols(row: any): Record<string, any> | null {
     if (val === '是' || val === '1' || val === 'true') {
       const defaultItemName = String(row[defaultKey] || '').trim()
       if (defaultItemName) {
-        const item = auxItems.value.find(i => i.type === cat.id && i.name === defaultItemName)
+        const items = auxItemsByCategory.value.get(cat.id) || []
+        const item = findAuxItemByCategoryAndName(items, defaultItemName)
         result[cat.id] = item?.id || cat.default_item_id || null
       } else {
         result[cat.id] = cat.default_item_id || null
@@ -880,8 +1139,10 @@ function parseImportAuxCols(row: any): Record<string, any> | null {
 }
 
 async function exportData() {
-  const allRes = await request.get<any[]>('/base/accounts', { params: { is_enabled: '' } })
+  const allRes = await request.get<any[]>('/base/accounts', { params: { is_enabled: '', all: 1 } })
   const allAccounts = allRes.data
+  await loadAuxCategoriesOnce()
+  await syncReferencedAuxItems(allAccounts)
 
   const columns: ExportColumnDef[] = [
     {
@@ -961,132 +1222,112 @@ async function downloadTemplate() {
   writeFile(wb, '会计科目导入模板.xlsx')
 }
 
+function buildImportAuxDesc(row: Record<string, unknown>): string {
+  const auxCatNames = auxCategories.value.map(c => c.name)
+  return auxCatNames
+    .filter(catName => {
+      const val = String(row[`辅助-${catName}`] || '').trim()
+      return val === '是' || val === '1' || val === 'true'
+    })
+    .map(catName => {
+      const defaultItem = String(row[`默认项目-${catName}`] || '').trim()
+      return defaultItem ? `${catName}:${defaultItem}` : catName
+    })
+    .join(', ')
+}
+
 async function onImportFileChange(file: UploadFile) {
-  if (!file.raw) return
+  if (!file.raw || importParsing.value) return
+  importParsing.value = true
+  importParseProgress.value = 0
+  importParseMessage.value = '正在读取 Excel 文件…'
   try {
-    const { utils, read } = await import('xlsx')
+    await nextTick()
+    await yieldToMain()
     const arrayBuffer = await file.raw.arrayBuffer()
+    await yieldToMain()
+    importParseMessage.value = '正在解析工作表…'
+    const { utils, read } = await import('xlsx')
     const workbook = read(arrayBuffer, { type: 'array' })
     const sheetName = workbook.SheetNames[0]
     const sheet = workbook.Sheets[sheetName]
-    const rawData: any[] = utils.sheet_to_json(sheet)
+    await yieldToMain()
+    importParseMessage.value = '正在校验导入数据…'
+    const rawData: Record<string, unknown>[] = utils.sheet_to_json(sheet, { defval: '' })
 
     if (rawData.length === 0) {
       showError('文件中没有数据')
+      resetImportDialog()
       return
     }
 
-    // 收集辅助类别列名用于预览
-    const auxCatNames = auxCategories.value.map(c => c.name)
+    await loadAuxCategoriesOnce()
+    importParseMessage.value = '正在匹配默认核算项目…'
+    const auxItemByCatAndName = await fetchAuxItemsForImportDefaults(rawData, auxCategories.value)
 
-    const parsed = rawData
-      .map((row: any) => {
-        const code = String(row['科目编码'] || '').trim()
-        const name = String(row['科目名称'] || '').trim()
-        const directionStr = String(row['余额方向'] || '').trim()
-        const direction = directionStr === '贷方' ? 'credit' : 'debit'
-        const parentCode = String(row['上级科目编码'] || '').trim()
-        const isCash = String(row['现金'] || '').trim() === '是' ? 1 : 0
-        const isBank = String(row['银行'] || '').trim() === '是' ? 1 : 0
-        const statusStr = String(row['状态'] || '').trim()
-        const isEnabled = statusStr === '禁用' ? 0 : 1
+    const existingCodes = new Set(flatList.value.map(a => normalizeImportCode(String(a.code))))
+    const existingCodeToId = new Map(
+      flatList.value.map(a => [normalizeImportCode(String(a.code)), a.id] as [string, string])
+    )
 
-        // 解析辅助类别列
-        const auxTypes = parseImportAuxCols(row)
-        // 构建辅助描述用于预览
-        const auxDesc = auxCatNames
-          .filter(catName => {
-            const val = String(row[`辅助-${catName}`] || '').trim()
-            return val === '是' || val === '1' || val === 'true'
-          })
-          .map(catName => {
-            const defaultItem = String(row[`默认项目-${catName}`] || '').trim()
-            return defaultItem ? `${catName}:${defaultItem}` : catName
-          })
-          .join(', ')
-
-        return {
-          code,
-          name,
-          direction,
-          parent_code: parentCode,
-          is_cash: isCash,
-          is_bank: isBank,
-          aux_types: auxTypes,
-          aux_desc: auxDesc,
-          is_enabled: isEnabled,
-        }
-      })
-      .filter(item => item.code && item.name)
-
-    importPreview.value = parsed
+    const { rows, blankSkipped, templateWarning } = await parseAccountImportRowsAsync(rawData, {
+      existingCodes,
+      existingCodeToId,
+      auxCategories: auxCategories.value,
+      auxItemByCatAndName,
+      parseAuxCols: row => parseImportAuxCols(row),
+      buildAuxDesc: buildImportAuxDesc,
+    }, {
+      onProgress: pct => {
+        importParseProgress.value = pct
+      },
+    })
+    importBlankSkipped.value = blankSkipped
+    importTemplateWarning.value = templateWarning
+    importPreview.value = rows
+    importIssues.value = []
+    if (rows.length > 0 && rows.every(r => !r.matched) && rows.some(r => r.error)) {
+      void openImportIssuesDialog()
+    }
   } catch (error) {
     showError('文件解析失败，请检查文件格式')
     console.error('Import parse error:', error)
+    resetImportDialog()
+  } finally {
+    importParsing.value = false
+    importParseMessage.value = ''
   }
 }
 
 async function handleImport() {
-  if (importPreview.value.length === 0) return
+  const matched = importPreview.value.filter(r => r.matched)
+  if (matched.length === 0) {
+    if (importIssueCount.value > 0) void openImportIssuesDialog()
+    return
+  }
   importing.value = true
-  let successCount = 0
-  let failCount = 0
-  const errors: string[] = []
-
-  // 获取最新的科目列表用于查找 parent_id
-  const allRes = await request.get<any[]>('/base/accounts', { params: { is_enabled: '' } })
-  const existingAccounts = allRes.data
+  const skipped = importPreview.value.length - matched.length
 
   try {
-    for (const item of importPreview.value) {
-      try {
-        const parentId = findParentId(item.parent_code, existingAccounts)
-        const parent = parentId ? existingAccounts.find((a: any) => a.id === parentId) : null
-        const level = parent ? (parent.level || 0) + 1 : 1
-        const isAux = item.aux_types ? 1 : 0
-
-        const payload = {
-          code: item.code,
-          name: item.name,
-          direction: item.direction,
-          level,
-          parent_id: parentId,
-          is_aux: isAux,
-          aux_types: item.aux_types,
-          is_enabled: item.is_enabled,
-          is_cash: item.is_cash,
-          is_bank: item.is_bank,
-        }
-        await request.post('/base/accounts', payload)
-        successCount++
-        // 加入已有列表，以便后续行能找到此科目作为上级
-        existingAccounts.push({ ...payload, id: '__imported__' })
-      } catch (error: any) {
-        failCount++
-        const msg = error.response?.data?.message || '未知错误'
-        errors.push(`${item.code} ${item.name}: ${msg}`)
-      }
+    await startAsyncTask('accounts-import', () =>
+      request.post('/base/accounts/batch-import-async', {
+        accounts: matched.map(({ rowIndex: _ri, matched: _m, error: _e, ...rest }) => rest),
+      })
+    )
+    if (skipped > 0) {
+      showSuccess(`已提交 ${matched.length} 条科目导入，另有 ${skipped} 行未通过校验已跳过`)
     }
-
-    if (successCount > 0) {
-      showSuccess(
-        `导入完成：成功 ${successCount} 条${failCount > 0 ? `，失败 ${failCount} 条` : ''}`
-      )
-    }
-    if (errors.length > 0) {
-      showError(
-        `以下科目导入失败：\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n...共 ${errors.length} 条` : ''}`
-      )
-    }
-
-    importDialogVisible.value = false
-    importPreview.value = []
-    await fetchData()
+    closeImportDialog()
   } catch (error) {
     showOperationError('批量导入', error)
+    importUploadRef.value?.clearFiles()
   } finally {
     importing.value = false
   }
+}
+
+async function handleTaskCompleted() {
+  await fetchData()
 }
 
 onMounted(fetchData)
@@ -1369,6 +1610,20 @@ onActivated(() => load())
 .import-preview {
   margin-top: 16px;
 }
+.import-preview-more {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+.import-parsing {
+  margin-top: 12px;
+}
+.import-parsing__text {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
+}
 .import-more-hint {
   text-align: center;
   color: #909399;
@@ -1387,9 +1642,10 @@ onActivated(() => load())
 :deep(.account-table th.el-table__cell) {
   padding: 5px 0 !important;
   background: var(--el-fill-color-light) !important;
-  color: var(--el-text-color-regular);
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--cw-text-primary);
+  font-family: var(--cw-table-header-font-family);
+  font-size: var(--cw-table-header-font-size);
+  font-weight: var(--cw-table-header-font-weight);
 }
 
 :deep(.account-table .el-table__row) {

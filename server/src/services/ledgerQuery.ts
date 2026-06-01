@@ -1,4 +1,9 @@
 import { AUX_LEGACY_COLUMNS } from '../utils/auxLedgerQuery.js'
+import { buildSignedEntryAmountSql } from '../utils/accountBalance.js'
+import {
+  appendAccountScopeCondition,
+  type AccountScopeContext,
+} from './accountAuthorization.js'
 
 type SqlParam = string | number
 
@@ -96,6 +101,7 @@ export function buildLedgerGeneralQuery(filters: {
   accountCodeEnd?: string
   filterTypes?: string[]
   includeUnposted?: boolean
+  accountScope?: AccountScopeContext
 }) {
   // 如果没有指定日期，使用当前年月
   const now = new Date()
@@ -105,8 +111,16 @@ export function buildLedgerGeneralQuery(filters: {
   const startDate = filters.startDate || defaultStartDate
   const endDate = filters.endDate || defaultEndDate
 
-  // 计算本年累计的起始日期（当年1月1日）
-  const yearStartDate = `${new Date(endDate).getFullYear()}-01-01`
+  // FIX-002 / P0-4：分别计算「起始年度年初」和「结束年度年初」
+  // - 期初余额 = 起始年度年初余额 + 起始年度内 [年初, startDate) 的凭证累计
+  // - 期末余额 = 结束年度年初余额 + 结束年度内 [年初, endDate] 的凭证累计
+  // 跨年查询时不能用 endDate 年的 init_balances 去加 startDate 年的凭证（会重复计算）
+  const startDateYear = new Date(startDate).getFullYear()
+  const endDateYear = new Date(endDate).getFullYear()
+  const startDateYearStart = `${startDateYear}-01-01`
+  const endDateYearStart = `${endDateYear}-01-01`
+  // 本年累计的起始日期：endDate 所在年度的 1 月 1 日（中国财务"本年累计"按 endDate 所在年统计）
+  const yearStartDate = endDateYearStart
 
   // 构建凭证状态过滤条件
   const statusCondition = filters.includeUnposted
@@ -138,6 +152,8 @@ export function buildLedgerGeneralQuery(filters: {
     accountConditions.push('a.code <= ?')
     accountParams.push(filters.accountCodeEnd)
   }
+
+  appendAccountScopeCondition(filters.accountScope, 'a.id', accountConditions, accountParams)
 
   // 根据筛选类型构建WHERE子句（支持多选，使用OR连接）
   let havingClause = ''
@@ -184,6 +200,7 @@ export function buildLedgerGeneralQuery(filters: {
                WHERE ve.account_id = a.id
                  AND ve.account_set_id = ?
                  AND ${statusCondition}
+                 AND v.voucher_date >= ?      -- FIX-002：限制在起始年度内
                  AND v.voucher_date < ?),
               0
             ) as init_balance,
@@ -246,6 +263,7 @@ export function buildLedgerGeneralQuery(filters: {
                WHERE ve.account_id = a.id
                  AND ve.account_set_id = ?
                  AND ${statusCondition}
+                 AND v.voucher_date >= ?      -- FIX-002：限制在结束年度内
                  AND v.voucher_date <= ?),
               0
             ) as end_balance
@@ -256,26 +274,36 @@ export function buildLedgerGeneralQuery(filters: {
       ORDER BY account_code
     `,
     params: [
-      filters.accountSetId, // 期初余额查询
-      new Date(endDate).getFullYear(),
-      filters.accountSetId,
-      startDate, // 期初余额计算
+      // FIX-002 / P0-4：期初余额取 startDate 所在年度的 init_balances，
+      // 凭证累加范围 [startDateYearStart, startDate)
+      filters.accountSetId, // buildAccountInitBalanceExpr → account_set_id
+      startDateYear, // buildAccountInitBalanceExpr → year
+      filters.accountSetId, // 凭证子查询 account_set_id
+      startDateYearStart, // voucher_date >= 起始年初
+      startDate, // voucher_date < startDate
+      // 本期借方
       filters.accountSetId,
       startDate,
-      endDate, // 本期借方
+      endDate,
+      // 本期贷方
       filters.accountSetId,
       startDate,
-      endDate, // 本期贷方
+      endDate,
+      // 本年累计借方
       filters.accountSetId,
       yearStartDate,
-      endDate, // 本年累计借方
+      endDate,
+      // 本年累计贷方
       filters.accountSetId,
       yearStartDate,
-      endDate, // 本年累计贷方
-      filters.accountSetId, // 期末余额查询
-      new Date(endDate).getFullYear(),
-      filters.accountSetId,
-      endDate, // 期末余额计算
+      endDate,
+      // FIX-002 / P0-4：期末余额取 endDate 所在年度的 init_balances，
+      // 凭证累加范围 [endDateYearStart, endDate]
+      filters.accountSetId, // buildAccountInitBalanceExpr → account_set_id
+      endDateYear, // buildAccountInitBalanceExpr → year
+      filters.accountSetId, // 凭证子查询 account_set_id
+      endDateYearStart, // voucher_date >= 结束年初
+      endDate, // voucher_date <= endDate
       ...accountParams,
     ],
   }
@@ -285,22 +313,34 @@ export function buildLedgerBalanceQuery(filters: {
   accountSetId: string
   year?: string | number
   period?: string | number
+  accountScope?: AccountScopeContext
 }) {
   const y = Number(filters.year) || new Date().getFullYear()
   const p = Number(filters.period) || new Date().getMonth() + 1
 
+  const accountConditions = ['a.account_set_id = ?', 'a.is_enabled = 1']
+  const accountParams: SqlParam[] = [filters.accountSetId]
+  appendAccountScopeCondition(filters.accountScope, 'a.id', accountConditions, accountParams)
+
   // 期初余额子查询：有辅助明细时只汇总辅助行，避免与科目级期初重复
   const initBalanceSubquery = INIT_BALANCE_GROUP_BY_ACCOUNT_SQL
 
-  // 本期发生额子查询：汇总该科目的所有辅助核算项
+  // FIX-006 / P0-2+P0-3：
+  // 旧实现 SUM(end_balance) WHERE period=? 严重错误 —— account_balances.end_balance
+  // 由 applyVoucherPosting 写入时仅 = 年初 + 本期净额，缺失 1~N-1 期发生额。
+  // 改为动态计算：
+  //   - 本期借/贷：仅本期（period = ?）发生额
+  //   - 累计借/贷：从年初到本期（period <= ?）发生额
+  //   - end_balance = 期初 + 按方向取的累计净额（在外层用 a.direction 计算）
   const currentBalanceSubquery = `
     SELECT
       account_id,
-      SUM(current_debit) as current_debit,
-      SUM(current_credit) as current_credit,
-      SUM(end_balance) as end_balance
+      SUM(CASE WHEN period = ? THEN current_debit ELSE 0 END) as current_debit,
+      SUM(CASE WHEN period = ? THEN current_credit ELSE 0 END) as current_credit,
+      SUM(current_debit) as cum_debit,
+      SUM(current_credit) as cum_credit
     FROM account_balances
-    WHERE year = ? AND period = ? AND account_set_id = ?
+    WHERE year = ? AND period <= ? AND account_set_id = ?
     GROUP BY account_id
   `
 
@@ -315,15 +355,30 @@ export function buildLedgerBalanceQuery(filters: {
           COALESCE(ib.init_balance, 0) as init_balance,
           COALESCE(cb.current_debit, 0) as current_debit,
           COALESCE(cb.current_credit, 0) as current_credit,
-          COALESCE(cb.end_balance, 0) as end_balance
+          CASE WHEN a.direction = 'debit'
+            THEN COALESCE(ib.init_balance, 0) + COALESCE(cb.cum_debit, 0) - COALESCE(cb.cum_credit, 0)
+            ELSE COALESCE(ib.init_balance, 0) + COALESCE(cb.cum_credit, 0) - COALESCE(cb.cum_debit, 0)
+          END as end_balance
         FROM accounts a
         LEFT JOIN (${initBalanceSubquery}) ib ON ib.account_id = a.id
         LEFT JOIN (${currentBalanceSubquery}) cb ON cb.account_id = a.id
-        WHERE a.account_set_id = ? AND a.is_enabled = 1
+        WHERE ${accountConditions.join(' AND ')}
       ) WHERE init_balance != 0 OR current_debit != 0 OR current_credit != 0 OR end_balance != 0
       ORDER BY account_code
     `,
-    params: [y, filters.accountSetId, y, p, filters.accountSetId, filters.accountSetId],
+    params: [
+      // initBalanceSubquery: year, account_set_id
+      y,
+      filters.accountSetId,
+      // currentBalanceSubquery: period (本期借), period (本期贷), year, period (累计上限), account_set_id
+      p,
+      p,
+      y,
+      p,
+      filters.accountSetId,
+      // 外层 accounts
+      ...accountParams,
+    ],
   }
 }
 
@@ -335,6 +390,7 @@ export function buildGeneralLedgerQuery(filters: {
   accountCode?: string
   accountLevel?: number
   includeUnposted?: boolean
+  accountScope?: AccountScopeContext
 }) {
   const y = Number(filters.year) || new Date().getFullYear()
 
@@ -356,6 +412,17 @@ export function buildGeneralLedgerQuery(filters: {
     accountParams.push(filters.accountLevel)
   }
 
+  appendAccountScopeCondition(filters.accountScope, 'a.id', conditions, accountParams)
+
+  const cteConditions = [
+    've.account_set_id = ?',
+    statusCondition,
+    'v.voucher_date >= ?',
+    'v.voucher_date <= ?',
+  ]
+  const cteParams: SqlParam[] = [filters.accountSetId, `${y}-01-01`, `${y}-12-31`]
+  appendAccountScopeCondition(filters.accountScope, 've.account_id', cteConditions, cteParams)
+
   // 构建月份列的输出
   const monthColumns: string[] = []
   for (let month = 1; month <= 12; month++) {
@@ -374,10 +441,7 @@ export function buildGeneralLedgerQuery(filters: {
           SUM(ve.amount) as amount
         FROM voucher_entries ve
         JOIN vouchers v ON v.id = ve.voucher_id
-        WHERE ve.account_set_id = ?
-          AND ${statusCondition}
-          AND v.voucher_date >= ?
-          AND v.voucher_date <= ?
+        WHERE ${cteConditions.join(' AND ')}
         GROUP BY ve.account_id, month, ve.direction
       ),
       account_monthly AS (
@@ -441,9 +505,7 @@ export function buildGeneralLedgerQuery(filters: {
     `,
     params: [
       // monthly_amounts CTE
-      filters.accountSetId,
-      `${y}-01-01`,
-      `${y}-12-31`,
+      ...cteParams,
       // init_balances 期初余额
       filters.accountSetId,
       y,
@@ -471,6 +533,7 @@ export function buildCashJournalQuery(filters: {
   includeUnposted?: boolean
   page: number
   pageSize: number
+  accountScope?: AccountScopeContext
 }) {
   const hasDateRange = Boolean(filters.startDate || filters.endDate)
   const y = Number(filters.year) || new Date().getFullYear()
@@ -500,15 +563,17 @@ export function buildCashJournalQuery(filters: {
   }
 
   if (filters.accountId) {
-    // 查询选中科目及其所有子科目
-    // 使用范围查询替代 LIKE，性能更好
-    conditions.push(`(ve.account_id = ? OR (a.code >= (SELECT code FROM accounts WHERE id = ?) AND a.code < (SELECT code || 'z' FROM accounts WHERE id = ?)))`)
-    params.push(filters.accountId, filters.accountId, filters.accountId)
+    // FIX-023 / P2-26：原 `>= AND < code || 'z'` 范围对非数字编码（含 CJK、'~' 等大于 'z'）不可靠，
+    // 改用 LIKE prefix 匹配，更稳健（SQLite LIKE 对 ASCII 大小写不敏感，但科目编码场景安全）
+    conditions.push(`(ve.account_id = ? OR (a.code LIKE (SELECT code FROM accounts WHERE id = ?) || '%'))`)
+    params.push(filters.accountId, filters.accountId)
   } else if (filters.accountType === 'cash') {
     conditions.push('a.is_cash = 1')
   } else if (filters.accountType === 'bank') {
     conditions.push('a.is_bank = 1')
   }
+
+  appendAccountScopeCondition(filters.accountScope, 'a.id', conditions, params)
 
   // 收支类型筛选
   if (filters.direction) {
@@ -548,17 +613,19 @@ export function buildCashJournalQuery(filters: {
   const initParams: SqlParam[] = [filters.accountSetId]
 
   if (filters.accountId) {
-    initConditions.push(`(ve.account_id = ? OR (a.code >= (SELECT code FROM accounts WHERE id = ?) AND a.code < (SELECT code || 'z' FROM accounts WHERE id = ?)))`)
-    initParams.push(filters.accountId, filters.accountId, filters.accountId)
+    initConditions.push(`(ve.account_id = ? OR (a.code LIKE (SELECT code FROM accounts WHERE id = ?) || '%'))`)
+    initParams.push(filters.accountId, filters.accountId)
   } else if (filters.accountType === 'cash') {
     initConditions.push('a.is_cash = 1')
   } else if (filters.accountType === 'bank') {
     initConditions.push('a.is_bank = 1')
   }
 
+  appendAccountScopeCondition(filters.accountScope, 'a.id', initConditions, initParams)
+
   // 期初：仅汇总科目树下末级，且不做「父科目 id + 子科目编码」双路径匹配，避免重复
   const initAccountFilter = filters.accountId
-    ? `AND (a.code >= (SELECT code FROM accounts WHERE id = ?) AND a.code < (SELECT code || 'z' FROM accounts WHERE id = ?))`
+    ? `AND (a.code LIKE (SELECT code FROM accounts WHERE id = ?) || '%')`
     : filters.accountType === 'cash'
       ? 'AND a.is_cash = 1'
       : filters.accountType === 'bank'
@@ -596,9 +663,11 @@ export function buildCashJournalQuery(filters: {
       ${oppositeAccountFilter}
     `,
     carryAmountSql: `
-      SELECT COALESCE(SUM(CASE WHEN direction = 'debit' THEN amount ELSE -amount END), 0) as carry_amount
+      SELECT COALESCE(SUM(
+        ${buildSignedEntryAmountSql('account_direction', 'direction', 'amount')}
+      ), 0) as carry_amount
       FROM (
-        SELECT ve.direction, ve.amount
+        SELECT ve.direction, ve.amount, a.direction as account_direction
         FROM voucher_entries ve
         JOIN vouchers v ON v.id = ve.voucher_id
         JOIN accounts a ON a.id = ve.account_id
@@ -618,6 +687,7 @@ export function buildCashJournalQuery(filters: {
         v.status as voucher_status,
         a.code as account_code,
         a.name as account_name,
+        a.direction as account_direction,
         ve.summary,
         ve.direction,
         ve.amount,
@@ -640,7 +710,8 @@ export function buildCashJournalQuery(filters: {
     initBalanceParams: [
       filters.accountSetId,
       balanceYear,
-      ...(filters.accountId ? [filters.accountId, filters.accountId] : []),
+      // FIX-023 / P2-26：initAccountFilter 现在用 LIKE 1 个占位符（原 >=/< 是 2 个）
+      ...(filters.accountId ? [filters.accountId] : []),
       ...initParams,
       balanceYearStartDate,
       balanceStartDate,
@@ -671,6 +742,7 @@ export function buildLedgerDetailQuery(filters: {
   includeUnposted?: boolean
   page: number
   pageSize: number
+  accountScope?: AccountScopeContext
 }) {
   const startDateYear = filters.startDate ? new Date(filters.startDate).getFullYear() : undefined
   const y = Number(filters.year) || startDateYear || new Date().getFullYear()
@@ -685,17 +757,22 @@ export function buildLedgerDetailQuery(filters: {
 
   // 科目筛选：优先使用编码范围（父科目汇总），其次使用科目ID（叶子科目）
   if (filters.accountCodeStart && filters.accountCodeEnd) {
-    // 使用子查询获取符合编码范围的所有科目ID
+    const scopeParts: string[] = []
+    const scopeParams: SqlParam[] = []
+    appendAccountScopeCondition(filters.accountScope, 'id', scopeParts, scopeParams)
+    const scopeSql = scopeParts.length > 0 ? ` AND ${scopeParts.join(' AND ')}` : ''
     conditions.push(`ve.account_id IN (
       SELECT id FROM accounts
       WHERE account_set_id = ?
       AND code >= ?
-      AND code <= ?
+      AND code <= ?${scopeSql}
     )`)
-    params.push(filters.accountSetId, filters.accountCodeStart, filters.accountCodeEnd)
+    params.push(filters.accountSetId, filters.accountCodeStart, filters.accountCodeEnd, ...scopeParams)
   } else if (filters.accountId) {
     conditions.push('ve.account_id = ?')
     params.push(filters.accountId)
+  } else {
+    appendAccountScopeCondition(filters.accountScope, 've.account_id', conditions, params)
   }
 
   if (filters.startDate) {
@@ -913,6 +990,7 @@ export function buildChronologicalQuery(filters: {
   auditorName?: string
   page: number
   pageSize: number
+  accountScope?: AccountScopeContext
 }) {
   const hasDateRange = Boolean(filters.startDate || filters.endDate)
   const y = Number(filters.year) || new Date().getFullYear()
@@ -965,6 +1043,8 @@ export function buildChronologicalQuery(filters: {
     conditions.push('v.auditor_name LIKE ?')
     params.push(`%${filters.auditorName}%`)
   }
+
+  appendAccountScopeCondition(filters.accountScope, 've.account_id', conditions, params)
 
   const whereClause = buildWhereClause(conditions)
 
@@ -1072,8 +1152,40 @@ export function supplementMissingParents(
 }
 
 /**
+ * 将子科目带符号余额 rollup 到父科目（init/end 按科目自然方向存储）。
+ * 同方向子科目相加，反方向子科目相减（如应交税费下进项借方与销项贷方）。
+ */
+export function rollupSignedBalanceToParent(
+  childAmount: number,
+  childDirection: string,
+  parentDirection: string
+): number {
+  if (!childAmount) return 0
+  return childDirection === parentDirection ? childAmount : -childAmount
+}
+
+/** 按编码长度规则查找直接上级科目行 */
+export function findDirectParentRow(
+  list: Array<{ account_code: string }>,
+  row: { account_code: string },
+  codeLengths: number[]
+): { account_code: string; direction?: string; init_balance?: number; end_balance?: number; current_debit?: number; current_credit?: number; year_debit?: number; year_credit?: number } | null {
+  const parentCodes = getParentCodes(row.account_code, codeLengths)
+  if (parentCodes.length === 0) return null
+  const directParentCode = parentCodes[parentCodes.length - 1]
+  return list.find(p => p.account_code === directParentCode) ?? null
+}
+
+/**
  * 将子科目金额汇总到父科目
  * 按科目编码长度倒序排序，从最底层子科目开始累加
+ *
+ * 设计意图（FIX-016 评审更正 §P1-20）：
+ * 父科目"首次被访问时清零自身再累加子科目"是**有意为之**的规范化：
+ *   - 中国会计实务要求非末级科目不应直接挂账
+ *   - 如父科目因导入/手工录入存在直接挂账数据（违规但可能），账簿展示时应以子科目合计为准
+ *   - 这样的展示与 SQL 的"按 account_id 精确返回各级数据"一起保持：父行最终 = Σ子科目合计
+ * 测试 `accumulateParentBalances.test.ts` 锁定该规范化行为，不应取消。
  */
 export function accumulateParentBalances(list: any[], codeLengths: number[]): any[] {
   const sortedList = [...list].sort((a, b) => b.account_code.length - a.account_code.length)
@@ -1082,17 +1194,7 @@ export function accumulateParentBalances(list: any[], codeLengths: number[]): an
   const zeroedParents = new Set<string>()
 
   sortedList.forEach(row => {
-    let parent = null
-    let maxPrefixLength = 0
-
-    for (const p of list) {
-      if (p.account_code !== row.account_code &&
-          row.account_code.startsWith(p.account_code) &&
-          p.account_code.length > maxPrefixLength) {
-        parent = p
-        maxPrefixLength = p.account_code.length
-      }
-    }
+    const parent = findDirectParentRow(list, row, codeLengths)
 
     if (parent) {
       // 第一次遇到该父科目时，清零其原有值（避免父科目自身有凭证条目导致重复计算）
@@ -1105,12 +1207,17 @@ export function accumulateParentBalances(list: any[], codeLengths: number[]): an
         parent.year_credit = 0
         parent.end_balance = 0
       }
-      parent.init_balance = (parent.init_balance || 0) + (row.init_balance || 0)
+      const parentDirection = parent.direction || row.direction
+      parent.init_balance =
+        (parent.init_balance || 0) +
+        rollupSignedBalanceToParent(row.init_balance || 0, row.direction, parentDirection)
       parent.current_debit = (parent.current_debit || 0) + (row.current_debit || 0)
       parent.current_credit = (parent.current_credit || 0) + (row.current_credit || 0)
       parent.year_debit = (parent.year_debit || 0) + (row.year_debit || 0)
       parent.year_credit = (parent.year_credit || 0) + (row.year_credit || 0)
-      parent.end_balance = (parent.end_balance || 0) + (row.end_balance || 0)
+      parent.end_balance =
+        (parent.end_balance || 0) +
+        rollupSignedBalanceToParent(row.end_balance || 0, row.direction, parentDirection)
     }
   })
 
@@ -1119,6 +1226,7 @@ export function accumulateParentBalances(list: any[], codeLengths: number[]): an
 
 /**
  * 将子科目金额汇总到父科目（包含12个月度字段的版本，用于总分类账）
+ * 设计意图与 accumulateParentBalances 一致，保留首次清零行为
  */
 export function accumulateParentBalancesWithMonths(list: any[], codeLengths: number[]): any[] {
   const sortedList = [...list].sort((a, b) => b.account_code.length - a.account_code.length)
@@ -1126,17 +1234,7 @@ export function accumulateParentBalancesWithMonths(list: any[], codeLengths: num
   const zeroedParents = new Set<string>()
 
   sortedList.forEach(row => {
-    let parent = null
-    let maxPrefixLength = 0
-
-    for (const p of list) {
-      if (p.account_code !== row.account_code &&
-          row.account_code.startsWith(p.account_code) &&
-          p.account_code.length > maxPrefixLength) {
-        parent = p
-        maxPrefixLength = p.account_code.length
-      }
-    }
+    const parent = findDirectParentRow(list, row, codeLengths)
 
     if (parent) {
       // 第一次遇到该父科目时，清零（避免父科目自身有凭证条目导致重复计算）
@@ -1148,7 +1246,10 @@ export function accumulateParentBalancesWithMonths(list: any[], codeLengths: num
           parent[`month${m}_credit`] = 0
         }
       }
-      parent.init_balance = (parent.init_balance || 0) + (row.init_balance || 0)
+      const parentDirection = parent.direction || row.direction
+      parent.init_balance =
+        (parent.init_balance || 0) +
+        rollupSignedBalanceToParent(row.init_balance || 0, row.direction, parentDirection)
       for (let m = 1; m <= 12; m++) {
         parent[`month${m}_debit`] = (parent[`month${m}_debit`] || 0) + (row[`month${m}_debit`] || 0)
         parent[`month${m}_credit`] = (parent[`month${m}_credit`] || 0) + (row[`month${m}_credit`] || 0)

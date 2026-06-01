@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3'
+import type { AccountScopeContext } from './accountAuthorization.js'
 import { executeTemplateSheets } from './reportTemplateExecutor.js'
 import type { CashFlowReportScope } from './cashFlowIndirectMethod.js'
 
@@ -40,7 +41,8 @@ export function getDynamicCashFlowTotals(
   accountSetId: string,
   year: number,
   period: number,
-  scope: CashFlowReportScope = 'month'
+  scope: CashFlowReportScope = 'month',
+  accountScope?: AccountScopeContext
 ): DynamicCashFlowTotals | null {
   const amountCol = scope === 'ytd' ? YTD_AMOUNT_COL : CURRENT_PERIOD_COL
   const columnLabel = scope === 'ytd' ? '本年累计金额' : '本月金额'
@@ -111,6 +113,7 @@ export function getDynamicCashFlowTotals(
       year,
       period,
       unitName: unitRow?.name || '',
+      accountScope,
     }
   )[0]
 

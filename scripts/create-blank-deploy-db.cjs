@@ -31,6 +31,11 @@ try {
       applied_at TEXT NOT NULL DEFAULT (datetime('now'))
     )
   `)
+  const accountSetColumns = db.prepare('PRAGMA table_info(account_sets)').all()
+  const hasImportSource = accountSetColumns.some(column => column.name === 'import_source')
+  if (!hasImportSource) {
+    db.exec(`ALTER TABLE account_sets ADD COLUMN import_source TEXT DEFAULT 'manual'`)
+  }
   if (existsSync(migrationListPath)) {
     const migrationList = readFileSync(migrationListPath, 'utf8')
     const migrationRe = /version:\s*(\d+),\s*[\r\n\s]*name:\s*['"]([^'"]+)['"]/g
@@ -43,6 +48,16 @@ try {
   }
   db.pragma('wal_checkpoint(TRUNCATE)')
   db.pragma('journal_mode = DELETE')
+  const hasLicenseTable = db
+    .prepare(`SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'license_activation'`)
+    .get()
+  if (hasLicenseTable) {
+    db.prepare('DELETE FROM license_activation').run()
+  }
+  const integrity = db.pragma('integrity_check', { simple: true })
+  if (integrity !== 'ok') {
+    throw new Error(`部署空白库 integrity_check 失败: ${integrity}`)
+  }
 } finally {
   db.close()
 }

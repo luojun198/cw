@@ -60,17 +60,17 @@ export const GOVERNMENT_CASH_FLOW: CashFlowMappingConfig = {
     '财政拨款收到的现金': ['4001'],
     '事业活动收到的除财政拨款以外的现金': ['4101', '4201', '4301', '4401'],
     '经营收入收到的现金': ['4401'],
-    '其他日常活动收到的现金': ['4601', '4701', '4801', '4901'],
+    '其他日常活动收到的现金': ['4601', '4602', '4603', '4604', '4605', '4609', '4701', '4801', '4901'],
   },
   operatingOutflowCodes: {
     '购买商品和接受劳务支付的现金': ['5001', '5201'],
     '支付给职工以及为职工支付的现金': ['5001', '5101'],
     '支付各项税费': ['5801', '5501'],
-    '支付其他日常活动现金': ['5101', '5301', '5401', '5601', '5901'],
+    '支付其他日常活动现金': ['5101', '5301', '5401', '5501', '5601', '5901'],
   },
   investingInflowCodes: {
     '收回投资收到的现金': ['1501', '1511', '1021'],
-    '取得投资收益收到的现金': ['4601', '4701'],
+    '取得投资收益收到的现金': ['4602', '4601', '4701'],
     '处置固定资产和无形资产收回的现金': ['1601', '1701'],
   },
   investingOutflowCodes: {
@@ -84,10 +84,29 @@ export const GOVERNMENT_CASH_FLOW: CashFlowMappingConfig = {
   },
   financingOutflowCodes: {
     '偿还借款支付的现金': ['2001', '2501'],
-    '偿付利息支付的现金': ['5601'],
+    '偿付利息支付的现金': ['5901', '5601'],
   },
 }
 
 export function getCashFlowMappingConfig(standard: StaticReportStandard): CashFlowMappingConfig {
-  return standard === 'small_business' ? SMALL_BUSINESS_CASH_FLOW : GOVERNMENT_CASH_FLOW
+  if (standard === 'small_business') return SMALL_BUSINESS_CASH_FLOW
+  if (standard === 'enterprise') {
+    return {
+      ...SMALL_BUSINESS_CASH_FLOW,
+      standard: 'enterprise',
+      standardName: '新企业会计准则',
+      operatingInflowCodes: {
+        '销售商品和提供劳务收到的现金': ['6001', '6051'],
+        '收到的税费返还': ['2221'],
+        '收到其他与经营活动有关的现金': ['6301'],
+      },
+      operatingOutflowCodes: {
+        '购买商品和接受劳务支付的现金': ['6401', '6402', '6403'],
+        '支付给职工以及为职工支付的现金': ['6601', '6602'],
+        '支付的各项税费': ['6403', '6801'],
+        '支付其他与经营活动有关的现金': ['6603', '6711'],
+      },
+    }
+  }
+  return GOVERNMENT_CASH_FLOW
 }

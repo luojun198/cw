@@ -1,10 +1,21 @@
 <template>
-  <div v-loading="pageLoading" class="page voucher-list-page" element-loading-text="加载凭证类型、科目等数据中...">
+  <div
+    v-loading="pageLoading"
+    class="page voucher-list-page"
+    element-loading-text="加载凭证类型、科目等数据中..."
+  >
     <div class="page-header">
-      <h3>凭证录入</h3>
+      <div class="page-header-title-row">
+        <h3>凭证录入</h3>
+        <DrillDownReturnButton />
+      </div>
       <div class="voucher-toolbar">
         <div class="voucher-toolbar-group voucher-toolbar-group--primary">
-          <el-button type="primary" class="voucher-toolbar-btn voucher-toolbar-btn--hero" @click="openVoucherDialog()">
+          <el-button
+            type="primary"
+            class="voucher-toolbar-btn voucher-toolbar-btn--hero"
+            @click="openVoucherDialog()"
+          >
             <el-icon><Plus /></el-icon>
             新增凭证
           </el-button>
@@ -12,20 +23,35 @@
 
         <div class="voucher-toolbar-group voucher-toolbar-group--create">
           <span class="voucher-toolbar-group-label">录入</span>
-          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handleCopyDraft">
+          <el-button
+            class="voucher-toolbar-btn"
+            plain
+            :disabled="!selectedDraftId"
+            @click="handleCopyDraft"
+          >
             <el-icon><DocumentCopy /></el-icon>复制
           </el-button>
           <el-button class="voucher-toolbar-btn" plain @click="handleImportDraft">
             <el-icon><Upload /></el-icon>引入
           </el-button>
-          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handleInsertDraft">
+          <el-button
+            class="voucher-toolbar-btn"
+            plain
+            :disabled="!selectedDraftId"
+            @click="handleInsertDraft"
+          >
             <el-icon><Bottom /></el-icon>插行
           </el-button>
         </div>
 
         <div class="voucher-toolbar-group voucher-toolbar-group--template">
           <span class="voucher-toolbar-group-label">模版</span>
-          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handleTurnTemplate">
+          <el-button
+            class="voucher-toolbar-btn"
+            plain
+            :disabled="!selectedDraftId"
+            @click="handleTurnTemplate"
+          >
             <el-icon><Collection /></el-icon>转模版
           </el-button>
           <el-button class="voucher-toolbar-btn" plain @click="handleImportTemplate">
@@ -35,36 +61,76 @@
 
         <div class="voucher-toolbar-group voucher-toolbar-group--edit">
           <span class="voucher-toolbar-group-label">维护</span>
-          <el-button class="voucher-toolbar-btn" type="warning" plain :disabled="!selectedDraftId" @click="handleEditDraft">
+          <el-button
+            class="voucher-toolbar-btn"
+            type="warning"
+            plain
+            :disabled="!selectedDraftId"
+            @click="handleEditDraft"
+          >
             <el-icon><Edit /></el-icon>编辑
           </el-button>
-          <el-button class="voucher-toolbar-btn" type="danger" plain :disabled="!selectedDraftId" @click="handleDeleteDraftSelected">
+          <el-button
+            class="voucher-toolbar-btn"
+            type="danger"
+            plain
+            :disabled="!selectedDraftId"
+            @click="handleDeleteDraftSelected"
+          >
             <el-icon><Delete /></el-icon>删除
           </el-button>
         </div>
 
         <div class="voucher-toolbar-group voucher-toolbar-group--print">
           <span class="voucher-toolbar-group-label">输出</span>
-          <el-button class="voucher-toolbar-btn" plain :disabled="!selectedDraftId" @click="handlePrint">
+          <el-button
+            class="voucher-toolbar-btn"
+            plain
+            :disabled="!selectedDraftId"
+            @click="handlePrint"
+          >
             <el-icon><Printer /></el-icon>打印
           </el-button>
           <el-button class="voucher-toolbar-btn" plain @click="handleBatchPrint">
             <el-icon><Printer /></el-icon>批量打印
           </el-button>
-          <el-button class="voucher-toolbar-btn" type="success" plain :loading="exporting" @click="exportDraftData">
+          <el-button
+            class="voucher-toolbar-btn"
+            type="success"
+            plain
+            :loading="exporting"
+            @click="exportDraftData"
+          >
             <el-icon><Download /></el-icon>导出
+          </el-button>
+        </div>
+
+        <div class="voucher-toolbar-group voucher-toolbar-group--tools">
+          <span class="voucher-toolbar-group-label">工具</span>
+          <el-button class="voucher-toolbar-btn" plain @click="renumberDialogVisible = true">
+            <el-icon><Sort /></el-icon>重新排号
+          </el-button>
+          <el-button
+            class="voucher-toolbar-btn"
+            type="danger"
+            plain
+            @click="batchDeleteVisible = true"
+          >
+            <el-icon><Delete /></el-icon>批量删除
           </el-button>
         </div>
       </div>
     </div>
 
     <VoucherDraftList
-      class="voucher-list-main"
       ref="draftListRef"
+      class="voucher-list-main"
       :vouchers="sortedVouchers"
       :loading="draftLoading"
       :sort-config="sortConfig"
       :aux-categories="auxCategories"
+      :voucher-types="voucherTypes"
+      :accounts="accounts"
       :pagination="draftPagination"
       :selected-voucher-id="selectedDraftId"
       @refresh="fetchDraftVouchers"
@@ -73,9 +139,9 @@
       @sort-change="handleSortChange"
       @row-click="handleDraftRowClick"
       @row-dblclick="handleDraftDblclick"
-      @renumber="renumberDialogVisible = true"
-      @batch-delete="batchDeleteVisible = true"
       @page-change="handlePageChange"
+      @filter-change="handleFilterChange"
+      @load-accounts="loadAccounts"
     />
 
     <VoucherBatchDelete
@@ -241,12 +307,18 @@
       :total-debit="totalDebit"
       :total-credit="totalCredit"
       :is-balanced="isBalanced"
-      :aux-items-by-category="auxItemsByCategory"
       :current-entry-aux-categories="currentEntryAuxCategories"
       :is-parent-account="isParentAccount"
       :enable-cash-flow="enableCashFlow"
       :cash-flow-items="cashFlowItems"
       :get-aux-item-names="getAuxItemNames"
+      :get-aux-options="voucherAux.getAuxOptions"
+      :is-aux-select-loading="isAuxSelectLoading"
+      :search-aux-items="voucherAux.searchAuxItems"
+      :on-aux-dropdown-open="voucherAux.onDropdownOpen"
+      :resolve-aux-item-name="voucherAux.resolveAuxItemName"
+      :fetch-next-aux-code="voucherAux.fetchNextAuxCode"
+      :ensure-selected-for-entry="ensureAuxSelectedForEntry"
       :on-account-change="onAccountChange"
       :on-amount-change="onAmountChange"
       :add-entry="addEntry"
@@ -256,6 +328,8 @@
       :update-attachments="updateAttachments"
       :submit-loading="submitLoading"
       :navigation-info="navigationInfo"
+      :account-set-start-date="accountSetStartDate"
+      :duplicate-warnings="duplicateWarnings"
       @queue-upload="queuePendingUploads"
       @remove-queued-upload="removeQueuedUpload"
       @ai-summary="handleAiSummary"
@@ -278,8 +352,11 @@
       :parent-usage="parentUsage"
       :tree-select-data="treeSelectData"
       :get-available-cats="getAvailableCats"
-      :get-aux-items-by-cat="getAuxItemsByCat"
-      :on-aux-cat-change="onAuxCatChange"
+      :get-aux-options="quickAccountAuxSelect.getAuxOptions"
+      :search-aux-items="quickAccountAuxSelect.searchAuxItems"
+      :on-aux-dropdown-open="quickAccountAuxSelect.onDropdownOpen"
+      :is-aux-select-loading="isQuickAccountAuxSelectLoading"
+      :on-aux-cat-change="handleQuickAuxCatChange"
       :add-aux="addAux"
       :remove-aux="removeAux"
       :saving="quickAccountSaving"
@@ -304,6 +381,7 @@ import {
   Bottom,
   Collection,
   Document,
+  Sort,
 } from '@element-plus/icons-vue'
 import dayjs from 'dayjs'
 import request from '@/api/request'
@@ -311,12 +389,14 @@ import { getCashFlowItems } from '@/api/cashFlow'
 import VoucherDraftList from '@/components/voucher/VoucherDraftList.vue'
 import VoucherBatchDelete from '@/components/voucher/VoucherBatchDelete.vue'
 import VoucherEntryForm from '@/components/voucher/VoucherEntryForm.vue'
+import DrillDownReturnButton from '@/components/common/DrillDownReturnButton.vue'
 import AccountDialog from '@/components/base/AccountDialog.vue'
 import PrintDialog from '@/components/print/PrintDialog.vue'
 import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
 import { useVoucherForm } from '@/composables/useVoucherForm'
 import { useAuxiliaryAccounting } from '@/composables/useAuxiliaryAccounting'
-import { useAccountForm } from '@/composables/useAccountForm'
+import { useVoucherAuxItems } from '@/composables/useVoucherAuxItems'
+import { useAccountForm, createFlatAuxLookupRefs } from '@/composables/useAccountForm'
 import { useAccountTree } from '@/composables/useAccountTree'
 import {
   showSuccess,
@@ -331,11 +411,14 @@ import { useDeleteConfirm } from '@/composables/useConfirm'
 import { useKeyboardShortcuts, commonShortcuts } from '@/composables/useKeyboardShortcuts'
 import { useOperationHistory } from '@/composables/useOperationHistory'
 import { performanceMonitor } from '@/utils/performanceMonitor'
+import { compareVoucherTypeCode } from '@/utils/voucherTypeSort'
 import { exportVouchersToExcel, fetchAllVouchers } from '@/utils/voucherExport'
 import { useSystemParamsStore } from '@/stores/systemParams'
 import { useUserStore } from '@/stores/user'
 import { accountNeedsCashFlowItem } from '@/utils/accountCashFlow'
 import { useBaseDataStore } from '@/stores/baseData'
+import { buildEntryKey, useVoucherModalReturnStore } from '@/stores/voucherModalReturn'
+import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 
 const baseDataStore = useBaseDataStore()
 const voucherTypes = computed(() => baseDataStore.voucherTypes)
@@ -355,12 +438,33 @@ const pageLoading = ref(false)
 const submitLoading = ref(false)
 const batchDeleteVisible = ref(false)
 const printDialogVisible = ref(false)
-const printVoucherIds = ref<number[]>([])
+const printVoucherIds = ref<Array<string | number>>([])
+
+// 获取当月日期范围
+function getCurrentMonthRange() {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = today.getMonth()
+  const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
+  const lastDay = new Date(year, month + 1, 0).getDate()
+  const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  return [startDate, endDate]
+}
+
+const draftFilters = ref({
+  keyword: '',
+  dateRange: getCurrentMonthRange(),
+  voucherTypeIds: [],
+  accountIds: [],
+  minAmount: '',
+  maxAmount: '',
+})
 const systemParamsStore = useSystemParamsStore()
 const userStore = useUserStore()
 const directPrint = computed(() => systemParamsStore.directPrint)
 const enableCashFlow = computed(() => systemParamsStore.enableCashFlow)
 const cashFlowItems = ref<Array<{ code: string; name: string }>>([])
+const accountSetStartDate = ref('')
 const batchPrintVisible = ref(false)
 const batchPrintDateRange = ref<string[]>([])
 const batchPrintVoucherTypeIds = ref<string[]>([])
@@ -453,11 +557,10 @@ function handlePrint() {
   }
 }
 
-
 // 在编辑对话框内打印当前凭证
 function handlePrintCurrent() {
   if (form.value.id) {
-    printVoucherIds.value = [Number(form.value.id)]
+    printVoucherIds.value = [form.value.id]
     printDialogVisible.value = true
   }
 }
@@ -671,10 +774,14 @@ async function handleTemplateConfirm() {
         for (const cat of auxCategories.value) {
           const itemId = e[`_${cat.code}_id`]
           if (itemId) {
-            const item = auxItems.value.find((i: any) => i.id === itemId)
+            const item =
+              voucherAux.getAuxItemFromCache(cat.id, itemId) ||
+              (e[`_${cat.code}_name`]
+                ? { id: itemId, name: e[`_${cat.code}_name`] }
+                : null)
             if (item) {
               auxData[cat.code] = {
-                id: item.id,
+                id: itemId,
                 name: item.name,
               }
             }
@@ -871,11 +978,16 @@ const sortedVouchers = computed(() => {
   })
 
   list.sort((a, b) => {
-    // 1. 主排序：用户选择的字段
+    // 1. 凭证类型编码（始终升序，与后端 ORDER BY 一致）
+    const aTypeCode = voucherTypeCodeMap.get(a.voucher_type_id) || ''
+    const bTypeCode = voucherTypeCodeMap.get(b.voucher_type_id) || ''
+    const typeCompare = compareVoucherTypeCode(aTypeCode, bTypeCode)
+    if (typeCompare !== 0) return typeCompare
+
+    // 2. 用户选择的排序字段
     let aVal = a[field]
     let bVal = b[field]
 
-    // 凭证号特殊处理：提取数字部分比较
     if (field === 'voucher_no') {
       aVal = extractVoucherSeq(aVal)
       bVal = extractVoucherSeq(bVal)
@@ -884,14 +996,7 @@ const sortedVouchers = computed(() => {
     if (aVal < bVal) return order === 'asc' ? -1 : 1
     if (aVal > bVal) return order === 'asc' ? 1 : -1
 
-    // 2. 次要排序：凭证类型编码（主排序相同时）
-    const aTypeCode = voucherTypeCodeMap.get(a.voucher_type_id) || ''
-    const bTypeCode = voucherTypeCodeMap.get(b.voucher_type_id) || ''
-
-    if (aTypeCode < bTypeCode) return -1
-    if (aTypeCode > bTypeCode) return 1
-
-    // 3. 第三排序：凭证号（如果主排序不是凭证号）
+    // 3. 凭证号兜底
     if (field !== 'voucher_no') {
       const aSeq = extractVoucherSeq(a.voucher_no)
       const bSeq = extractVoucherSeq(b.voucher_no)
@@ -942,30 +1047,32 @@ const {
   ensureAuxFields,
 } = useVoucherForm(auxCategories)
 
+const voucherAux = useVoucherAuxItems()
+
 const {
-  auxItemsByCategory,
   currentEntryAuxCategories,
   isParentAccount,
   getAuxItemNames,
   onAccountChange,
   onAmountChange,
   getAuxCategoryIds,
-} = useAuxiliaryAccounting(accounts, auxCategories, auxItems, currentEntry)
+} = useAuxiliaryAccounting(accounts, auxCategories, currentEntry)
 
 // 快速新增科目
+const quickAccountAuxSelect = useVoucherAuxItems()
+
 const tableRefForTree = ref<any>(null)
 const {
   form: accountForm,
   parentUsage,
   getAvailableCats,
-  getAuxItemsByCat,
   onAuxCatChange,
   addAux,
   removeAux,
   onParentChange,
   createAddForm,
   buildSavePayload,
-} = useAccountForm(auxCategories, auxItems)
+} = useAccountForm(auxCategories, createFlatAuxLookupRefs(auxItems))
 const {
   treeData,
   getTreeSelectData,
@@ -978,6 +1085,17 @@ const quickAccountSaving = ref(false)
 
 function handleQuickParentChange(parentId: string) {
   onParentChange(parentId, treeData.value, treeFlattenRows)
+}
+
+function isQuickAccountAuxSelectLoading(catId: string) {
+  return !!quickAccountAuxSelect.loadingByCategory.value[catId]
+}
+
+function handleQuickAuxCatChange(item: any, val: string) {
+  onAuxCatChange(item, val)
+  if (item.cat_id && item.item_id) {
+    void quickAccountAuxSelect.ensureSelectedItems(item.cat_id, [item.item_id])
+  }
 }
 
 // 操作历史记录
@@ -1057,7 +1175,10 @@ async function uploadQueuedAttachments(voucherId: string) {
   }
 }
 
-async function prepareNewVoucherForm(preserve?: { voucher_date?: string; voucher_type_id?: string }) {
+async function prepareNewVoucherForm(preserve?: {
+  voucher_date?: string
+  voucher_type_id?: string
+}) {
   const preservedDate = preserve?.voucher_date ?? form.value.voucher_date
   const preservedTypeId = preserve?.voucher_type_id ?? form.value.voucher_type_id
   dialogMode.value = 'add'
@@ -1073,7 +1194,11 @@ async function prepareNewVoucherForm(preserve?: { voucher_date?: string; voucher
   form.value.voucher_no = voucherNo
 }
 
-async function openVoucherDialog(mode: 'add' | 'edit' | 'insert' = 'add', voucher?: any, index?: number) {
+async function openVoucherDialog(
+  mode: 'add' | 'edit' | 'insert' = 'add',
+  voucher?: any,
+  index?: number
+) {
   dialogMode.value = mode
   if (mode === 'add' || mode === 'insert' || !voucher) {
     if (mode === 'add') {
@@ -1187,6 +1312,8 @@ function handleSortChange(config: { field: string; order: string }) {
     | 'created_at'
     | 'updated_at'
   sortConfig.value.order = config.order as 'asc' | 'desc'
+  draftPagination.value.page = 1
+  void fetchDraftVouchers()
 }
 
 // 复制当前凭证
@@ -1194,18 +1321,28 @@ function handleClearCurrentEntry() {
   currentEntry.value = null
 }
 
-async function handleAddAuxItem(item: { id: string; name: string; type: string }, catCode: string) {
-  // 刷新辅助项目缓存
-  await baseDataStore.loadAuxItems(true)
-  // 自动选中新建的项目
+function handleAddAuxItem(item: { id: string; name: string; type: string }, catCode: string) {
+  voucherAux.cacheAuxItem(item.type, item)
   if (currentEntry.value) {
     currentEntry.value[`_${catCode}_id`] = item.id
+    currentEntry.value[`_${catCode}_name`] = item.name
   }
 }
 
-function handleQuickCreateAccount(row: any) {
+function isAuxSelectLoading(catId: string) {
+  return !!voucherAux.loadingByCategory.value[catId]
+}
+
+function ensureAuxSelectedForEntry(entry: any) {
+  return voucherAux.ensureSelectedForEntry(entry, currentEntryAuxCategories.value)
+}
+
+async function handleQuickCreateAccount(row: any) {
   quickAddRow.value = row
   accountForm.value = createAddForm()
+  if (!baseDataStore.auxItemsLoaded) {
+    await baseDataStore.loadAuxItems()
+  }
   quickAddAccountVisible.value = true
 }
 
@@ -1308,7 +1445,7 @@ async function handleSubmit(options?: { keepOpen?: boolean }) {
       const category = auxCategories.value.find(cat => cat.id === categoryId)
       if (!category || !entry[`_${category.code}_id`]) continue
       const requiredFields = (category.fields || []).filter(
-        (f: any) => f.is_enabled !== 0 && f.required_in_voucher
+        (f: any) => f.is_enabled !== 0 && f.show_in_voucher && f.required_in_voucher
       )
       for (const field of requiredFields) {
         const fvKey = `_${category.code}_fv_${field.field_key}`
@@ -1361,13 +1498,16 @@ async function handleSubmit(options?: { keepOpen?: boolean }) {
       addRecord('update', '凭证录入', `修改凭证：${form.value.voucher_date}`)
     } else {
       // 新增模式
-      const created = await request.post<{ id: string; voucherNo: string }>(
+      const created = await request.post<{ id: string; voucherNo: string; warning?: string }>(
         '/voucher/vouchers',
         payload,
         saveRequestConfig
       )
       const createdVoucherId = created.data?.id
       showSuccess('凭证保存成功')
+      if (created.data?.warning) {
+        showWarning(created.data.warning)
+      }
       addRecord('create', '凭证录入', `新增凭证：${form.value.voucher_date}`)
       if (createdVoucherId) {
         await uploadQueuedAttachments(createdVoucherId)
@@ -1424,23 +1564,88 @@ async function handleSubmitAndAdd() {
   await handleSubmit({ keepOpen: true })
 }
 
+const duplicateWarnings = computed(() => {
+  const seen = new Map<string, string>()
+  const warnings: string[] = []
+  for (const entry of form.value.entries) {
+    if (!entry.account_id) continue
+    const auxParts: string[] = []
+    const deptId = (entry as any).dept_id
+    const projectId = (entry as any).project_id
+    const supplierId = (entry as any).supplier_id
+    const personId = (entry as any).person_id
+    const funcClassId = (entry as any).func_class_id
+    if (deptId) auxParts.push(`部门:${deptId}`)
+    if (projectId) auxParts.push(`项目:${projectId}`)
+    if (supplierId) auxParts.push(`供应商:${supplierId}`)
+    if (personId) auxParts.push(`个人:${personId}`)
+    if (funcClassId) auxParts.push(`功能:${funcClassId}`)
+
+    const direction =
+      (entry.debit_amount || 0) > 0 ? '借方' : (entry.credit_amount || 0) > 0 ? '贷方' : ''
+    const key = `${entry.account_id}|${direction}|${auxParts.join('|')}`
+    if (!direction) continue
+
+    const existing = seen.get(key)
+    if (existing) {
+      warnings.push(`科目"${entry.account_name}"${existing}出现了重复（${direction}）`)
+    } else {
+      seen.set(key, auxParts.length > 0 ? `[${auxParts.join(', ')}]` : '')
+    }
+  }
+  return warnings
+})
+
 async function fetchDraftVouchers() {
   draftLoading.value = true
   try {
     await performanceMonitor.measure('fetchDraftVouchers', async () => {
-      const res = await request.get<any>('/voucher/vouchers', {
-        params: {
-          status: 'draft',
-          page: draftPagination.value.page,
-          pageSize: draftPagination.value.pageSize,
-        },
-      })
+      const params: any = {
+        status: 'draft',
+        page: draftPagination.value.page,
+        pageSize: draftPagination.value.pageSize,
+        sortField: sortConfig.value.field,
+        sortOrder: sortConfig.value.order,
+      }
+
+      // 添加筛选条件
+      if (draftFilters.value.keyword) {
+        params.keyword = draftFilters.value.keyword
+      }
+      if (draftFilters.value.dateRange?.length === 2) {
+        params.start_date = draftFilters.value.dateRange[0]
+        params.end_date = draftFilters.value.dateRange[1]
+      }
+      if (draftFilters.value.voucherTypeIds?.length > 0) {
+        params.voucher_type_ids = draftFilters.value.voucherTypeIds.join(',')
+      }
+      if (draftFilters.value.accountIds?.length > 0) {
+        params.account_ids = draftFilters.value.accountIds.join(',')
+      }
+      if (draftFilters.value.minAmount) {
+        params.min_amount = draftFilters.value.minAmount
+      }
+      if (draftFilters.value.maxAmount) {
+        params.max_amount = draftFilters.value.maxAmount
+      }
+
+      const res = await request.get<any>('/voucher/vouchers', { params })
       draftVouchers.value = res.data?.list || res.data || []
       draftPagination.value.total = res.data?.total || 0
     })
   } finally {
     draftLoading.value = false
   }
+}
+
+function handleFilterChange(filters: any) {
+  draftFilters.value = filters
+  draftPagination.value.page = 1
+  fetchDraftVouchers()
+}
+
+async function loadAccounts() {
+  await baseDataStore.loadAccounts()
 }
 
 function handlePageChange(page: number, pageSize: number) {
@@ -1482,13 +1687,11 @@ async function handleRenumber() {
   }
 }
 
-function cashFlowItemsFromAux(): Array<{ code: string; name: string }> {
+async function cashFlowItemsFromAux(): Promise<Array<{ code: string; name: string }>> {
   const cat = auxCategories.value.find(c => c.code === 'cash_flow')
   if (!cat) return []
-  const catId = String(cat.id)
-  return auxItems.value
-    .filter(i => String(i.type) === catId && i.status === 'active')
-    .map(i => ({ code: i.code, name: i.name }))
+  const list = await voucherAux.fetchAuxItems(cat.id, { limit: 500 })
+  return list.map(i => ({ code: i.code || '', name: i.name }))
 }
 
 async function loadCashFlowItems() {
@@ -1503,7 +1706,7 @@ async function loadCashFlowItems() {
       name: item.name,
     }))
     if (items.length === 0) {
-      items = cashFlowItemsFromAux()
+      items = await cashFlowItemsFromAux()
     }
     cashFlowItems.value = items
   } catch {
@@ -1526,12 +1729,25 @@ async function fetchOptions(force = false) {
       baseDataStore.loadVoucherTypes(force),
       baseDataStore.loadAccounts(force),
       baseDataStore.loadAuxCategories(force),
-      baseDataStore.loadAuxItems(force),
     ])
     await loadCashFlowItems()
+    await loadAccountSetStartDate()
     // 加载完辅助核算类别后，为现有分录补充动态字段
     ensureAuxFields()
   })
+}
+
+async function loadAccountSetStartDate() {
+  try {
+    const res = await request.get<any[]>('/system/account-sets')
+    const sets = res.data || []
+    const current = sets.find((s: any) => s.id === userStore.accountSetId)
+    if (current?.start_date) {
+      accountSetStartDate.value = String(current.start_date)
+    }
+  } catch {
+    // 获取失败时不阻塞
+  }
 }
 
 const route = useRoute()
@@ -1561,13 +1777,56 @@ async function openEditVoucherFromRoute(voucherId: string) {
   openingEditFromRoute = true
   try {
     if (route.query.editVoucherId) {
-      router.replace({ query: {} })
+      const nextQuery: Record<string, string> = {}
+      if (route.query.from === 'drill') nextQuery.from = 'drill'
+      router.replace({ path: route.path, query: nextQuery })
     }
     await loadVoucherForEditFromRoute(voucherId)
   } finally {
     openingEditFromRoute = false
   }
 }
+
+function findEntryByKey(key?: string) {
+  if (!key) return null
+  for (const [index, entry] of form.value.entries.entries()) {
+    if (buildEntryKey(entry, index) === key) return entry
+  }
+  if (key.startsWith('acc:')) {
+    const accId = key.slice(4)
+    return form.value.entries.find(e => e.account_id === accId) || null
+  }
+  if (key.startsWith('idx:')) {
+    const index = Number(key.split(':')[1])
+    if (Number.isFinite(index) && form.value.entries[index]) {
+      return form.value.entries[index]
+    }
+  }
+  return null
+}
+
+async function restoreVoucherModal(voucherId: string, options?: { currentEntryKey?: string }) {
+  try {
+    const res = await request.get<any>(`/voucher/vouchers/${voucherId}`)
+    const voucher = res.data
+    if (!voucher) {
+      showWarning('凭证不存在')
+      return
+    }
+    if (voucher.status !== 'draft') {
+      showWarning('仅草稿凭证可编辑')
+      return
+    }
+    await openVoucherDialog('edit', voucher)
+    await nextTick()
+    const entry = findEntryByKey(options?.currentEntryKey)
+    if (entry) setCurrentEntry(entry)
+  } catch (error) {
+    showOperationError('恢复凭证', error)
+  }
+}
+
+const { tryRestoreVoucherModal } = useVoucherModalRestore(undefined, restoreVoucherModal)
 
 async function loadVoucherForEditFromRoute(voucherId: string) {
   try {
@@ -1597,6 +1856,8 @@ async function bootstrapEntryPage(forceOptions = false) {
     await fetchOptions(forceOptions)
     if (editId) {
       await openEditVoucherFromRoute(editId)
+    } else {
+      await tryRestoreVoucherModal()
     }
     await fetchDraftVouchers()
   } finally {
@@ -1667,7 +1928,7 @@ async function getNextVoucherNo(voucherTypeId: string, voucherDate: string) {
   } catch {
     return {
       effectiveTypeId: voucherTypeId,
-      voucherNo: '1',
+      voucherNo: '',
     }
   }
 }

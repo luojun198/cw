@@ -1,5 +1,6 @@
 import { getBalance, getPeriodSum, getPeriodRangeSum, getPeriodRangeSumExcludeTransfer, type BalanceQueryDb } from './reportBalance.js'
 import { getCashFlowAmount } from './cashFlowAmount.js'
+import type { AccountScopeContext } from './accountAuthorization.js'
 import type { Database } from 'better-sqlite3'
 
 type ExecuteContext = {
@@ -8,6 +9,7 @@ type ExecuteContext = {
   year: number
   period: number
   unitName?: string
+  accountScope?: AccountScopeContext
 }
 
 type ResolvedPeriodRange = {
@@ -212,7 +214,8 @@ function getSideBalance(
     context.accountSetId,
     accountCode,
     year,
-    Number(period)
+    Number(period),
+    context.accountScope
   )
 
   if (side === 'debit') {
@@ -350,12 +353,20 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext, cell
           context.accountSetId,
           accountCode,
           resolvedPeriod.year,
-          resolvedPeriod.period
+          resolvedPeriod.period,
+          context.accountScope
         )
         break
       }
       case 'nc': {
-        result = getBalance(context.db, context.accountSetId, accountCode, context.year, 0)
+        result = getBalance(
+          context.db,
+          context.accountSetId,
+          accountCode,
+          context.year,
+          0,
+          context.accountScope
+        )
         break
       }
       case 'df': {
@@ -364,7 +375,8 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext, cell
           context.accountSetId,
           accountCode,
           resolvedPeriod.year,
-          resolvedPeriod.period
+          resolvedPeriod.period,
+          context.accountScope
         )
         result = sum.credit
         break
@@ -375,7 +387,8 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext, cell
           context.accountSetId,
           accountCode,
           resolvedPeriod.year,
-          resolvedPeriod.period
+          resolvedPeriod.period,
+          context.accountScope
         )
         result = sum.debit
         break
@@ -415,7 +428,8 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext, cell
           accountCode,
           range.year,
           range.fromPeriod,
-          range.toPeriod
+          range.toPeriod,
+          context.accountScope
         )
         const direction = getAccountDirection(context.db, context.accountSetId, accountCode)
         result = direction === 'debit'
@@ -436,7 +450,8 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext, cell
           accountCode,
           range.year,
           range.fromPeriod,
-          range.toPeriod
+          range.toPeriod,
+          context.accountScope
         )
         result = name === 'jqj' ? rangeSum.debit : rangeSum.credit
         break
@@ -453,7 +468,8 @@ function applyFormulaFunctions(expression: string, context: ExecuteContext, cell
           accountCode,
           range.year,
           range.fromPeriod,
-          range.toPeriod
+          range.toPeriod,
+          context.accountScope
         )
         break
       }

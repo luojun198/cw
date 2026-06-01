@@ -73,7 +73,7 @@ import { useUserStore } from '@/stores/user'
 
 interface Props {
   modelValue: boolean
-  voucherIds?: number[]
+  voucherIds?: Array<string | number>
   mode?: 'single' | 'batch'
   autoPrint?: boolean
 }

@@ -16,9 +16,7 @@
 }
 
 .account-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  /* 布局见 common.css .page-header；此处仅保留模块间距 */
   margin-bottom: 20px;
 }
 
@@ -38,10 +36,11 @@
 
 .account-tree-table th.el-table__cell {
   background: linear-gradient(to bottom, var(--gray-100) 0%, var(--gray-200) 100%) !important;
-  font-weight: 600 !important;
-  font-size: 12px !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.05em !important;
+  font-family: var(--cw-table-header-font-family) !important;
+  font-weight: var(--cw-table-header-font-weight) !important;
+  font-size: var(--cw-table-header-font-size) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
 }
 
 .account-tree-table .el-tree-node__content {
@@ -140,9 +139,7 @@
 }
 
 .project-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
+  /* 布局见 common.css .page-header 及 Project.vue scoped；此处仅保留模块间距 */
   margin-bottom: 20px;
 }
 

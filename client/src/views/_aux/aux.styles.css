@@ -1,0 +1,83 @@
+/* ========== Aux Module - Apple Style ========== */
+/* 辅助核算模块 - 苹果设计风格 */
+
+.aux-page {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 96px);
+  background: var(--gray-100);
+}
+
+.aux-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 20px;
+}
+
+.aux-title {
+  font-family: var(--font-display);
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.aux-table {
+  flex: 1;
+  min-height: 0;
+  border-radius: var(--radius-xl) !important;
+  overflow: hidden !important;
+}
+
+.aux-table th.el-table__cell {
+  background: linear-gradient(to bottom, var(--gray-100) 0%, var(--gray-200) 100%) !important;
+  font-family: var(--cw-table-header-font-family) !important;
+  font-weight: var(--cw-table-header-font-weight) !important;
+  font-size: var(--cw-table-header-font-size) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+}
+
+/* 辅助核算类别 */
+.aux-category {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.aux-category--project {
+  background: rgba(0, 122, 255, 0.12);
+  color: var(--apple-blue);
+}
+
+.aux-category--dept {
+  background: rgba(255, 149, 0, 0.12);
+  color: var(--apple-orange);
+}
+
+.aux-category--person {
+  background: rgba(175, 82, 222, 0.12);
+  color: var(--apple-purple);
+}
+
+.aux-category--supplier {
+  background: rgba(52, 199, 89, 0.12);
+  color: var(--apple-green);
+}
+
+.aux-category--funcclass {
+  background: rgba(255, 45, 85, 0.12);
+  color: var(--apple-pink);
+}
+
+/* 响应式 */
+@media (max-width: 768px) {
+  .aux-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
+  }
+}

@@ -121,7 +121,7 @@ describe('resolveTemplateFilePath', () => {
     }
   })
 
-  it('导出时应忽略数据库中超出模板列范围的单元格，并裁剪工作表引用范围', async () => {
+  it('导出时应忽略数据库中超出模板列范围的单元格', async () => {
     const templatePath = resolve(process.cwd(), '..', '标准模版', '行政事业单位', '收入费用表.xlsx')
     if (!existsSync(templatePath)) return
 
@@ -183,7 +183,9 @@ describe('resolveTemplateFilePath', () => {
 
       const exported = xlsx.read(result.buffer, { type: 'buffer' })
       const sheet = exported.Sheets[exported.SheetNames[0]]
-      expect(sheet['!ref']).toMatch(/^A1:C/i)
+      // 数据库中 D6 / G6 不在模板内容区域，不应被回填到导出文件。
+      // 注：维度（!ref）的裁剪已移至导入端净化；此用例直接挂载未净化模板，
+      // 故不再断言 !ref；模板维度的整体净化由 sanitize-templates 脚本承担。
       expect(sheet['D6']).toBeUndefined()
       expect(sheet['G6']).toBeUndefined()
     } finally {

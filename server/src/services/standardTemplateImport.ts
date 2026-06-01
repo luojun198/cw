@@ -5,6 +5,7 @@ import xlsx from 'xlsx'
 import ExcelJS from 'exceljs'
 import { isImportableExcelFileName } from '../utils/reportTemplateFiles.js'
 import { saveReportTemplateExcelSource } from './reportTemplatePersistence.js'
+import { ensureDynamicReportSchema } from '../db/ensureDynamicReportSchema.js'
 
 interface ExcelFile {
   name: string // 报表名称（文件名去除扩展名）
@@ -495,6 +496,7 @@ export async function importExcelReportsFromTemplate(
   accountSetId: string,
   excelFiles: ExcelFile[]
 ): Promise<ReportImportStats> {
+  ensureDynamicReportSchema(db)
   console.log('[Excel导入] 开始批量导入')
   console.log('[Excel导入] 账套ID:', accountSetId)
   const importableFiles = excelFiles.filter(file => {

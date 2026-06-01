@@ -12,13 +12,38 @@ export const AUX_LEGACY_COLUMNS: Record<string, { id: string; name: string }> = 
   func_class: { id: 'func_class_id', name: 'func_class_name' },
 }
 
+/** SQLite JSON 路径：键含 UUID/连字符时用引号包裹 */
+export function jsonAuxPathForStorageKey(storageKey: string, field: 'id' | 'name' | 'field_values') {
+  if (/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(storageKey)) {
+    return `json_extract(ve.aux_data, '$.${storageKey}.${field}')`
+  }
+  const escaped = storageKey.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+  return `json_extract(ve.aux_data, '$."${escaped}".${field}')`
+}
+
 export function jsonAuxPath(categoryCode: string, field: 'id' | 'name' | 'field_values') {
-  return `json_extract(ve.aux_data, '$.${categoryCode}.${field}')`
+  return jsonAuxPathForStorageKey(categoryCode, field)
 }
 
 /** json_extract 已返回去引号的文本，无需 json_unquote（部分环境未编译该函数） */
 export function jsonAuxPathUnquoted(categoryCode: string, field: 'id' | 'name') {
-  return jsonAuxPath(categoryCode, field)
+  return jsonAuxPathForStorageKey(categoryCode, field)
+}
+
+export type AuxMatchOptions = {
+  itemCodes?: string[]
+  /** 凭证 aux_data 可能以类别 UUID 为键（与 code 并存） */
+  categoryId?: string
+  /** json.id 也可能存项目编码（历史/导入数据） */
+  matchItemCodesInJsonId?: boolean
+}
+
+function auxDataStorageKeys(categoryCode: string, categoryId?: string): string[] {
+  const keys = [categoryCode]
+  if (categoryId && categoryId !== categoryCode) {
+    keys.push(categoryId)
+  }
+  return keys
 }
 
 /**
@@ -28,14 +53,25 @@ export function appendAuxItemMatchParams(
   target: unknown[],
   categoryCode: string,
   itemIds: string[],
-  options?: { itemCodes?: string[] }
+  options?: AuxMatchOptions
 ) {
-  target.push(...itemIds)
+  const keys = auxDataStorageKeys(categoryCode, options?.categoryId)
+  for (let i = 0; i < keys.length; i++) {
+    target.push(...itemIds)
+  }
+
+  const codes = options?.itemCodes?.filter(Boolean) || []
+  if (options?.matchItemCodesInJsonId && codes.length > 0) {
+    for (let i = 0; i < keys.length; i++) {
+      target.push(...codes)
+    }
+  }
+
   if (AUX_LEGACY_COLUMNS[categoryCode]) {
     target.push(...itemIds)
   }
-  if (categoryCode === 'cash_flow' && options?.itemCodes?.length) {
-    target.push(...options.itemCodes)
+  if (categoryCode === 'cash_flow' && codes.length > 0) {
+    target.push(...codes)
   }
 }
 
@@ -43,17 +79,29 @@ export function appendAuxItemMatchParams(
 export function buildAuxItemMatchCondition(
   categoryCode: string,
   itemIdsPlaceholder: string,
-  options?: { itemCodes?: string[] }
+  options?: AuxMatchOptions
 ): string {
-  const parts: string[] = [`${jsonAuxPathUnquoted(categoryCode, 'id')} IN (${itemIdsPlaceholder})`]
+  const parts: string[] = []
+  const keys = auxDataStorageKeys(categoryCode, options?.categoryId)
+  for (const key of keys) {
+    parts.push(`${jsonAuxPathForStorageKey(key, 'id')} IN (${itemIdsPlaceholder})`)
+  }
+
+  const codes = options?.itemCodes?.filter(Boolean) || []
+  if (options?.matchItemCodesInJsonId && codes.length > 0) {
+    const codePh = codes.map(() => '?').join(',')
+    for (const key of keys) {
+      parts.push(`${jsonAuxPathForStorageKey(key, 'id')} IN (${codePh})`)
+    }
+  }
 
   const legacy = AUX_LEGACY_COLUMNS[categoryCode]
   if (legacy) {
     parts.push(`ve.${legacy.id} IN (${itemIdsPlaceholder})`)
   }
 
-  if (categoryCode === 'cash_flow' && options?.itemCodes?.length) {
-    const codePh = options.itemCodes.map(() => '?').join(',')
+  if (categoryCode === 'cash_flow' && codes.length > 0) {
+    const codePh = codes.map(() => '?').join(',')
     parts.push(`ve.cash_flow_code IN (${codePh})`)
   }
 
@@ -61,32 +109,55 @@ export function buildAuxItemMatchCondition(
 }
 
 /** SELECT：优先 aux_data，回退固定列 */
-export function buildAuxIdSelect(categoryCode: string) {
-  const jsonId = jsonAuxPathUnquoted(categoryCode, 'id')
+export function buildAuxIdSelect(categoryCode: string, categoryId?: string) {
+  const parts: string[] = []
+  for (const key of auxDataStorageKeys(categoryCode, categoryId)) {
+    parts.push(jsonAuxPathForStorageKey(key, 'id'))
+  }
   const legacy = AUX_LEGACY_COLUMNS[categoryCode]
   if (legacy) {
-    return `COALESCE(${jsonId}, ve.${legacy.id})`
+    parts.push(`ve.${legacy.id}`)
   }
   if (categoryCode === 'cash_flow') {
-    return `COALESCE(${jsonId}, ve.cash_flow_code)`
+    parts.push('ve.cash_flow_code')
   }
-  return jsonId
+  return parts.length === 1 ? parts[0] : `COALESCE(${parts.join(', ')})`
 }
 
-export function buildAuxNameSelect(categoryCode: string) {
-  const jsonName = jsonAuxPathUnquoted(categoryCode, 'name')
+export function buildAuxNameSelect(categoryCode: string, categoryId?: string) {
+  const parts: string[] = []
+  for (const key of auxDataStorageKeys(categoryCode, categoryId)) {
+    parts.push(jsonAuxPathForStorageKey(key, 'name'))
+  }
   const legacy = AUX_LEGACY_COLUMNS[categoryCode]
   if (legacy) {
-    return `COALESCE(${jsonName}, ve.${legacy.name})`
+    parts.push(`ve.${legacy.name}`)
   }
   if (categoryCode === 'cash_flow') {
-    return `COALESCE(${jsonName}, ve.cash_flow_name)`
+    parts.push('ve.cash_flow_name')
   }
-  return jsonName
+  return parts.length === 1 ? parts[0] : `COALESCE(${parts.join(', ')})`
 }
 
-export function buildAuxFieldValuesSelect(categoryCode: string) {
-  return jsonAuxPath(categoryCode, 'field_values')
+export function buildAuxFieldValuesSelect(categoryCode: string, categoryId?: string) {
+  const parts = auxDataStorageKeys(categoryCode, categoryId).map(key =>
+    jsonAuxPathForStorageKey(key, 'field_values')
+  )
+  return parts.length === 1 ? parts[0] : `COALESCE(${parts.join(', ')})`
+}
+
+/** 构建辅助账簿查询用的 match 选项 */
+export function buildAuxMatchOptions(
+  categoryCode: string,
+  categoryIdByCode: Map<string, string>,
+  batch: Array<{ code?: string }>
+): AuxMatchOptions {
+  const itemCodes = batch.map(item => item.code).filter(Boolean) as string[]
+  return {
+    categoryId: categoryIdByCode.get(categoryCode),
+    itemCodes,
+    matchItemCodesInJsonId: itemCodes.length > 0,
+  }
 }
 
 /** 查询辅助项目编码（现金流量等按 code 存于分录固定列） */
@@ -177,9 +248,14 @@ export function enrichAuxLedgerEntry(
     const byId = lookup.byId.get(auxId)
     if (byId?.name) {
       entry.aux_name = byId.name
-    } else if (categoryCode === 'cash_flow' && auxId) {
+    } else if (auxId) {
       const byCode = lookup.byCode.get(`${categoryCode}:${auxId}`)
-      if (byCode?.name) entry.aux_name = byCode.name
+      if (byCode?.name) {
+        entry.aux_name = byCode.name
+        if (!entry.aux_id || entry.aux_id === auxId) {
+          entry.aux_id = byCode.id
+        }
+      }
     }
   }
 

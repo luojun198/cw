@@ -1,3 +1,9 @@
+/**
+ * ⚠️ 已废弃 — 请勿在 index.ts 重新挂载
+ *
+ * 静态辅助余额表（report 端）已被动态报表 + 账簿模块 ledger/aux-balance 取代。
+ * 仅保留源代码用于历史参考。
+ */
 import { Router } from 'express'
 import { authMiddleware, AuthRequest } from '../middleware/index.js'
 import { getDb } from '../db/index.js'
@@ -23,6 +29,7 @@ router.get('/aux-balance', (req: AuthRequest, res) => {
     year: y,
     period: p,
     auxField,
+    accountScope: req.accountScope,
   })
   const list = db.prepare(query.sql).all(...query.params)
   res.json({ code: 0, data: list })

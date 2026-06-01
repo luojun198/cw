@@ -65,6 +65,17 @@ export function errorHandler(
     })
   }
 
+  // 请求体过大（express.json / body-parser）
+  if (
+    (err as any).type === 'entity.too.large' ||
+    err.message.includes('request entity too large')
+  ) {
+    return res.status(413).json({
+      code: 413,
+      message: '导入数据量过大，请分批导入或减少单次行数',
+    })
+  }
+
   // Multer 文件上传错误
   if (err.message.includes('File too large')) {
     return res.status(400).json({

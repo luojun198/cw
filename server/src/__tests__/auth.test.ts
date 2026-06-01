@@ -42,7 +42,7 @@ describe('auth middleware', () => {
       expect(decoded.permissions).toEqual(payload.permissions)
     })
 
-    it('should generate token with 8 hour expiration', () => {
+    it('should generate token with 8 hour expiration by default', () => {
       const payload = {
         userId: 'user-123',
         userName: 'testuser',
@@ -54,13 +54,25 @@ describe('auth middleware', () => {
       const token = generateToken(payload)
       const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any
 
-      // 检查 exp 字段存在
       expect(decoded.exp).toBeTruthy()
       expect(decoded.iat).toBeTruthy()
+      expect(decoded.exp - decoded.iat).toBe(28800)
+    })
 
-      // 验证过期时间约为 8 小时（28800 秒）
-      const expiresIn = decoded.exp - decoded.iat
-      expect(expiresIn).toBe(28800)
+    it('should generate token with 7 day expiration when remember is true', () => {
+      const payload = {
+        userId: 'user-123',
+        userName: 'testuser',
+        accountSetId: 'account-456',
+        roleId: 'role-789',
+        remember: true,
+      }
+
+      const token = generateToken(payload)
+      const decoded = jwt.verify(token, process.env.JWT_SECRET!) as any
+
+      expect(decoded.remember).toBe(true)
+      expect(decoded.exp - decoded.iat).toBe(7 * 24 * 60 * 60)
     })
 
     it('should include all required fields in token', () => {

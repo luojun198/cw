@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { authMiddleware, AuthRequest } from '../middleware/index.js'
 import { getDb } from '../db/index.js'
+import { appendAccountScopeCondition } from '../services/accountAuthorization.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -77,27 +78,54 @@ router.get('/diagnostics/posting-status', (req: AuthRequest, res) => {
     )
     .get(accountSetId, resolvedYear, resolvedPeriod) as { total: number }
 
+  const postedEntryConditions = [
+    've.account_set_id=?',
+    'v.account_set_id=?',
+    'v.year=?',
+    'v.period=?',
+    "v.status='posted'",
+  ]
+  const postedEntryParams: Array<string | number> = [
+    accountSetId,
+    accountSetId,
+    resolvedYear,
+    resolvedPeriod,
+  ]
+  appendAccountScopeCondition(req.accountScope, 've.account_id', postedEntryConditions, postedEntryParams)
   const postedEntriesCount = db
     .prepare(
       `
       SELECT COUNT(*) as total
       FROM voucher_entries ve
       JOIN vouchers v ON v.id = ve.voucher_id
-      WHERE ve.account_set_id=? AND v.account_set_id=? AND v.year=? AND v.period=? AND v.status='posted'
+      WHERE ${postedEntryConditions.join(' AND ')}
     `
     )
-    .get(accountSetId, accountSetId, resolvedYear, resolvedPeriod) as { total: number }
+    .get(...postedEntryParams) as { total: number }
 
+  const allEntryConditions = [
+    've.account_set_id=?',
+    'v.account_set_id=?',
+    'v.year=?',
+    'v.period=?',
+  ]
+  const allEntryParams: Array<string | number> = [
+    accountSetId,
+    accountSetId,
+    resolvedYear,
+    resolvedPeriod,
+  ]
+  appendAccountScopeCondition(req.accountScope, 've.account_id', allEntryConditions, allEntryParams)
   const allEntriesCount = db
     .prepare(
       `
       SELECT COUNT(*) as total
       FROM voucher_entries ve
       JOIN vouchers v ON v.id = ve.voucher_id
-      WHERE ve.account_set_id=? AND v.account_set_id=? AND v.year=? AND v.period=?
+      WHERE ${allEntryConditions.join(' AND ')}
     `
     )
-    .get(accountSetId, accountSetId, resolvedYear, resolvedPeriod) as { total: number }
+    .get(...allEntryParams) as { total: number }
 
   const balanceRowsCount = db
     .prepare(
@@ -129,6 +157,8 @@ router.get('/diagnostics/posting-status', (req: AuthRequest, res) => {
     )
     .get(accountSetId, resolvedYear) as { total: number }
 
+  const postedAmountConditions = [...postedEntryConditions]
+  const postedAmountParams = [...postedEntryParams]
   const postedVoucherAmount = db
     .prepare(
       `
@@ -137,10 +167,10 @@ router.get('/diagnostics/posting-status', (req: AuthRequest, res) => {
         SUM(CASE WHEN ve.direction='credit' THEN ve.amount ELSE 0 END) as total_credit
       FROM voucher_entries ve
       JOIN vouchers v ON v.id = ve.voucher_id
-      WHERE ve.account_set_id=? AND v.account_set_id=? AND v.year=? AND v.period=? AND v.status='posted'
+      WHERE ${postedAmountConditions.join(' AND ')}
     `
     )
-    .get(accountSetId, accountSetId, resolvedYear, resolvedPeriod) as {
+    .get(...postedAmountParams) as {
     total_debit: number | null
     total_credit: number | null
   }
@@ -174,10 +204,10 @@ router.get('/diagnostics/posting-status', (req: AuthRequest, res) => {
       SELECT DISTINCT ve.account_code
       FROM voucher_entries ve
       JOIN vouchers v ON v.id = ve.voucher_id
-      WHERE ve.account_set_id=? AND v.account_set_id=? AND v.year=? AND v.period=? AND v.status='posted'
+      WHERE ${postedEntryConditions.join(' AND ')}
     `
     )
-    .all(accountSetId, accountSetId, resolvedYear, resolvedPeriod) as Array<{ account_code: string }>
+    .all(...postedEntryParams) as Array<{ account_code: string }>
 
   const balanceCodeSet = new Set(balanceCodeRows.map(row => row.account_code))
   const postedEntryCodeSet = new Set(postedEntryCodeRows.map(row => row.account_code))

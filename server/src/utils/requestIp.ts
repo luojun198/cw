@@ -3,6 +3,20 @@ import { networkInterfaces } from 'os'
 
 const loopbackIps = new Set(['127.0.0.1', '::1', '0:0:0:0:0:0:0:1'])
 
+/** Clash / Mihomo 等代理的 fake-ip 段，本机访问时常被识别为「另一 IP」 */
+export function isClashFakeIp(ip?: string | null): boolean {
+  const normalized = normalizeIp(ip)
+  if (normalized === 'unknown') return false
+  const parts = normalized.split('.').map(Number)
+  if (parts.length !== 4 || parts.some(n => Number.isNaN(n))) return false
+  return parts[0] === 198 && parts[1] >= 18 && parts[1] <= 19
+}
+
+export function isLocalClientIp(ip?: string | null): boolean {
+  const normalized = normalizeIp(ip)
+  return isLoopbackIp(normalized) || isClashFakeIp(normalized)
+}
+
 export function normalizeIp(ip?: string | string[] | null): string {
   const value = Array.isArray(ip) ? ip[0] : ip
   const first = (value || '').split(',')[0]?.trim() || ''
@@ -28,17 +42,18 @@ export function getLocalLanIp(): string {
   )
 
   const physicalCandidates = candidates.filter(
-    item => !/(vmware|virtualbox|vbox|wsl|hyper-v|vethernet|docker|loopback)/i.test(item.name)
+    item => !/(vmware|virtualbox|vbox|wsl|hyper-v|vethernet|docker|loopback|mihomo|clash|meta)/i.test(item.name)
   )
   const preferred = physicalCandidates.length > 0 ? physicalCandidates : candidates
   const privateIp = preferred.find(item => /^(192\.168\.|10\.|172\.(1[6-9]|2\d|3[0-1])\.)/.test(item.address))
-  return privateIp?.address || preferred[0]?.address || '127.0.0.1'
+  const nonFakeIp = preferred.find(item => !isClashFakeIp(item.address))
+  return privateIp?.address || nonFakeIp?.address || preferred[0]?.address || '127.0.0.1'
 }
 
 export function toDisplayIp(ip?: string | string[] | null): string {
   const normalized = normalizeIp(ip)
   if (normalized === 'unknown') return normalized
-  return isLoopbackIp(normalized) ? getLocalLanIp() : normalized
+  return isLocalClientIp(normalized) ? getLocalLanIp() : normalized
 }
 
 export function getRequestIp(req: Request): string {

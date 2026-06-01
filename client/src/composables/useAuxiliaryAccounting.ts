@@ -1,21 +1,12 @@
 import { computed } from 'vue'
-import type { Ref, ComputedRef } from 'vue'
+import type { Ref } from 'vue'
 import { isAuxCategoryExcludedFromAccount } from '@/utils/accountCashFlow'
 
 export function useAuxiliaryAccounting(
   accounts: Ref<any[]>,
   auxCategories: Ref<any[]>,
-  auxItems: Ref<any[]>,
   currentEntry: Ref<any | null>
 ) {
-  const auxItemsByCategory: ComputedRef<Record<string, any[]>> = computed(() => {
-    const map: Record<string, any[]> = {}
-    for (const cat of auxCategories.value) {
-      map[cat.id] = auxItems.value.filter(i => i.type === cat.id)
-    }
-    return map
-  })
-
   const currentEntryAuxCategories = computed(() => {
     if (!currentEntry.value) {
       return []
@@ -61,28 +52,13 @@ export function useAuxiliaryAccounting(
     }
   }
 
-  function getAuxItemIds(acc: any): string[] {
-    return getAuxCategoryIds(acc)
-  }
-
+  /** 科目 autocomplete 标签：仅显示关联的辅助核算类别名 */
   function getAuxItemNames(acc: any): string[] {
-    const ids = getAuxItemIds(acc)
+    const ids = getAuxCategoryIds(acc)
     return ids
       .map(id => {
-        const item = auxItems.value.find(i => i.id === id)
-        if (item) {
-          const cat = auxCategories.value.find(c => c.id === item.type)
-          return cat ? `${cat.name}:${item.name}` : item.name
-        }
-        const typeNames: Record<string, string> = {
-          dept: '部门',
-          project: '项目',
-          supplier: '往来单位',
-          person: '人员',
-          func_class: '功能分类',
-        }
-        if (typeNames[id]) return typeNames[id]
-        return ''
+        const cat = auxCategories.value.find(c => c.id === id)
+        return cat?.name || ''
       })
       .filter(Boolean)
   }
@@ -102,10 +78,10 @@ export function useAuxiliaryAccounting(
       entry.is_cash = acc.is_cash || 0
       entry.is_bank = acc.is_bank || 0
       entry.require_cash_flow = acc.require_cash_flow || 0
-      // 只在借贷双方都没有金额时才初始化，不清空已有的金额（如自动平衡设置的值）
     } else {
       for (const cat of auxCategories.value) {
         entry[`_${cat.code}_id`] = ''
+        entry[`_${cat.code}_name`] = ''
       }
       entry.cash_flow_code = ''
       entry.cash_flow_name = ''
@@ -121,7 +97,6 @@ export function useAuxiliaryAccounting(
   }
 
   return {
-    auxItemsByCategory,
     currentEntryAuxCategories,
     isParentAccount,
     hasAux,

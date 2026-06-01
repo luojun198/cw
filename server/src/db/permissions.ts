@@ -22,6 +22,7 @@ export const PERMISSION_MODULES = [
   { key: 'base',     name: '基础设置' },
   { key: 'period',   name: '期间管理' },
   { key: 'system',   name: '系统管理' },
+  { key: 'cashier',  name: '出纳管理' },
 ] as const
 
 export const PERMISSIONS: PermissionDef[] = [
@@ -87,6 +88,12 @@ export const PERMISSIONS: PermissionDef[] = [
   { code: 'system:print',     name: '打印',         module: 'system',  moduleName: '系统管理', acdCode: 'A02' },
   { code: 'system:export',    name: '导出',         module: 'system',  moduleName: '系统管理', acdCode: 'A04' },
   { code: 'system:save',      name: '另存',         module: 'system',  moduleName: '系统管理', acdCode: 'A03' },
+  { code: 'system:dashboard', name: '主页查看',     module: 'system',  moduleName: '系统管理' },
+
+  // ── 出纳管理 ──────────────────────────────────────────
+  { code: 'cashier:journal',  name: '出纳日记账',   module: 'cashier', moduleName: '出纳管理', acdCode: '422' },
+  { code: 'cashier:initbal',  name: '出纳期初',     module: 'cashier', moduleName: '出纳管理' },
+  { code: 'cashier:reconcile',name: '银行对账',     module: 'cashier', moduleName: '出纳管理' },
 ]
 
 /** 按模块分组 */
@@ -126,6 +133,7 @@ export const PRESET_ROLES = [
     description: '凭证录入、账簿查看、报表查看',
     is_system: 1,
     permissions: [
+      'system:dashboard',
       'voucher:entry', 'voucher:query', 'voucher:print', 'voucher:export',
       'ledger:general', 'ledger:detail', 'ledger:balance', 'ledger:multirow',
       'ledger:cash', 'ledger:bank', 'ledger:cashflow',
@@ -140,6 +148,7 @@ export const PRESET_ROLES = [
     description: '凭证审核、账簿查看',
     is_system: 1,
     permissions: [
+      'system:dashboard',
       'voucher:audit', 'voucher:query', 'voucher:print',
       'ledger:general', 'ledger:detail', 'ledger:balance',
       'report:view',
@@ -151,6 +160,7 @@ export const PRESET_ROLES = [
     description: '凭证记账、反记账、结账',
     is_system: 1,
     permissions: [
+      'system:dashboard',
       'voucher:post', 'voucher:unpost', 'voucher:query',
       'ledger:general', 'ledger:detail', 'ledger:balance',
       'period:carry', 'period:close', 'period:unclose', 'period:open',
@@ -163,6 +173,7 @@ export const PRESET_ROLES = [
     description: '报表编制与导出',
     is_system: 1,
     permissions: [
+      'system:dashboard',
       'report:view', 'report:define', 'report:export', 'report:print', 'report:analysis',
       'ledger:general', 'ledger:detail', 'ledger:balance',
     ],
@@ -173,6 +184,7 @@ export const PRESET_ROLES = [
     description: '仅查看账簿和报表',
     is_system: 1,
     permissions: [
+      'system:dashboard',
       'voucher:query',
       'ledger:general', 'ledger:detail', 'ledger:balance',
       'report:view',

@@ -29,6 +29,8 @@ export interface UserInfo {
   accountSetId: string
   accountSetName: string
   permissions?: string[]
+  account_scope_restricted?: boolean
+  allowed_account_ids?: string[]
 }
 
 export interface CaptchaResponse {

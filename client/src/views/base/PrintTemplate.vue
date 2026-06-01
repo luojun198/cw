@@ -13,6 +13,8 @@
         :data="templates"
         border
         stripe
+        height="100%"
+        class="compact-data-table"
         v-loading="loading"
         @header-dragend="onDragEnd"
       >
@@ -221,7 +223,10 @@ onMounted(() => {
 
 .page-content {
   flex: 1;
+  min-height: 0;
   padding: 20px;
-  overflow: auto;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 </style>

@@ -1,67 +1,75 @@
-﻿<template>
+<template>
   <div class="page voucher-list-page">
     <div class="voucher-page-top">
-      <h3 class="voucher-page-top-title">凭证管理</h3>
-      <VoucherFilterBar
-        layout="grouped"
-        :filters="filters"
-        :aux-categories="auxCategories"
-        :voucher-types="voucherTypes"
-        :accounts="accounts"
-        :aux-items-map="auxItemsMap"
-        enable-status
-        enable-year-period
-        enable-voucher-type
-        enable-account
-        enable-auxiliary
-        enable-sort
-        @search="fetchData"
-        @sort-change="onSortChange"
-        @load-accounts="loadAccounts"
-        @load-aux-items="loadAuxItems"
-      >
-        <template #actions>
-          <el-popover placement="bottom-start" :width="220" trigger="click">
-            <template #reference>
-              <el-button class="voucher-toolbar-btn" plain>
-                <el-icon><Setting /></el-icon>
-                列设置
-              </el-button>
-            </template>
-            <div style="display: flex; flex-direction: column; gap: 8px">
-              <div
-                v-for="col in columnSettingsList"
-                :key="col.prop"
-                style="display: flex; align-items: center; gap: 8px"
-              >
-                <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
-                <span>{{ col.label }}</span>
+      <div class="voucher-page-top-row">
+        <h3 class="voucher-page-top-title">凭证管理</h3>
+        <VoucherFilterBar
+          layout="grouped"
+          :filters="filters"
+          :aux-categories="auxCategories"
+          :voucher-types="voucherTypes"
+          :accounts="accounts"
+          :aux-items-map="auxItemsMap"
+          enable-status
+          enable-year-period
+          enable-voucher-type
+          enable-account
+          enable-auxiliary
+          enable-sort
+          enable-query-scheme
+          query-scheme-key="voucher-audit-schemes"
+          @search="fetchData"
+          @sort-change="onSortChange"
+          @load-accounts="loadAccounts"
+          @load-aux-items="loadAuxItems"
+          @search-aux-items="searchAuxItems"
+          @apply-scheme="handleApplyScheme"
+        >
+          <template #actions>
+            <el-popover placement="bottom-start" :width="220" trigger="click">
+              <template #reference>
+                <el-button class="voucher-toolbar-btn" plain size="small">
+                  <el-icon><Setting /></el-icon>
+                  列设置
+                </el-button>
+              </template>
+              <div style="display: flex; flex-direction: column; gap: 8px">
+                <div
+                  v-for="col in columnSettingsList"
+                  :key="col.prop"
+                  style="display: flex; align-items: center; gap: 8px"
+                >
+                  <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
+                  <span>{{ col.label }}</span>
+                </div>
               </div>
-            </div>
-          </el-popover>
-          <el-button
-            class="voucher-toolbar-btn"
-            plain
-            :loading="exporting"
-            @click="exportData"
-          >
-            <el-icon><Download /></el-icon>
-            导出 Excel
-          </el-button>
-          <el-button
-            class="voucher-toolbar-btn"
-            plain
-            :disabled="!selected.length || selected.length > 1"
-            @click="handleTurnTemplate"
-          >
-            转模版
-          </el-button>
-        </template>
-      </VoucherFilterBar>
+            </el-popover>
+            <el-button
+              class="voucher-toolbar-btn"
+              plain
+              size="small"
+              :loading="exporting"
+              @click="exportData"
+            >
+              <el-icon><Download /></el-icon>
+              导出
+            </el-button>
+            <el-button
+              class="voucher-toolbar-btn"
+              plain
+              size="small"
+              :disabled="!selected.length || selected.length > 1"
+              @click="handleTurnTemplate"
+            >
+              转模版
+            </el-button>
+          </template>
+        </VoucherFilterBar>
+      </div>
     </div>
 
     <VoucherAuditTable
-      style="flex: 1; min-height: 0; overflow: hidden"
+      class="voucher-audit-table-host"
       :flat-list="flatList"
       :is-selectable-row="isSelectableRow"
       :get-row-class="getRowClass"
@@ -72,7 +80,7 @@
       :column-widths="columnWidths"
       @header-dragend="onColumnDragEnd"
       @selection-change="onSelect"
-      @view-detail="viewDetail"
+      @view-detail="openEntryDialog"
       @audit="audit"
       @unaudit="unAudit"
       @post="post"
@@ -80,56 +88,6 @@
     />
 
     <div class="voucher-batch-bar">
-      <!-- 正向操作 -->
-      <el-button
-        type="success"
-        :disabled="!selected.length && !selectAllMode"
-        @click="handleSelectedBatchAudit"
-      >
-        <el-icon><CircleCheck /></el-icon>
-        批量审核
-        <span v-if="selectAllMode" style="font-size: 12px">（全部 {{ pagination.total }} 条）</span>
-      </el-button>
-      <el-button
-        type="success"
-        :disabled="!selected.length && !selectAllMode"
-        :loading="batchPosting"
-        @click="handleBatchPost"
-      >
-        <el-icon><Checked /></el-icon>
-        批量记账
-        <span v-if="selectAllMode" style="font-size: 12px">（全部 {{ pagination.total }} 条）</span>
-      </el-button>
-
-      <el-divider direction="vertical" />
-
-      <!-- 反向操作（危险） -->
-      <el-button
-        type="danger"
-        plain
-        :disabled="!selected.length && !selectAllMode"
-        :loading="batchUnauditing"
-        @click="handleBatchUnAudit"
-      >
-        <el-icon><CircleClose /></el-icon>
-        批量反审核
-        <span v-if="selectAllMode" style="font-size: 12px">（全部 {{ pagination.total }} 条）</span>
-      </el-button>
-
-      <el-divider direction="vertical" />
-
-      <!-- 打印操作 -->
-      <el-button-group>
-        <el-button plain :disabled="!selected.length" @click="handlePrint">
-          <el-icon><Printer /></el-icon>
-          打印
-        </el-button>
-        <el-button plain @click="batchPrintVisible = true">
-          <el-icon><Printer /></el-icon>
-          批量打印
-        </el-button>
-      </el-button-group>
-
       <span class="batch-selected-text">
         {{
           selectAllMode
@@ -137,6 +95,60 @@
             : `已选 ${selected.length} 张`
         }}
       </span>
+
+      <div class="voucher-batch-bar__group voucher-batch-bar__group--forward">
+        <span class="voucher-batch-bar__label">正向操作</span>
+        <el-button
+          class="voucher-batch-btn voucher-batch-btn--audit"
+          type="primary"
+          :disabled="!selected.length && !selectAllMode"
+          @click="handleSelectedBatchAudit"
+        >
+          <el-icon><CircleCheck /></el-icon>
+          批量审核
+          <span v-if="selectAllMode" class="voucher-batch-btn__hint">（全部 {{ pagination.total }} 条）</span>
+        </el-button>
+        <el-button
+          class="voucher-batch-btn voucher-batch-btn--post"
+          type="success"
+          :disabled="!selected.length && !selectAllMode"
+          :loading="batchPosting"
+          @click="handleBatchPost"
+        >
+          <el-icon><Checked /></el-icon>
+          批量记账
+          <span v-if="selectAllMode" class="voucher-batch-btn__hint">（全部 {{ pagination.total }} 条）</span>
+        </el-button>
+      </div>
+
+      <div class="voucher-batch-bar__group voucher-batch-bar__group--reverse">
+        <span class="voucher-batch-bar__label">逆向操作</span>
+        <el-button
+          class="voucher-batch-btn voucher-batch-btn--unaudit"
+          type="danger"
+          :disabled="!selected.length && !selectAllMode"
+          :loading="batchUnauditing"
+          @click="handleBatchUnAudit"
+        >
+          <el-icon><CircleClose /></el-icon>
+          批量反审核
+          <span v-if="selectAllMode" class="voucher-batch-btn__hint">（全部 {{ pagination.total }} 条）</span>
+        </el-button>
+      </div>
+
+      <div class="voucher-batch-bar__group voucher-batch-bar__group--print">
+        <span class="voucher-batch-bar__label">打印</span>
+        <el-button-group>
+          <el-button plain :disabled="!selected.length" @click="handlePrint">
+            <el-icon><Printer /></el-icon>
+            打印
+          </el-button>
+          <el-button plain @click="batchPrintVisible = true">
+            <el-icon><Printer /></el-icon>
+            批量打印
+          </el-button>
+        </el-button-group>
+      </div>
     </div>
 
     <div class="pagination-bar">
@@ -173,16 +185,7 @@
       @confirm="handleBatchAuditConfirm"
     />
 
-    <VoucherDetailDialog
-      v-model="detailVisible"
-      :detail="detail"
-      :can-unpost="canUnpostVoucher"
-      @audit="handleDetailAudit"
-      @unaudit="handleDetailUnAudit"
-      @post="handleDetailPost"
-      @unpost="handleDetailUnPost"
-      @edit="handleDetailEdit"
-    />
+    <VoucherEntryDialogHost ref="entryDialogHostRef" @saved="fetchData" />
 
     <PrintDialog v-model="printDialogVisible" :voucher-ids="printVoucherIds" :mode="printMode" />
 
@@ -217,27 +220,29 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, onActivated, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, onActivated, onBeforeUnmount, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { Printer, CircleCheck, Checked, CircleClose, Download, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import VoucherAuditTable from '@/components/voucher/VoucherAuditTable.vue'
 import VoucherFilterBar from '@/components/voucher/VoucherFilterBar.vue'
 import BatchAuditDialog from '@/components/voucher/BatchAuditDialog.vue'
-import VoucherDetailDialog from '@/components/voucher/VoucherDetailDialog.vue'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
 import PrintDialog from '@/components/print/PrintDialog.vue'
 import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
 import TaskProgressDialog from '@/components/task/TaskProgressDialog.vue'
-import { useVoucherQuery } from '@/composables/useVoucherQuery'
+import { useVoucherQuery, applyVoucherFilters, type VoucherFilters } from '@/composables/useVoucherQuery'
 import { useVoucherAuditActions } from '@/composables/useVoucherAuditActions'
 import { useBatchAuditDialog } from '@/composables/useBatchAuditDialog'
+import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
 import { hasPermission } from '@/utils/permission'
 import { exportVouchersToExcel, fetchAllVouchers } from '@/utils/voucherExport'
 import { useSystemParamsStore } from '@/stores/systemParams'
 import { extractErrorMessage } from '@/composables/useMessage'
+import { useVoucherAuditReturnStore } from '@/stores/voucherAuditReturn'
 
 const VIS_COL_KEY = 'voucher-audit-cols-visible'
 const {
@@ -292,6 +297,10 @@ const columnSettingsList = computed(() => visibleCols.value)
 
 const canUnpostVoucher = computed(() => hasPermission('voucher:unpost'))
 
+const route = useRoute()
+const router = useRouter()
+const voucherAuditReturnStore = useVoucherAuditReturnStore()
+
 // 使用 useVoucherQuery composable（启用排序功能）
 const {
   filters,
@@ -310,6 +319,7 @@ const {
   loadVoucherTypes,
   loadAccounts,
   loadAuxItems,
+  searchAuxItems,
 } = useVoucherQuery({
   enableStatus: true,
   enableYearPeriod: true,
@@ -320,6 +330,12 @@ const {
   enableSearchMemory: true,
   searchMemoryKey: 'voucher-audit-filters',
 })
+
+function handleApplyScheme(schemeFilters: Partial<VoucherFilters>) {
+  applyVoucherFilters(filters.value, schemeFilters)
+  pagination.page = 1
+  fetchData()
+}
 
 /** 从列表数据发现辅助列（computed 缓存，只在数据真正变化时重新计算） */
 const discoveredDynamicCols = computed<ColSetting[]>(() => {
@@ -370,6 +386,30 @@ watch(discoveredDynamicCols, (dynamic) => {
 // 选择相关逻辑
 const selected = ref<any[]>([])
 const selectAllMode = ref(false) // 是否全选所有页
+const selectionRestoreActive = ref(false)
+const selectionRestoreIds = ref<string[] | null>(null)
+
+function applySelectionRestore() {
+  if (!selectionRestoreActive.value) return
+  if (selectAllMode.value) {
+    selected.value = flatList.value.filter(isSelectableRow)
+    return
+  }
+  if (!selectionRestoreIds.value?.length) {
+    selected.value = []
+    return
+  }
+  const idSet = new Set(selectionRestoreIds.value)
+  selected.value = flatList.value.filter(
+    row => isSelectableRow(row) && idSet.has(row._voucherId || row.id)
+  )
+}
+
+watch(flatList, () => {
+  if (selectionRestoreActive.value) {
+    applySelectionRestore()
+  }
+})
 
 function isSelectableRow(row: any) {
   return row._voucherRowIndex === 0
@@ -386,6 +426,8 @@ function getRowClass({ row }: { row: any }) {
 }
 
 function onSelect(selection: any[]) {
+  selectionRestoreActive.value = false
+  selectionRestoreIds.value = null
   selected.value = selection
 
   // 判断是否全选了当前页
@@ -427,12 +469,16 @@ function showSelectAllPagesPrompt() {
 
 const systemParamsStore = useSystemParamsStore()
 
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const { tryRestoreVoucherModal } = useVoucherModalRestore(entryDialogHostRef)
+
+function openEntryDialog(row: any) {
+  entryDialogHostRef.value?.open(row)
+}
+
 const {
-  detail,
-  detailVisible,
   batchPosting,
   batchUnauditing,
-  viewDetail,
   audit,
   unAudit,
   post,
@@ -455,8 +501,6 @@ const {
   handleBatchAuditPreview,
   handleBatchAudit,
 } = useBatchAuditDialog(fetchData)
-
-const router = useRouter()
 
 // 转模版相关
 const templateDialogVisible = ref(false)
@@ -488,7 +532,7 @@ async function handleTemplateConfirm() {
     await request.post('/voucher-templates', {
       template_no: templateForm.value.template_no,
       template_name: templateForm.value.template_name,
-      voucher_id: selected.value[0].id || selected.value[0]._voucherId,
+      voucher_id: getRowVoucherId(selected.value[0]),
     })
     ElMessage.success('模版保存成功')
     templateDialogVisible.value = false
@@ -499,35 +543,6 @@ async function handleTemplateConfirm() {
   }
 }
 
-async function handleDetailAudit(row: any) {
-  await audit(row)
-  detailVisible.value = false
-  await fetchData()
-}
-
-async function handleDetailUnAudit(row: any) {
-  await unAudit(row)
-  detailVisible.value = false
-  await fetchData()
-}
-
-async function handleDetailPost(row: any) {
-  await post(row)
-  detailVisible.value = false
-  await fetchData()
-}
-
-async function handleDetailUnPost(row: any) {
-  if (!canUnpostVoucher.value) {
-    ElMessage.warning('当前用户没有凭证反记账权限')
-    return
-  }
-
-  await unPost(row)
-  detailVisible.value = false
-  await fetchData()
-}
-
 async function handleBatchAuditPreviewWithPermission() {
   if (batchAuditForm.value.operation === 'unpost' && !canUnpostVoucher.value) {
     ElMessage.warning('当前用户没有凭证反记账权限')
@@ -536,12 +551,6 @@ async function handleBatchAuditPreviewWithPermission() {
   }
 
   await handleBatchAuditPreview()
-}
-
-function handleDetailEdit(row: any) {
-  // 跳转到凭证录入页面编辑
-  detailVisible.value = false
-  router.push({ path: '/voucher/entry', query: { editVoucherId: row.id || row._voucherId } })
 }
 
 async function handleBatchUnAudit() {
@@ -584,9 +593,11 @@ async function handleBatchUnAudit() {
       ElMessage.warning('请先选择要反审核的凭证')
       return
     }
-    await batchUnAudit(selected.value)
-    // 当前页模式：操作完成后清空选中状态
-    selected.value = []
+    try {
+      await batchUnAudit(selected.value)
+    } finally {
+      selected.value = []
+    }
   }
 
   // 注意：不清空 selectAllMode，让用户可以继续进行其他批量操作
@@ -633,9 +644,11 @@ async function handleBatchPost() {
       ElMessage.warning('请先选择要记账的凭证')
       return
     }
-    await batchPost(selected.value)
-    // 当前页模式：操作完成后清空选中状态
-    selected.value = []
+    try {
+      await batchPost(selected.value)
+    } finally {
+      selected.value = []
+    }
   }
 
   // 注意：不清空 selectAllMode，让用户可以继续进行其他批量操作
@@ -687,9 +700,11 @@ async function handleBatchUnpost() {
       ElMessage.warning('请先选择要反记账的凭证')
       return
     }
-    await batchUnpost(selected.value)
-    // 当前页模式：操作完成后清空选中状态
-    selected.value = []
+    try {
+      await batchUnpost(selected.value)
+    } finally {
+      selected.value = []
+    }
   }
 
   // 注意：不清空 selectAllMode，让用户可以继续进行其他批量操作
@@ -697,7 +712,7 @@ async function handleBatchUnpost() {
 }
 
 const printDialogVisible = ref(false)
-const printVoucherIds = ref<number[]>([])
+const printVoucherIds = ref<Array<string | number>>([])
 const printMode = ref<'single' | 'batch'>('batch')
 const batchPrintVisible = ref(false)
 const exporting = ref(false)
@@ -710,10 +725,16 @@ const currentTaskType = ref<'batch-audit' | 'batch-unaudit' | 'batch-post' | 'ba
 )
 
 
+function getRowVoucherId(row: { _voucherId?: string; id?: string }) {
+  return row._voucherId || row.id || ''
+}
+
 function handlePrint() {
   if (!selected.value.length) return
-  printVoucherIds.value = selected.value.map((v: any) => v.id || v._voucherId).filter(Boolean)
-  printMode.value = 'batch'
+  printVoucherIds.value = [
+    ...new Set(selected.value.map((v: any) => getRowVoucherId(v)).filter(Boolean)),
+  ]
+  printMode.value = selected.value.length === 1 ? 'single' : 'batch'
   printDialogVisible.value = true
 }
 
@@ -774,9 +795,12 @@ async function handleSelectedBatchAudit() {
       ElMessage.warning('请先选择要审核的凭证')
       return
     }
-    await batchAudit(selected.value)
-    // 当前页模式：操作完成后清空选中状态
-    selected.value = []
+    try {
+      await batchAudit(selected.value)
+    } finally {
+      // 成功或失败后都清空选中，避免表格残留旧勾选导致下次批量提交混入无效凭证
+      selected.value = []
+    }
   }
 
   // 注意：不清空 selectAllMode，让用户可以继续进行其他批量操作
@@ -803,8 +827,11 @@ async function handleBatchAuditConfirm() {
     Boolean(batchAuditForm.value.voucher_type_ids?.length)
 
   if (!hasFilterCondition && selected.value.length > 0) {
-    await batchAudit(selected.value)
-    selected.value = []
+    try {
+      await batchAudit(selected.value)
+    } finally {
+      selected.value = []
+    }
     batchAuditVisible.value = false
     return
   }
@@ -828,16 +855,73 @@ async function handlePageSizeChange(size: number) {
   onPageSizeChange(size)
 }
 
-onMounted(async () => {
+async function tryRestoreVoucherAuditContext() {
+  if (route.query.restoreAudit !== '1') return
+
+  const state = voucherAuditReturnStore.consumeRestore()
+  if (!state) {
+    await router.replace({ name: 'VoucherAudit' })
+    return
+  }
+
+  Object.assign(filters.value, state.filters)
+  pagination.page = state.pagination.page
+  pagination.pageSize = state.pagination.pageSize
+  selectAllMode.value = state.selectAllMode
+  selectionRestoreActive.value = true
+  selectionRestoreIds.value = state.selectAllMode ? null : [...state.selectedVoucherIds]
+
+  await router.replace({ name: 'VoucherAudit' })
+  await fetchData()
+  applySelectionRestore()
+}
+
+async function bootstrapAuditPage() {
   restoreVisibleCols()
   await Promise.all([loadVoucherTypes(), systemParamsStore.load(), loadAuxCategories()])
+  registerAuditReturnCapture()
+
+  if (route.query.restoreAudit === '1') {
+    await tryRestoreVoucherAuditContext()
+    return
+  }
+
   await fetchData()
+  await tryRestoreVoucherModal()
+}
+
+function registerAuditReturnCapture() {
+  voucherAuditReturnStore.registerCapture(() => ({
+    filters: JSON.parse(JSON.stringify(filters.value)),
+    pagination: { page: pagination.page, pageSize: pagination.pageSize },
+    selectedVoucherIds: selected.value
+      .map((row: any) => row._voucherId || row.id)
+      .filter(Boolean),
+    selectAllMode: selectAllMode.value,
+    targetYear: filters.value.year,
+  }))
+}
+
+onMounted(async () => {
+  await bootstrapAuditPage()
 })
 
 onActivated(async () => {
   reloadColumnWidths()
+  registerAuditReturnCapture()
+
+  if (route.query.restoreAudit === '1') {
+    await tryRestoreVoucherAuditContext()
+    return
+  }
+
   await Promise.all([loadVoucherTypes(), systemParamsStore.load(), loadAuxCategories()])
   await fetchData()
+  await tryRestoreVoucherModal()
+})
+
+onBeforeUnmount(() => {
+  voucherAuditReturnStore.unregisterCapture()
 })
 
 useKeyboardShortcuts([

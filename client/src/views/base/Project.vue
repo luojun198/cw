@@ -23,19 +23,29 @@
         />
         <el-button type="info" size="small" @click="handleSearch">搜索</el-button>
         <el-button type="primary" size="small" @click="openCatDialog('add')">新增类别</el-button>
-        <el-button type="primary" size="small" :disabled="!activeTab" @click="openItemDialog('add')">
+        <el-button
+          type="primary"
+          size="small"
+          :disabled="!activeTab"
+          @click="openItemDialog('add')"
+        >
           新增项目
         </el-button>
         <el-button
           size="small"
           :disabled="!activeTab"
-          @click="openCatDialog('edit', categories.find(c => c.id === activeTab))"
+          @click="
+            openCatDialog(
+              'edit',
+              categories.find(c => c.id === activeTab)
+            )
+          "
         >
           字段配置
         </el-button>
         <el-button
           size="small"
-          :disabled="!activeTab || fullFilteredList.length === 0"
+          :disabled="!activeTab || pagination.total === 0"
           @click="exportData"
         >
           导出
@@ -54,7 +64,7 @@
         <el-button
           type="danger"
           size="small"
-          :disabled="selectedRows.length === 0"
+          :disabled="!activeTab || pagination.total === 0"
           @click="openBatchDelete"
         >
           批量删除
@@ -97,7 +107,8 @@
 
     <el-table
       ref="tableRef"
-      :data="filteredList"
+      v-loading="tableLoading"
+      :data="pageItems"
       stripe
       border
       size="small"
@@ -109,14 +120,24 @@
       <el-table-column type="selection" width="45" />
       <el-table-column column-key="code" prop="code" label="编码" :width="colWidth('code', 120)" />
       <el-table-column column-key="name" prop="name" label="名称" :width="colWidth('name', 160)" />
-      <el-table-column column-key="status" prop="status" label="状态" :width="colWidth('status', 100)">
+      <el-table-column
+        column-key="status"
+        prop="status"
+        label="状态"
+        :width="colWidth('status', 100)"
+      >
         <template #default="{ row }">
           <el-tag :type="row.status === 'active' ? 'success' : 'info'" size="small">{{
             row.status === 'active' ? '进行中' : '已完结'
           }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column column-key="remark" prop="remark" label="备注" :width="colWidth('remark', 120)" />
+      <el-table-column
+        column-key="remark"
+        prop="remark"
+        label="备注"
+        :width="colWidth('remark', 120)"
+      />
       <el-table-column
         v-for="field in activeCategoryFields"
         :key="field.field_key"
@@ -150,12 +171,11 @@
         <el-option label="20条" :value="20" />
         <el-option label="50条" :value="50" />
         <el-option label="100条" :value="100" />
-        <el-option label="全部" :value="-1" />
       </el-select>
       <el-pagination
         v-model:current-page="pagination.page"
         :total="pagination.total"
-        :page-size="pagination.pageSize === -1 ? pagination.total || 1 : pagination.pageSize"
+        :page-size="pagination.pageSize"
         size="small"
         layout="prev, pager, next, jumper"
         :pager-count="5"
@@ -173,10 +193,14 @@
             placeholder="选择默认辅助项目"
             clearable
             filterable
+            remote
+            :remote-method="q => searchCatFormItems(q)"
+            :loading="catFormItemsLoading"
             style="width: 100%"
+            @focus="searchCatFormItems('')"
           >
             <el-option
-              v-for="item in catFormItems"
+              v-for="item in catFormItemOptions"
               :key="item.id"
               :label="item.name"
               :value="item.id"
@@ -358,7 +382,13 @@
     </el-dialog>
 
     <!-- 批量导入对话框 -->
-    <el-dialog v-model="importDialogVisible" title="批量导入核算项目" width="560px">
+    <el-dialog
+      v-model="importDialogVisible"
+      title="批量导入核算项目"
+      width="960px"
+      class="spreadsheet-import-dialog"
+      @closed="resetImportDialog"
+    >
       <div class="import-tips">
         <p>
           1. 请先
@@ -385,6 +415,7 @@
         :auto-upload="false"
         :limit="1"
         accept=".xlsx,.xls"
+        :disabled="importParsing"
         :on-change="onImportFileChange"
         :on-exceed="() => showError('只能上传一个文件')"
         :show-file-list="false"
@@ -397,23 +428,9 @@
         </template>
       </el-upload>
 
-      <!-- 重复项目警告 -->
-      <div v-if="importErrors.length > 0" class="import-errors">
-        <el-alert
-          :title="`发现 ${importErrors.length} 个重复项目，请修改后重新上传`"
-          type="error"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 12px"
-        />
-        <el-table :data="importErrors.slice(0, 10)" stripe border size="small" max-height="240">
-          <el-table-column prop="row" label="Excel行号" width="100" />
-          <el-table-column prop="name" label="项目名称" />
-          <el-table-column prop="reason" label="重复原因" width="150" />
-        </el-table>
-        <div v-if="importErrors.length > 10" class="import-more-hint">
-          仅展示前 10 条，共 {{ importErrors.length }} 条
-        </div>
+      <div v-if="importParsing" class="import-parsing">
+        <el-progress :percentage="importParseProgress" :stroke-width="16" />
+        <p class="import-parsing__text">{{ importParseMessage }}</p>
       </div>
 
       <!-- 编号断号警告 -->
@@ -445,46 +462,79 @@
 
       <!-- 导入预览 -->
       <div v-if="importPreview.length > 0" class="import-preview">
-        <el-alert
-          :title="`解析成功：${importPreview.length} 条数据`"
-          type="success"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 12px"
+        <SpreadsheetImportSummaryAlert
+          :summary="importSummary"
+          :issue-count="importIssueCount"
+          @view-issues="openImportIssuesDialog"
         />
-        <el-table :data="importPreview.slice(0, 10)" stripe border size="small" max-height="240">
+        <el-table :data="importPreview.slice(0, 15)" stripe border size="small" max-height="280">
+          <el-table-column prop="rowIndex" label="行号" width="60" />
           <el-table-column prop="code" label="编码" width="100" />
-          <el-table-column prop="name" label="名称" />
+          <el-table-column prop="name" label="名称" min-width="120" />
           <el-table-column prop="status" label="状态" width="80">
             <template #default="{ row }">
               {{ row.status === 'active' ? '进行中' : '已完结' }}
             </template>
           </el-table-column>
-          <el-table-column prop="remark" label="备注" />
+          <el-table-column prop="remark" label="备注" min-width="100" />
+          <el-table-column prop="matched" label="校验" width="90" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.matched ? 'success' : 'danger'" size="small">
+                {{ row.matched ? '有效' : row.error || '无效' }}
+              </el-tag>
+            </template>
+          </el-table-column>
         </el-table>
-        <div v-if="importPreview.length > 10" class="import-more-hint">
-          仅展示前 10 条，共 {{ importPreview.length }} 条
+        <div v-if="importPreview.length > 15" class="import-preview-more">
+          预览仅显示前 15 行，共 {{ importPreview.length }} 行；异常明细请点「查看异常说明」
         </div>
       </div>
 
       <template #footer>
         <el-button @click="closeImportDialog">取消</el-button>
         <el-button
+          v-if="importIssueCount > 0"
+          @click="openImportIssuesDialog"
+        >
+          查看异常说明
+        </el-button>
+        <el-button
           type="primary"
-          :disabled="importPreview.length === 0 || importErrors.length > 0"
+          :disabled="importMatchedCount === 0"
           :loading="importing"
           @click="handleImport"
         >
-          确认导入（{{ importPreview.length }} 条）
+          确认导入（{{ importMatchedCount }} 条）
         </el-button>
       </template>
     </el-dialog>
 
+    <SpreadsheetImportIssuesDialog
+      v-model:visible="importIssuesDialogVisible"
+      :issues="importIssues"
+      :loading="importIssuesLoading"
+      :total-count="importIssueCount > 0 ? importIssueCount : null"
+      intro="以下行未能通过校验，不会写入核算项目。同类问题已合并展示；请按说明修正模板后重新上传。"
+    />
+
     <!-- 批量删除对话框 -->
-    <el-dialog v-model="batchDeleteVisible" title="批量删除" width="400px">
-      <p style="margin-bottom: 12px; color: #606266">
-        已选择 <strong>{{ selectedRows.length }}</strong> 个项目
-      </p>
+    <el-dialog v-model="batchDeleteVisible" title="批量删除" width="480px">
+      <el-radio-group v-model="batchDeleteMode" style="margin-bottom: 16px">
+        <el-radio value="selected">
+          删除已选中的 <strong>{{ selectedRows.length }}</strong> 个项目
+        </el-radio>
+        <el-radio value="all" :disabled="pagination.total === 0">
+          删除当前类别的全部 <strong>{{ pagination.total }}</strong> 个项目
+        </el-radio>
+      </el-radio-group>
+      <el-alert
+        v-if="batchDeleteMode === 'all'"
+        title="警告：此操作将删除当前类别的所有项目！"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+      />
       <p style="color: #909399; font-size: 13px">
         系统将自动跳过已被科目或凭证使用的项目，仅删除未使用的项目。
       </p>
@@ -570,15 +620,56 @@
         <el-button @click="searchDialogVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <TaskProgressDialog
+      v-model="taskProgressVisible"
+      :task-id="currentTaskId"
+      :task-type="currentTaskType"
+      @completed="handleTaskCompleted"
+      @show-block-detail="showDeleteBlockDialog"
+    />
+
+    <AuxItemDeleteBlockDialog
+      v-model="deleteBlockVisible"
+      :detail="deleteBlockDetail"
+      @open-voucher="openBlockedVoucher"
+      @go-init-balance-aux="goInitBalanceAux"
+    />
+
+    <VoucherEntryDialogHost ref="entryDialogHostRef" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onActivated, reactive, nextTick } from 'vue'
+import { ref, computed, onMounted, onActivated, reactive, nextTick, watch, shallowRef } from 'vue'
 import type { TabPaneName, UploadFile } from 'element-plus'
 import { Edit, Close, Upload, Document } from '@element-plus/icons-vue'
 import { ElMessageBox, ElLoading } from 'element-plus'
 import request from '@/api/request'
+import { useAsyncBatchTask } from '@/composables/useAsyncBatchTask'
+import TaskProgressDialog from '@/components/task/TaskProgressDialog.vue'
+import SpreadsheetImportSummaryAlert from '@/components/common/SpreadsheetImportSummaryAlert.vue'
+import SpreadsheetImportIssuesDialog from '@/components/common/SpreadsheetImportIssuesDialog.vue'
+import {
+  buildProjectImportSummary,
+  collectProjectImportIssues,
+  describeProjectRowIssue,
+  detectProjectCodeGaps,
+  parseProjectImportRowsAsync,
+  type ProjectImportRow,
+} from '@/utils/projectImport'
+import { aggregateImportIssuesAsync } from '@/utils/spreadsheetImportReport'
+import { yieldToMain } from '@/utils/asyncChunk'
+import {
+  normalizeDuplicateKey,
+  normalizeImportCell,
+  normalizeImportCode,
+  normalizeImportCodeCell,
+  normalizeImportText,
+} from '@/utils/textNormalize'
+import AuxItemDeleteBlockDialog from '@/components/base/AuxItemDeleteBlockDialog.vue'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
+import { useAuxItemDeleteBlock } from '@/composables/useAuxItemDeleteBlock'
 import { showSuccess, showError, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm, useConfirm } from '@/composables/useConfirm'
 import { useKeyboardShortcuts, commonShortcuts } from '@/composables/useKeyboardShortcuts'
@@ -588,48 +679,30 @@ import {
   filterAuxCategoriesForProjectList,
   isAuxCategoryExcludedFromProjectList,
 } from '@/utils/accountCashFlow'
+import { fetchAuxItemsPage, fetchAllAuxItemsByType } from '@/composables/useAuxItemsPage'
+import { useVoucherAuxItems } from '@/composables/useVoucherAuxItems'
 
-const PUNCTUATION_MAP: Record<string, string> = {
-  '\uff0c': ',',
-  '\u3002': '.',
-  '\uff1b': ';',
-  '\uff1a': ':',
-  '\uff08': '(',
-  '\uff09': ')',
-  '\u3010': '[',
-  '\u3011': ']',
-  '\u300c': '{',
-  '\u300d': '}',
-  '\u201c': '"',
-  '\u201d': '"',
-  '\u2018': "'",
-  '\u2019': "'",
-  '\u300a': '<',
-  '\u300b': '>',
-  '\uff01': '!',
-  '\uff1f': '?',
-  '\u3001': ',',
-  '\u2014\u2014': '-',
-  '\u2014': '-',
-  '\uff0d': '-',
-  '\uff5e': '~',
-}
+const {
+  taskProgressVisible,
+  currentTaskId,
+  currentTaskType,
+  startAsyncTask,
+} = useAsyncBatchTask()
 
-function normalizePunctuation(value: string) {
-  return value.replace(
-    /\u2014\u2014|[\uff0c\u3002\uff1b\uff1a\uff08\uff09\u3010\u3011\u300c\u300d\u201c\u201d\u2018\u2019\u300a\u300b\uff01\uff1f\u3001\u2014\uff0d\uff5e]/g,
-    match => PUNCTUATION_MAP[match] ?? match
-  )
-}
-
-function normalizeDuplicateKey(value: string) {
-  return normalizePunctuation(value)
-    .replace(/[\s,.;:()\[\]{}"'<>?!~\-]/g, '')
-    .toLowerCase()
-}
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const {
+  deleteBlockVisible,
+  deleteBlockDetail,
+  showDeleteBlockDialog,
+  deleteAuxItemWithDialog,
+  openBlockedVoucher,
+  goInitBalanceAux,
+} = useAuxItemDeleteBlock(entryDialogHostRef)
 
 const categories = ref<any[]>([])
-const allItems = ref<any[]>([])
+const pageItems = shallowRef<any[]>([])
+const tableLoading = ref(false)
+const categoryStats = reactive({ total: 0, active: 0, closed: 0 })
 const activeTab = ref('')
 const catDialogVisible = ref(false)
 const catDialogType = ref('add')
@@ -639,10 +712,26 @@ const catDialogTitle = computed(() =>
 const catForm = ref<any>({ sort_order: 0 })
 const catSaving = ref(false)
 
-// 类别对话框中可选的项目（当前编辑类别的项目）
-const catFormItems = computed(() =>
-  catForm.value.id ? allItems.value.filter(i => i.type === catForm.value.id) : []
+const {
+  optionsByCategory: catFormItemOptionsMap,
+  loadingByCategory: catFormItemsLoadingMap,
+  fetchAuxItems: fetchCatFormAuxItems,
+  ensureSelectedItems: ensureCatFormSelected,
+} = useVoucherAuxItems()
+const catFormItemOptions = computed(() =>
+  catForm.value.id ? catFormItemOptionsMap.value[catForm.value.id] || [] : []
 )
+const catFormItemsLoading = computed(() =>
+  catForm.value.id ? !!catFormItemsLoadingMap.value[catForm.value.id] : false
+)
+
+async function searchCatFormItems(keyword: string) {
+  if (!catForm.value.id) return
+  await fetchCatFormAuxItems(catForm.value.id, { keyword, limit: 80 })
+  if (catForm.value.default_item_id) {
+    await ensureCatFormSelected(catForm.value.id, [catForm.value.default_item_id])
+  }
+}
 
 const itemDialogVisible = ref(false)
 const itemDialogType = ref('add')
@@ -662,40 +751,65 @@ const currentItemFields = computed(() => {
 // 搜索过滤状态
 const searchFilterIds = ref<string[] | null>(null)
 
-// 分页
+// 分页（服务端）
 const pagination = reactive({ page: 1, pageSize: 20, total: 0 })
 
-// 不受分页限制的完整数据列表（用于导出、统计等）
-const fullFilteredList = computed(() => {
-  let items = allItems.value.filter(
-    i => i.type === activeTab.value && (showClosed.value ? true : i.status !== 'closed')
-  )
-  // 如果有搜索过滤，只显示匹配的项目
-  if (searchFilterIds.value && searchFilterIds.value.length > 0) {
-    items = items.filter(i => searchFilterIds.value!.includes(i.id))
-  }
-  return items
-})
+const projectStats = computed(() => ({
+  total: categoryStats.total,
+  active: categoryStats.active,
+  closed: categoryStats.closed,
+  displayed: pagination.total,
+}))
 
-// 分页后的数据列表（用于表格显示）
-const filteredList = computed(() => {
-  const items = fullFilteredList.value
-
-  // 更新总数
-  pagination.total = items.length
-
-  // 分页处理
-  if (pagination.pageSize === -1) {
-    // 显示全部
-    return items
-  }
-  const start = (pagination.page - 1) * pagination.pageSize
-  const end = start + pagination.pageSize
-  return items.slice(start, end)
-})
 const activeCatName = computed(
   () => categories.value.find(c => c.id === activeTab.value)?.name || ''
 )
+
+async function loadCategoryStats() {
+  if (!activeTab.value) {
+    categoryStats.total = 0
+    categoryStats.active = 0
+    categoryStats.closed = 0
+    return
+  }
+  try {
+    const res = await request.get<{ total: number; active: number; closed: number }>(
+      '/base/aux-items/stats',
+      { params: { type: activeTab.value } }
+    )
+    const data = res.data || { total: 0, active: 0, closed: 0 }
+    categoryStats.total = data.total
+    categoryStats.active = data.active
+    categoryStats.closed = data.closed
+  } catch {
+    categoryStats.total = pagination.total
+    categoryStats.active = 0
+    categoryStats.closed = 0
+  }
+}
+
+async function loadPageItems() {
+  if (!activeTab.value) {
+    pageItems.value = []
+    pagination.total = 0
+    return
+  }
+  tableLoading.value = true
+  try {
+    const params: Parameters<typeof fetchAuxItemsPage>[0] = {
+      type: activeTab.value,
+      page: pagination.page,
+      pageSize: pagination.pageSize,
+    }
+    if (!showClosed.value) params.status = 'active'
+    if (searchFilterIds.value?.length) params.ids = searchFilterIds.value
+    const { items, total } = await fetchAuxItemsPage(params)
+    pageItems.value = items
+    pagination.total = total
+  } finally {
+    tableLoading.value = false
+  }
+}
 
 const activeCategoryFields = computed(() => {
   const cat = categories.value.find(c => c.id === activeTab.value)
@@ -743,19 +857,21 @@ function normalizeDirectionFieldValue(field: any, raw: string): string {
   return CASH_FLOW_DIRECTION_FROM_LABEL[raw] || raw
 }
 
-// 项目统计信息
-const projectStats = computed(() => {
-  const categoryItems = allItems.value.filter(i => i.type === activeTab.value)
-  return {
-    total: categoryItems.length,
-    active: categoryItems.filter(i => i.status === 'active').length,
-    closed: categoryItems.filter(i => i.status === 'closed').length,
-    displayed: fullFilteredList.value.length,
-  }
-})
-
 // ========== 状态过滤 & 多选 ==========
 const showClosed = ref(false)
+
+watch(activeTab, () => {
+  pagination.page = 1
+  searchFilterIds.value = null
+  void loadCategoryStats()
+  void loadPageItems()
+})
+
+watch(showClosed, () => {
+  pagination.page = 1
+  void loadPageItems()
+})
+
 const tableRef = ref<any>(null)
 const { onDragEnd, load, colWidth, bindTable } = useColumnWidthMemory('base_project')
 bindTable(tableRef)
@@ -789,49 +905,57 @@ function handleSelectionChange(rows: any[]) {
 
 // ========== 导入相关 ==========
 const importDialogVisible = ref(false)
-const importPreview = ref<any[]>([])
-const importErrors = ref<any[]>([])
+const importPreview = ref<ProjectImportRow[]>([])
 const importWarnings = ref<any[]>([])
 const importUploadRef = ref<any>(null)
 const importing = ref(false)
 const uploadedFileName = ref('')
+const importIssuesDialogVisible = ref(false)
+const importBlankSkipped = ref(0)
+const importParsing = ref(false)
+const importParseProgress = ref(0)
+const importParseMessage = ref('')
+const importIssues = ref<ReturnType<typeof collectProjectImportIssues>>([])
+const importIssuesLoading = ref(false)
+let importIssuesBuildToken = 0
+
+const importMatchedCount = computed(() => importPreview.value.filter(r => r.matched).length)
+const importIssueCount = computed(() => importPreview.value.filter(r => !r.matched).length)
+const importSummary = computed(() =>
+  buildProjectImportSummary({
+    contentRowCount: importPreview.value.length,
+    validCount: importMatchedCount.value,
+    issueCount: importIssueCount.value,
+    blankSkipped: importBlankSkipped.value,
+    templateWarning: null,
+  })
+)
 
 async function fetchData() {
-  const [catRes, itemRes] = await Promise.all([
-    request.get<any[]>('/base/aux-categories'),
-    request.get<any[]>('/base/aux-items'),
-  ])
+  const catRes = await request.get<any[]>('/base/aux-categories')
   const allCats = catRes.data || []
   categories.value = filterAuxCategoriesForProjectList(allCats)
-  const excludedIds = new Set(
-    allCats
-      .filter((c: any) => isAuxCategoryExcludedFromProjectList(c.code))
-      .map((c: any) => c.id)
-  )
-  allItems.value = (itemRes.data || []).filter((i: any) => !excludedIds.has(i.type))
-  // 默认选中第一个类别
   if (!activeTab.value && categories.value.length > 0) {
     activeTab.value = categories.value[0].id
   }
+  await Promise.all([loadCategoryStats(), loadPageItems()])
   await relayoutTable()
 }
 
 function onTabChange(tabId: TabPaneName) {
   activeTab.value = String(tabId)
-  // 切换类目时清除过滤
-  searchFilterIds.value = null
-  // 重置分页
-  pagination.page = 1
   relayoutTable()
 }
 
 function onPageChange(page: number) {
   pagination.page = page
+  void loadPageItems()
 }
 
 function onPageSizeChange(size: number) {
   pagination.pageSize = size
   pagination.page = 1
+  void loadPageItems()
 }
 
 function openCatDialog(t: string, row?: any) {
@@ -860,6 +984,9 @@ function openCatDialog(t: string, row?: any) {
     catForm.value = { ...row, fields: existingFields }
   }
   catDialogVisible.value = true
+  if (catForm.value.id) {
+    void searchCatFormItems('')
+  }
 }
 
 function addCatField() {
@@ -963,21 +1090,79 @@ async function handleDeleteCat(row: any) {
   }
 }
 
-function nextItemCodeForCategory(categoryId: string) {
-  const currentCategoryItems = allItems.value.filter(item => item.type === categoryId)
-  const nextNum =
-    currentCategoryItems.reduce((max, item) => {
-      const codeNum = Number.parseInt(String(item.code || ''), 10)
-      return Number.isNaN(codeNum) ? max : Math.max(max, codeNum)
-    }, 0) + 1
-  return String(nextNum).padStart(6, '0')
+async function nextItemCodeForCategory(categoryId: string) {
+  try {
+    const res = await request.get<any[]>('/base/aux-items', {
+      params: { type: categoryId, order: 'desc', limit: 1 },
+    })
+    const top = (res.data || [])[0]
+    const nextNum =
+      (top
+        ? (() => {
+            const codeNum = Number.parseInt(String(top.code || ''), 10)
+            return Number.isNaN(codeNum) ? 0 : codeNum
+          })()
+        : 0) + 1
+    return String(nextNum).padStart(6, '0')
+  } catch {
+    return '000001'
+  }
 }
 
-function resetItemFormForAdd(categoryId?: string) {
+/** 同类别内查重：依赖服务端保存校验；本地仅做精确名称提示 */
+async function findItemDuplicates(type: string, name: string, excludeId?: string) {
+  try {
+    const { items } = await fetchAuxItemsPage({ type, keyword: name, pageSize: 20 })
+    const normalizedInput = normalizeDuplicateKey(name)
+    let exactDuplicate: any = null
+    let fuzzyDuplicate: any = null
+    for (const item of items) {
+      if (excludeId && item.id === excludeId) continue
+      const itemName = item.name || ''
+      if (itemName === name) {
+        exactDuplicate = item
+        break
+      }
+      if (!fuzzyDuplicate && normalizeDuplicateKey(itemName) === normalizedInput) {
+        fuzzyDuplicate = item
+      }
+    }
+    return { exactDuplicate, fuzzyDuplicate }
+  } catch {
+    return { exactDuplicate: null, fuzzyDuplicate: null }
+  }
+}
+
+/** 保存成功后就地更新当前页列表 */
+function applyLocalItemUpdate(id: string) {
+  const cat = categories.value.find(c => c.id === itemForm.value.type)
+  const updated = {
+    id,
+    type: itemForm.value.type,
+    code: itemForm.value.code,
+    name: itemForm.value.name,
+    remark: itemForm.value.remark || '',
+    status: itemForm.value.status || 'active',
+    field_values: itemForm.value.field_values || {},
+    category_name: cat?.name,
+    category_code: cat?.code,
+  }
+  const idx = pageItems.value.findIndex(i => i.id === id)
+  if (idx >= 0) {
+    const next = [...pageItems.value]
+    next[idx] = updated
+    pageItems.value = next
+  } else {
+    void loadPageItems()
+  }
+}
+
+async function resetItemFormForAdd(categoryId?: string) {
   const type = categoryId || itemForm.value.type || activeTab.value
+  const code = await nextItemCodeForCategory(type)
   itemForm.value = {
     type,
-    code: nextItemCodeForCategory(type),
+    code,
     name: '',
     remark: '',
     status: 'active',
@@ -985,10 +1170,10 @@ function resetItemFormForAdd(categoryId?: string) {
   }
 }
 
-function openItemDialog(t: string, row?: any) {
+async function openItemDialog(t: string, row?: any) {
   itemDialogType.value = t
   if (t === 'add') {
-    resetItemFormForAdd(activeTab.value)
+    await resetItemFormForAdd(activeTab.value)
   } else {
     // 编辑时解析 field_values
     let fv = {}
@@ -1033,17 +1218,14 @@ function onItemDialogKeydown(e: KeyboardEvent) {
 async function handleSaveItem(continueAdd = false) {
   itemSaving.value = true
   try {
-    itemForm.value.name = normalizePunctuation(itemForm.value.name?.trim?.() || '')
+    itemForm.value.name = normalizeImportText(itemForm.value.name?.trim?.() || '')
 
-    const exactDuplicate = allItems.value.find(item => {
-      if (item.type !== itemForm.value.type) {
-        return false
-      }
-      if (itemDialogType.value === 'edit' && item.id === itemForm.value.id) {
-        return false
-      }
-      return (item.name || '') === itemForm.value.name
-    })
+    const excludeId = itemDialogType.value === 'edit' ? itemForm.value.id : undefined
+    const { exactDuplicate, fuzzyDuplicate } = await findItemDuplicates(
+      itemForm.value.type,
+      itemForm.value.name,
+      excludeId
+    )
 
     if (exactDuplicate) {
       showError(
@@ -1052,22 +1234,9 @@ async function handleSaveItem(continueAdd = false) {
       return
     }
 
-    const duplicateTarget = allItems.value.find(item => {
-      if (item.type !== itemForm.value.type) {
-        return false
-      }
-      if (itemDialogType.value === 'edit' && item.id === itemForm.value.id) {
-        return false
-      }
-      if ((item.name || '') === itemForm.value.name) {
-        return false
-      }
-      return normalizeDuplicateKey(item.name || '') === normalizeDuplicateKey(itemForm.value.name)
-    })
-
-    if (duplicateTarget) {
+    if (fuzzyDuplicate) {
       const confirmed = await useConfirm({
-        message: `检测到近似项目 "编码：${duplicateTarget.code}；名称：${duplicateTarget.name}" ，保存后会形成近似重复，是否继续？`,
+        message: `检测到近似项目 "编码：${fuzzyDuplicate.code}；名称：${fuzzyDuplicate.name}" ，保存后会形成近似重复，是否继续？`,
         title: '重复提醒',
         confirmButtonText: '继续保存',
         cancelButtonText: '取消',
@@ -1078,23 +1247,27 @@ async function handleSaveItem(continueAdd = false) {
     const savedCategoryId = itemForm.value.type
 
     if (itemDialogType.value === 'add') {
-      await request.post('/base/aux-items', itemForm.value)
+      const res = await request.post<{ id: string }>('/base/aux-items', itemForm.value)
+      if (res.data?.id) {
+        applyLocalItemUpdate(res.data.id)
+      }
       showSuccess(continueAdd ? '项目创建成功，可继续新增' : '项目创建成功')
     } else {
       await request.put(`/base/aux-items/${itemForm.value.id}`, itemForm.value)
+      applyLocalItemUpdate(itemForm.value.id)
       showSuccess('项目更新成功')
       itemDialogVisible.value = false
-      await fetchData()
+      void relayoutTable()
       return
     }
 
-    await fetchData()
-
     if (continueAdd) {
-      resetItemFormForAdd(savedCategoryId)
+      await resetItemFormForAdd(savedCategoryId)
     } else {
       itemDialogVisible.value = false
+      void relayoutTable()
     }
+    void loadCategoryStats()
   } catch (error) {
     showOperationError(itemDialogType.value === 'add' ? '创建项目' : '更新项目', error)
   } finally {
@@ -1106,12 +1279,12 @@ async function handleDeleteItem(row: any) {
   const confirmed = await useDeleteConfirm(`项目「${row.name}」`)
   if (!confirmed) return
 
-  try {
-    await request.delete(`/base/aux-items/${row.id}`)
+  const result = await deleteAuxItemWithDialog(row.id, '删除项目')
+  if (result === 'success') {
+    pageItems.value = pageItems.value.filter(i => i.id !== row.id)
+    pagination.total = Math.max(0, pagination.total - 1)
+    void loadCategoryStats()
     showSuccess('删除成功')
-    await fetchData()
-  } catch (error) {
-    showOperationError('删除项目', error)
   }
 }
 
@@ -1154,42 +1327,53 @@ async function handleBatchStatus() {
 }
 
 // ========== 批量删除 ==========
+const batchDeleteMode = ref<'selected' | 'all'>('selected')
+
 function openBatchDelete() {
+  batchDeleteMode.value = 'selected'
   batchDeleteVisible.value = true
 }
 
 async function handleBatchDelete() {
   batchDeleteSaving.value = true
-  let successCount = 0
-  let failCount = 0
 
   try {
-    for (const row of selectedRows.value) {
-      try {
-        await request.delete(`/base/aux-items/${row.id}`)
-        successCount++
-      } catch {
-        failCount++
+    if (batchDeleteMode.value === 'all') {
+      if (!activeTab.value || pagination.total === 0) {
+        showError('没有可删除的项目')
+        batchDeleteVisible.value = false
+        return
       }
-    }
-
-    if (successCount > 0) {
-      showSuccess(
-        `已删除 ${successCount} 个项目${failCount > 0 ? `，${failCount} 个因已使用而跳过` : ''}`
+      await startAsyncTask('aux-items-delete', () =>
+        request.post('/base/aux-items/batch-delete-async', {
+          type: activeTab.value,
+          ...(showClosed.value ? {} : { status: 'active' }),
+        })
       )
-    } else if (failCount > 0) {
-      showError('所选项目全部已被科目或凭证使用，无法删除')
+    } else {
+      if (selectedRows.value.length === 0) {
+        showError('没有可删除的项目')
+        batchDeleteVisible.value = false
+        return
+      }
+      const ids = selectedRows.value.map(item => item.id)
+      await startAsyncTask('aux-items-delete', () =>
+        request.post('/base/aux-items/batch-delete-async', { ids })
+      )
     }
 
     batchDeleteVisible.value = false
     selectedRows.value = []
     tableRef.value?.clearSelection()
-    await fetchData()
   } catch (error) {
     showOperationError('批量删除', error)
   } finally {
     batchDeleteSaving.value = false
   }
+}
+
+async function handleTaskCompleted() {
+  await fetchData()
 }
 
 // ========== 搜索功能 ==========
@@ -1198,64 +1382,64 @@ function getCategoryName(typeId: string): string {
   return cat?.name || ''
 }
 
-function handleSearch() {
-  const keyword = searchKeyword.value.trim().toLowerCase()
+async function handleSearch() {
+  const keyword = searchKeyword.value.trim()
   if (!keyword) {
     showError('请输入搜索关键字')
     return
   }
 
+  const lower = keyword.toLowerCase()
   const results: { categories: any[]; items: any[]; customFields: any[] } = {
     categories: [],
     items: [],
     customFields: [],
   }
 
-  // 搜索类目
   for (const cat of categories.value) {
-    if (cat.name.toLowerCase().includes(keyword)) {
+    if (cat.name.toLowerCase().includes(lower) || String(cat.code || '').toLowerCase().includes(lower)) {
       results.categories.push(cat)
     }
   }
 
-  // 搜索项目（编码、名称）
-  for (const item of allItems.value) {
-    if (item.code.toLowerCase().includes(keyword) || item.name.toLowerCase().includes(keyword)) {
-      results.items.push(item)
-    }
-  }
+  try {
+    const { items } = await fetchAuxItemsPage({ keyword, page: 1, pageSize: 200 })
+    results.items = items.filter(
+      (item: any) => !isAuxCategoryExcludedFromProjectList(item.category_code)
+    )
 
-  // 搜索自定义字段值
-  for (const item of allItems.value) {
-    const cat = categories.value.find(c => c.id === item.type)
-    const fields = cat?.fields || []
-    let fieldValues: Record<string, string> = {}
-    try {
-      fieldValues = item.field_values
-        ? typeof item.field_values === 'string'
-          ? JSON.parse(item.field_values)
-          : item.field_values
-        : {}
-    } catch {
-      /* ignore */
-    }
-
-    for (const field of fields) {
-      const value = fieldValues[field.field_key]
-      if (value && String(value).toLowerCase().includes(keyword)) {
-        // 避免重复添加同一项目
-        const alreadyAdded = results.customFields.some(
-          r => r.item.id === item.id && r.fieldName === field.field_name
-        )
-        if (!alreadyAdded) {
-          results.customFields.push({
-            item,
-            fieldName: field.field_name,
-            value: String(value),
-          })
+    for (const item of results.items) {
+      const cat = categories.value.find(c => c.id === item.type)
+      const fields = cat?.fields || []
+      let fieldValues: Record<string, string> = {}
+      try {
+        fieldValues = item.field_values
+          ? typeof item.field_values === 'string'
+            ? JSON.parse(item.field_values)
+            : item.field_values
+          : {}
+      } catch {
+        /* ignore */
+      }
+      for (const field of fields) {
+        const value = fieldValues[field.field_key]
+        if (value && String(value).toLowerCase().includes(lower)) {
+          const alreadyAdded = results.customFields.some(
+            r => r.item.id === item.id && r.fieldName === field.field_name
+          )
+          if (!alreadyAdded) {
+            results.customFields.push({
+              item,
+              fieldName: field.field_name,
+              value: String(value),
+            })
+          }
         }
       }
     }
+  } catch (error) {
+    showOperationError('搜索项目', error)
+    return
   }
 
   searchResults.value = results
@@ -1270,33 +1454,32 @@ function locateCategory(catId: string) {
 }
 
 function locateItem(item: any) {
-  // 如果项目是已完结状态，自动开启显示已完结
   if (item.status === 'closed') {
     showClosed.value = true
   }
-
-  // 切换到对应类目并设置过滤
   activeTab.value = item.type
   searchFilterIds.value = [item.id]
+  pagination.page = 1
+  void loadPageItems()
   searchDialogVisible.value = false
 }
 
 function clearSearchFilter() {
   searchFilterIds.value = null
+  pagination.page = 1
+  void loadPageItems()
 }
 
 // ========== 导出功能 ==========
 async function exportData() {
-  const currentPageCount = filteredList.value.length
-  const totalCount = fullFilteredList.value.length
+  const currentPageCount = pageItems.value.length
+  const totalCount = pagination.total
 
-  // 如果当前页数据等于总数据，直接导出，不显示对话框
   if (currentPageCount === totalCount) {
-    await performExport(fullFilteredList.value)
+    await performExport(pageItems.value)
     return
   }
 
-  // 显示选择对话框
   try {
     await ElMessageBox.confirm(
       `当前页：${currentPageCount} 条\n全部数据：${totalCount} 条\n\n请选择导出范围：`,
@@ -1308,14 +1491,26 @@ async function exportData() {
         type: 'info',
       }
     )
-    // 用户选择"导出全部"
-    await performExport(fullFilteredList.value)
+    const loadingInstance = ElLoading.service({
+      lock: true,
+      text: `正在加载 ${totalCount} 条数据...`,
+      background: 'rgba(0, 0, 0, 0.7)',
+    })
+    try {
+      const all = await fetchAllAuxItemsByType(activeTab.value, {
+        status: showClosed.value ? undefined : 'active',
+        onProgress: (loaded, total) => {
+          loadingInstance.setText(`正在加载导出数据 ${loaded}/${total}...`)
+        },
+      })
+      await performExport(all)
+    } finally {
+      loadingInstance.close()
+    }
   } catch (action) {
     if (action === 'cancel') {
-      // 用户选择"仅当前页"
-      await performExport(filteredList.value)
+      await performExport(pageItems.value)
     }
-    // action === 'close' 时不做任何操作（用户关闭对话框）
   }
 }
 
@@ -1411,166 +1606,119 @@ async function performExport(dataList: any[]) {
 
 // ========== 导入功能 ==========
 function openImportDialog() {
-  importPreview.value = []
-  importErrors.value = []
-  importWarnings.value = []
-  uploadedFileName.value = ''
+  resetImportDialog()
   importDialogVisible.value = true
 }
 
 function closeImportDialog() {
-  importPreview.value = []
-  importErrors.value = []
-  importWarnings.value = []
-  uploadedFileName.value = ''
   importDialogVisible.value = false
 }
 
-function clearUploadedFile() {
+function resetImportDialog() {
   importPreview.value = []
-  importErrors.value = []
   importWarnings.value = []
+  importBlankSkipped.value = 0
+  importIssuesDialogVisible.value = false
+  importIssues.value = []
+  importParsing.value = false
+  importParseProgress.value = 0
+  importParseMessage.value = ''
   uploadedFileName.value = ''
-  if (importUploadRef.value) {
-    importUploadRef.value.clearFiles()
+  importing.value = false
+  importUploadRef.value?.clearFiles()
+}
+
+async function refreshImportIssuesAsync() {
+  const token = ++importIssuesBuildToken
+  importIssuesLoading.value = true
+  importIssues.value = []
+  try {
+    await nextTick()
+    await yieldToMain()
+    importIssues.value = await aggregateImportIssuesAsync(
+      importPreview.value,
+      describeProjectRowIssue
+    )
+  } finally {
+    if (token === importIssuesBuildToken) importIssuesLoading.value = false
   }
 }
 
+async function openImportIssuesDialog() {
+  importIssuesDialogVisible.value = true
+  await refreshImportIssuesAsync()
+}
+
+function clearUploadedFile() {
+  resetImportDialog()
+}
+
 async function onImportFileChange(file: UploadFile) {
-  if (!file.raw) return
+  if (!file.raw || importParsing.value) return
   uploadedFileName.value = file.name
+  importParsing.value = true
+  importParseProgress.value = 0
+  importParseMessage.value = '正在读取 Excel 文件…'
   try {
-    const { utils, read } = await import('xlsx')
+    await nextTick()
+    await yieldToMain()
     const arrayBuffer = await file.raw.arrayBuffer()
+    await yieldToMain()
+    importParseMessage.value = '正在解析工作表…'
+    const { utils, read } = await import('xlsx')
     const workbook = read(arrayBuffer, { type: 'array' })
     const sheetName = workbook.SheetNames[0]
     const sheet = workbook.Sheets[sheetName]
-    const rawData: any[] = utils.sheet_to_json(sheet)
+    await yieldToMain()
+    importParseMessage.value = '正在校验导入数据…'
+    const rawData: Record<string, unknown>[] = utils.sheet_to_json(sheet, { defval: '' })
 
     if (rawData.length === 0) {
       showError('文件中没有数据')
+      clearUploadedFile()
       return
     }
 
-    const currentCategoryItems = allItems.value.filter(item => item.type === activeTab.value)
-    const maxCode = currentCategoryItems.reduce((max, item) => {
-      const codeNum = Number.parseInt(String(item.code || ''), 10)
-      return Number.isNaN(codeNum) ? max : Math.max(max, codeNum)
-    }, 0)
+    const res = await request.get<any[]>('/base/aux-items', {
+      params: { type: activeTab.value, order: 'desc', limit: 1 },
+    })
+    const topItem = (res.data || [])[0]
+    const maxCode = topItem
+      ? (() => {
+          const codeNum = Number.parseInt(String(topItem.code || ''), 10)
+          return Number.isNaN(codeNum) ? 0 : codeNum
+        })()
+      : 0
 
-    // 获取当前类别字段配置，建立 field_name → field_key 映射
     const cat = categories.value.find(c => c.id === activeTab.value)
     const customFields = (cat?.fields || []).filter((f: any) => f.is_enabled !== 0)
 
-    const parsed = rawData
-      .map((row: any, index: number) => {
-        const name = normalizePunctuation(String(row['名称'] || '').trim())
-        const code = String(row['编码'] || '').trim()
-        const statusStr = String(row['状态'] || '').trim()
-        const status = statusStr === '已完结' || statusStr === 'closed' ? 'closed' : 'active'
-        const remark = String(row['备注'] || '').trim()
-
-        // 解析动态字段值
-        const fieldValues: Record<string, string> = {}
-        for (const field of customFields) {
-          const val = String(row[field.field_name] ?? '').trim()
-          if (val) fieldValues[field.field_key] = normalizeDirectionFieldValue(field, val)
-        }
-
-        return { code, name, status, remark, field_values: fieldValues, _excelRow: index + 2 }
-      })
-      .filter(item => item.name) // 名称必填，跳过空行
-
-    // ========== 重复检测逻辑 ==========
-    // 1. 检测与现有数据重复
-    const existingNames = new Set(
-      currentCategoryItems.map(item => normalizeDuplicateKey(item.name))
-    )
-
-    // 2. 检测Excel内部重复和与现有数据重复
-    const duplicates: any[] = []
-    const seenNames = new Map<string, number>() // normalizedName -> first occurrence row
-
-    for (let i = 0; i < parsed.length; i++) {
-      const item = parsed[i]
-      const normalizedName = normalizeDuplicateKey(item.name)
-
-      // 与现有数据重复
-      if (existingNames.has(normalizedName)) {
-        duplicates.push({
-          row: item._excelRow,
-          name: item.name,
-          reason: '与现有项目重复',
-        })
-        continue
-      }
-
-      // Excel内部重复
-      if (seenNames.has(normalizedName)) {
-        duplicates.push({
-          row: item._excelRow,
-          name: item.name,
-          reason: `与第 ${seenNames.get(normalizedName)} 行重复`,
-        })
-        continue
-      }
-
-      seenNames.set(normalizedName, item._excelRow)
-    }
-
-    // 3. 如果有重复，设置错误状态
-    if (duplicates.length > 0) {
-      importErrors.value = duplicates
-      importPreview.value = [] // 清空预览
-      return
-    }
-
-    // 4. 无重复，检测编号断号
-    importErrors.value = []
-    importWarnings.value = []
-
-    // 检测用户提供的编号是否有断号
-    const userProvidedCodes = parsed
-      .filter(item => item.code) // 只检查用户提供的编号
-      .map(item => Number.parseInt(item.code, 10))
-      .filter(code => !Number.isNaN(code))
-      .sort((a, b) => a - b)
-
-    if (userProvidedCodes.length > 1) {
-      const gaps: string[] = []
-      for (let i = 1; i < userProvidedCodes.length; i++) {
-        const prev = userProvidedCodes[i - 1]
-        const curr = userProvidedCodes[i]
-        if (curr - prev > 1) {
-          gaps.push(`${prev} → ${curr}（缺少 ${curr - prev - 1} 个编号）`)
-        }
-      }
-
-      if (gaps.length > 0) {
-        importWarnings.value = [
-          {
-            type: 'gap',
-            message: '检测到编号不连续',
-            gaps: gaps,
-            suggestion:
-              '建议：1) 在Excel中补充缺失的编号行；2) 或删除"编码"列让系统自动生成连续编号',
-          },
-        ]
-      }
-    }
-
-    // 5. 生成连续编号并设置预览
-    let codeCounter = maxCode + 1
-    const finalParsed = parsed.map(item => {
-      const finalCode = item.code || String(codeCounter++).padStart(6, '0')
-      // 移除内部属性 _excelRow
-      const { _excelRow, ...cleanItem } = item
-      return { ...cleanItem, code: finalCode }
+    const { rows, blankSkipped } = await parseProjectImportRowsAsync(rawData, {
+      customFields,
+      maxCode,
+      normalizeDirection: normalizeDirectionFieldValue,
+      onProgress: pct => {
+        importParseProgress.value = pct
+      },
     })
-    importPreview.value = finalParsed
+
+    importBlankSkipped.value = blankSkipped
+    importWarnings.value = []
+    const gapWarning = detectProjectCodeGaps(rows.filter(r => r.matched).map(r => ({ code: r.code })))
+    if (gapWarning) importWarnings.value = [gapWarning]
+
+    importPreview.value = rows
+    importIssues.value = []
+    if (rows.length > 0 && rows.every(r => !r.matched) && rows.some(r => r.error)) {
+      void openImportIssuesDialog()
+    }
   } catch (error) {
     showError('文件解析失败，请检查文件格式')
     console.error('Import parse error:', error)
+    clearUploadedFile()
+  } finally {
+    importParsing.value = false
+    importParseMessage.value = ''
   }
 }
 
@@ -1601,67 +1749,21 @@ async function downloadTemplate() {
 }
 
 async function handleImport() {
-  if (importPreview.value.length === 0) return
+  const matched = importPreview.value.filter(r => r.matched)
+  if (matched.length === 0) {
+    if (importIssueCount.value > 0) void openImportIssuesDialog()
+    return
+  }
   importing.value = true
-  let successCount = 0
-  let failCount = 0
-  const errors: string[] = []
-  const successItems: string[] = []
 
   try {
-    for (const item of importPreview.value) {
-      try {
-        await request.post('/base/aux-items', {
-          type: activeTab.value,
-          code: item.code,
-          name: item.name,
-          status: item.status,
-          remark: item.remark,
-          field_values: item.field_values || {},
-        })
-        successCount++
-        successItems.push(`${item.code} - ${item.name}`)
-      } catch (error: any) {
-        failCount++
-        const msg = error.response?.data?.message || '未知错误'
-        errors.push(`${item.code} - ${item.name}: ${msg}`)
-      }
-    }
-
-    // 构建详细的导入结果反馈
-    let message = `✓ 导入完成\n\n`
-    message += `成功导入：${successCount} 条\n`
-    if (failCount > 0) {
-      message += `导入失败：${failCount} 条\n`
-    }
-
-    if (successCount > 0) {
-      message += `\n【成功项目】\n`
-      message += successItems.slice(0, 5).join('\n')
-      if (successItems.length > 5) {
-        message += `\n...还有 ${successItems.length - 5} 条`
-      }
-    }
-
-    if (errors.length > 0) {
-      message += `\n\n【失败项目】\n`
-      message += errors.slice(0, 5).join('\n')
-      if (errors.length > 5) {
-        message += `\n...还有 ${errors.length - 5} 条`
-      }
-    }
-
-    // 使用 MessageBox 显示详细结果
-    await useConfirm({
-      message: message,
-      title: '导入结果',
-      confirmButtonText: '确定',
-      showCancelButton: false,
-      type: successCount > 0 && failCount === 0 ? 'success' : failCount > 0 ? 'warning' : 'info',
-    })
-
+    await startAsyncTask('aux-items-import', () =>
+      request.post('/base/aux-items/batch-import-async', {
+        type: activeTab.value,
+        items: matched.map(({ rowIndex: _ri, matched: _m, error: _e, ...rest }) => rest),
+      })
+    )
     closeImportDialog()
-    await fetchData()
   } catch (error) {
     showOperationError('批量导入', error)
   } finally {
@@ -1671,7 +1773,12 @@ async function handleImport() {
 
 useKeyboardShortcuts([
   commonShortcuts.save(() => {
-    if (itemDialogVisible.value && !itemSaving.value && !catDialogVisible.value && !importDialogVisible.value) {
+    if (
+      itemDialogVisible.value &&
+      !itemSaving.value &&
+      !catDialogVisible.value &&
+      !importDialogVisible.value
+    ) {
       handleSaveItem(false)
     }
   }),
@@ -1702,6 +1809,8 @@ onMounted(fetchData)
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-light);
   border-radius: 6px;
+  flex-wrap: nowrap;
+  overflow: hidden;
 }
 
 .project-title {
@@ -1730,8 +1839,17 @@ onMounted(fetchData)
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   gap: 6px;
+  flex-shrink: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+
+.project-toolbar > * {
   flex-shrink: 0;
 }
 
@@ -1781,8 +1899,8 @@ onMounted(fetchData)
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
-  margin-top: 6px;
+  gap: 6px;
+  margin-top: 4px;
   flex-shrink: 0;
   font-size: 12px;
   color: var(--el-text-color-secondary);
@@ -1847,8 +1965,19 @@ onMounted(fetchData)
 .import-preview {
   margin-top: 16px;
 }
-.import-errors {
-  margin-top: 16px;
+.import-preview-more {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #909399;
+}
+.import-parsing {
+  margin-top: 12px;
+}
+.import-parsing__text {
+  margin: 8px 0 0;
+  font-size: 12px;
+  color: #909399;
+  text-align: center;
 }
 .import-warnings {
   margin-top: 16px;

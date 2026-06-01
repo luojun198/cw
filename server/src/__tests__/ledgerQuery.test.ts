@@ -67,6 +67,19 @@ describe('ledgerQuery', () => {
     expect(query.initBalanceSql).toContain("COALESCE(ib.aux_item_id, '') = ''")
   })
 
+  it('日记账结转 SQL 应按科目余额方向计算', () => {
+    const query = buildCashJournalQuery({
+      accountSetId: 'as-1',
+      accountId: 'acc-1',
+      startDate: '2026-01-01',
+      endDate: '2026-01-31',
+      page: 2,
+      pageSize: 20,
+    })
+    expect(query.carryAmountSql).toContain('account_direction')
+    expect(query.listSql).toContain('account_direction')
+  })
+
   it('明细账按辅助项目筛选时只取对应 aux_item_id 期初', () => {
     const query = buildLedgerDetailQuery({
       accountSetId: 'as-1',

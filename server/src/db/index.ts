@@ -5,6 +5,8 @@ import { resolve, dirname, basename } from 'path'
 import { fileURLToPath } from 'url'
 import { v4 as uuidv4 } from 'uuid'
 import { PRESET_ROLES } from './permissions.js'
+import { ensureUserRoleLink } from '../services/userRoleLinks.js'
+import { ensureDynamicReportSchema } from './ensureDynamicReportSchema.js'
 
 const MODULE_FILE = fileURLToPath(import.meta.url)
 const MODULE_DIR = dirname(MODULE_FILE)
@@ -15,7 +17,7 @@ const PROJECT_ROOT_DIR = resolve(SERVER_ROOT_DIR, '..')
 // 便携部署：process.execPath = deploy/node/node.exe，DB 在 deploy/data/
 // pkg 部署：process.pkg 标识，DB 在 exe 同目录/data/
 // 开发环境：使用项目根目录
-function getDeployDir(): string {
+export function getDeployDir(): string {
   const execPath = process.execPath || ''
   const isPkg = !!(process as any).pkg
 
@@ -64,6 +66,123 @@ export function ensureUsersTableSchema(database: Database.Database) {
   if (!names.has('nickname')) {
     database.exec('ALTER TABLE users ADD COLUMN nickname TEXT')
   }
+  if (!names.has('permission_mode')) {
+    database.exec(
+      "ALTER TABLE users ADD COLUMN permission_mode TEXT DEFAULT 'role' CHECK(permission_mode IN ('role', 'custom'))"
+    )
+  }
+  if (!names.has('custom_permissions')) {
+    database.exec('ALTER TABLE users ADD COLUMN custom_permissions TEXT')
+  }
+}
+
+function ensureInitBalanceDetailColumns(database: Database.Database) {
+  const tableExists = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'init_balances'")
+    .get()
+  if (!tableExists) return
+
+  const columns = database.prepare('PRAGMA table_info(init_balances)').all() as Array<{ name: string }>
+  const names = new Set(columns.map(column => column.name))
+  if (!names.has('opening_debit')) {
+    database.exec('ALTER TABLE init_balances ADD COLUMN opening_debit REAL NOT NULL DEFAULT 0')
+  }
+  if (!names.has('opening_credit')) {
+    database.exec('ALTER TABLE init_balances ADD COLUMN opening_credit REAL NOT NULL DEFAULT 0')
+  }
+  if (!names.has('pre_book_debit')) {
+    database.exec('ALTER TABLE init_balances ADD COLUMN pre_book_debit REAL NOT NULL DEFAULT 0')
+  }
+  if (!names.has('pre_book_credit')) {
+    database.exec('ALTER TABLE init_balances ADD COLUMN pre_book_credit REAL NOT NULL DEFAULT 0')
+  }
+}
+
+/** 恢复旧备份后 schema_migrations 可能已是最新但缺列，补齐关键结构 */
+export function repairDatabaseSchemaCompatibility(database: Database.Database) {
+  ensureUsersTableSchema(database)
+
+  const rolesExists = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'roles'")
+    .get()
+  if (rolesExists) {
+    const roleColumns = database.prepare('PRAGMA table_info(roles)').all() as Array<{ name: string }>
+    const roleNames = new Set(roleColumns.map(column => column.name))
+    if (!roleNames.has('is_personal')) {
+      database.exec('ALTER TABLE roles ADD COLUMN is_personal INTEGER DEFAULT 0')
+    }
+    if (!roleNames.has('owner_user_id')) {
+      database.exec('ALTER TABLE roles ADD COLUMN owner_user_id TEXT REFERENCES users(id)')
+    }
+  }
+
+  const userRolesExists = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'user_roles'")
+    .get()
+  if (!userRolesExists) {
+    database.exec(`
+      CREATE TABLE user_roles (
+        id TEXT PRIMARY KEY,
+        user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        role_id TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+        account_set_id TEXT NOT NULL REFERENCES account_sets(id),
+        created_at TEXT NOT NULL DEFAULT (datetime('now')),
+        UNIQUE(user_id, role_id, account_set_id)
+      );
+      CREATE INDEX IF NOT EXISTS idx_user_roles_user ON user_roles(user_id, account_set_id);
+      CREATE INDEX IF NOT EXISTS idx_user_roles_role ON user_roles(role_id, account_set_id);
+      CREATE INDEX IF NOT EXISTS idx_user_roles_account ON user_roles(account_set_id);
+    `)
+
+    const usersWithRoles = database
+      .prepare('SELECT id, role_id, account_set_id FROM users WHERE role_id IS NOT NULL')
+      .all() as Array<{ id: string; role_id: string; account_set_id: string }>
+
+    if (usersWithRoles.length > 0) {
+      const insertStmt = database.prepare(`
+        INSERT OR IGNORE INTO user_roles (id, user_id, role_id, account_set_id)
+        VALUES (?, ?, ?, ?)
+      `)
+      for (const user of usersWithRoles) {
+        insertStmt.run(uuidv4(), user.id, user.role_id, user.account_set_id)
+      }
+    }
+  }
+}
+
+function ensureUserLoginSessionsTable(database: Database.Database) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS user_login_sessions (
+      id TEXT PRIMARY KEY,
+      account_set_id TEXT NOT NULL REFERENCES account_sets(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      username TEXT NOT NULL,
+      login_ip TEXT,
+      user_agent TEXT,
+      login_at TEXT NOT NULL DEFAULT (datetime('now')),
+      last_seen_at TEXT NOT NULL DEFAULT (datetime('now')),
+      status TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active', 'forced', 'logout', 'expired')),
+      forced_logout_at TEXT,
+      forced_by_ip TEXT
+    );
+    CREATE INDEX IF NOT EXISTS idx_user_login_sessions_user_status ON user_login_sessions(user_id, account_set_id, status);
+    CREATE INDEX IF NOT EXISTS idx_user_login_sessions_active_ip ON user_login_sessions(user_id, account_set_id, login_ip, status);
+  `)
+}
+
+/** 旧库结构补齐（不含 schema.sql 基础建表，不含迁移脚本） */
+export function applyLegacySchemaEnsures(database: Database.Database) {
+  ensureAccountsNoNegativeColumn(database)
+  ensureDynamicReportSchema(database)
+  ensureAuxCategoryDefaultItem(database)
+  ensureAuxCategoryFieldsTable(database)
+  ensureVoucherIndexes(database)
+  ensureBudgetSurplusAdjustmentsTable(database)
+  ensureUsersTableSchema(database)
+  ensureInitBalanceDetailColumns(database)
+  repairDatabaseSchemaCompatibility(database)
+  ensureUserLoginSessionsTable(database)
+  ensureAccountSetImportSourceColumn(database)
 }
 
 function ensureAccountsNoNegativeColumn(database: Database.Database) {
@@ -75,48 +194,25 @@ function ensureAccountsNoNegativeColumn(database: Database.Database) {
   }
 }
 
-function ensureReportSourceConstraint(database: Database.Database) {
-  // Check if 'xls' is allowed in the CHECK constraint of report_definitions.source
-  const tableInfo = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='report_definitions'").get() as { sql: string } | undefined
-  if (tableInfo?.sql && !tableInfo.sql.includes("'xls'")) {
-    // Rebuild table with updated CHECK constraint
-    database.exec(`
-      CREATE TABLE IF NOT EXISTS report_definitions_new (
-        id TEXT PRIMARY KEY,
-        account_set_id TEXT NOT NULL REFERENCES account_sets(id),
-        code TEXT NOT NULL,
-        name TEXT NOT NULL,
-        source TEXT NOT NULL DEFAULT 'acd' CHECK(source IN ('acd', 'manual', 'xls')),
-        source_file TEXT,
-        sort_order INTEGER DEFAULT 0,
-        is_enabled INTEGER NOT NULL DEFAULT 1,
-        created_at TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-        UNIQUE(account_set_id, code)
-      );
-      INSERT INTO report_definitions_new SELECT * FROM report_definitions;
-      DROP TABLE report_definitions;
-      ALTER TABLE report_definitions_new RENAME TO report_definitions;
-    `)
-  }
+function ensureAccountSetImportSourceColumn(database: Database.Database) {
+  const tableExists = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'account_sets'")
+    .get()
+  if (!tableExists) return
 
-  // Same for report_template_sources.source_type
-  const sourceTableInfo = database.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='report_template_sources'").get() as { sql: string } | undefined
-  if (sourceTableInfo?.sql && !sourceTableInfo.sql.includes("'xls'")) {
+  const columns = database.prepare('PRAGMA table_info(account_sets)').all() as Array<{ name: string }>
+  const hasImportSource = columns.some(column => column.name === 'import_source')
+
+  if (!hasImportSource) {
+    database.exec(`ALTER TABLE account_sets ADD COLUMN import_source TEXT DEFAULT 'manual'`)
     database.exec(`
-      CREATE TABLE IF NOT EXISTS report_template_sources_new (
-        id TEXT PRIMARY KEY,
-        report_definition_id TEXT NOT NULL REFERENCES report_definitions(id) ON DELETE CASCADE,
-        source_file TEXT NOT NULL,
-        source_type TEXT NOT NULL DEFAULT 'vts' CHECK(source_type IN ('vts', 'txt', 'xls')),
-        raw_content TEXT,
-        content_encoding TEXT DEFAULT 'gb18030',
-        parse_version TEXT,
-        created_at TEXT NOT NULL DEFAULT (datetime('now'))
-      );
-      INSERT INTO report_template_sources_new SELECT * FROM report_template_sources;
-      DROP TABLE report_template_sources;
-      ALTER TABLE report_template_sources_new RENAME TO report_template_sources;
+      UPDATE account_sets
+      SET import_source = 'acd'
+      WHERE id IN (
+        SELECT DISTINCT account_set_id
+        FROM users
+        WHERE username = 'MANAGER'
+      )
     `)
   }
 }
@@ -205,6 +301,8 @@ export function getDb(): Database.Database {
     db.pragma('journal_mode = WAL')
     db.pragma('foreign_keys = ON')
     db.pragma('synchronous = NORMAL')
+    db.pragma('busy_timeout = 30000')
+    db.pragma('wal_autocheckpoint = 1000')
     db.pragma('cache_size = -64000') // 64MB cache
     db.pragma('temp_store = MEMORY')
     if (!__DB_PATH_LOGGED) {
@@ -214,6 +312,7 @@ export function getDb(): Database.Database {
       )
       __DB_PATH_LOGGED = true
     }
+    ensureAccountSetImportSourceColumn(db)
   }
   return db
 }
@@ -243,13 +342,7 @@ export function initDatabase(): DatabaseType {
 
   const schema = readFileSync(schemaPath, 'utf-8')
   database.exec(schema)
-  ensureAccountsNoNegativeColumn(database)
-  ensureReportSourceConstraint(database)
-  ensureAuxCategoryDefaultItem(database)
-  ensureAuxCategoryFieldsTable(database)
-  ensureVoucherIndexes(database)
-  ensureBudgetSurplusAdjustmentsTable(database)
-  ensureUsersTableSchema(database)
+  applyLegacySchemaEnsures(database)
   return database
 }
 
@@ -322,15 +415,37 @@ export function ensureAccountSetSecurityBootstrap(accountSetId: string) {
     .get('admin', accountSetId)
   if (existingAdmin) return
 
+  const adminUserId = uuidv4()
   database.prepare(
     `INSERT INTO users (id, account_set_id, username, password, nickname, role_id, status, created_at, updated_at)
      VALUES (?, ?, 'admin', ?, '系统管理员', ?, 'active', datetime('now'), datetime('now'))`
   ).run(
-    uuidv4(),
+    adminUserId,
     accountSetId,
     '$2a$10$Dj9DCcIGNtjYZmfcub6td.wly0mkJT.bLPc.yeFAStW77WqkQu5ie',
     adminRole.id
   )
+  ensureUserRoleLink(database, adminUserId, adminRole.id, accountSetId)
 }
 
-export { DB_PATH }
+/** 校验数据库完整性，损坏时抛出可读错误（常见于 WAL 文件不同步） */
+export function assertDatabaseIntegrity(database: Database.Database = getDb()) {
+  const result = database.pragma('integrity_check', { simple: true }) as string
+  if (result === 'ok') return
+
+  throw new Error(
+    `数据库文件已损坏（${result}）。请停止服务，删除 data 目录下的 finance.db、finance.db-wal、finance.db-shm 后重新启动；` +
+      '若仍失败，请重新解压部署包或联系技术支持。'
+  )
+}
+
+/** 将 WAL 日志合并回主库，降低部署/异常退出后的损坏风险 */
+export function checkpointDatabase(database: Database.Database = getDb()) {
+  try {
+    database.pragma('wal_checkpoint(TRUNCATE)')
+  } catch (error) {
+    console.warn('[DB] wal_checkpoint 失败:', error)
+  }
+}
+
+export { DB_PATH, DEPLOY_DIR }

@@ -1,7 +1,18 @@
 <script setup lang="ts">
 import { ref, computed } from 'vue'
-import { Calendar, ArrowDown, ArrowUp } from '@element-plus/icons-vue'
+import {
+  Calendar,
+  ArrowDown,
+  ArrowUp,
+  FolderOpened,
+  Star,
+  StarFilled,
+} from '@element-plus/icons-vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import type { VoucherFilters } from '@/composables/useVoucherQuery'
+import { cloneVoucherFilters } from '@/composables/useVoucherQuery'
+import { useQueryScheme } from '@/composables/useQueryScheme'
+import { ACCOUNT_SELECT_POPPER_CLASS } from '@/utils/accountSelectDisplay'
 
 interface Props {
   filters: VoucherFilters
@@ -12,6 +23,9 @@ interface Props {
   enableAccount?: boolean
   enableAuxiliary?: boolean
   enableSort?: boolean
+  enableQueryScheme?: boolean
+  enableOperator?: boolean
+  querySchemeKey?: string
   auxCategories?: any[]
   voucherTypes?: any[]
   accounts?: any[]
@@ -26,6 +40,9 @@ const props = withDefaults(defineProps<Props>(), {
   enableAccount: false,
   enableAuxiliary: false,
   enableSort: false,
+  enableQueryScheme: false,
+  enableOperator: false,
+  querySchemeKey: 'voucher-query-schemes',
   auxCategories: () => [],
   voucherTypes: () => [],
   accounts: () => [],
@@ -37,11 +54,25 @@ const emit = defineEmits<{
   sortChange: [field: string, order: 'asc' | 'desc']
   loadAccounts: []
   loadAuxItems: [categoryId: string]
+  searchAuxItems: [categoryId: string, keyword: string]
+  applyScheme: [filters: VoucherFilters]
 }>()
 
 const showDateDialog = ref(false)
 const tempDateRange = ref<string[]>([])
 const filterExpanded = ref(false)
+
+// 查询方案管理
+const showSchemeDialog = ref(false)
+const showSaveSchemeDialog = ref(false)
+const schemeName = ref('')
+const schemeDescription = ref('')
+const schemeSetAsDefault = ref(false)
+const schemeOverwriteId = ref<string | null>(null)
+
+const queryScheme = props.enableQueryScheme
+  ? useQueryScheme({ storageKey: props.querySchemeKey })
+  : null
 
 const years = computed(() => {
   const currentYear = new Date().getFullYear()
@@ -59,9 +90,7 @@ const hasScopeGroup = computed(
   () => props.enableStatus || props.enableYearPeriod || props.enableVoucherType
 )
 
-const hasAuxGroup = computed(
-  () => props.enableAuxiliary && props.auxCategories.length > 0
-)
+const hasAuxGroup = computed(() => props.enableAuxiliary && props.auxCategories.length > 0)
 
 const statusLabels: Record<string, string> = {
   draft: '只录入',
@@ -79,6 +108,9 @@ const activeFilterCount = computed(() => {
   if (f.period != null) count++
   if (f.voucherTypeIds?.length) count++
   if (f.accountIds?.length) count++
+  if (f.makerName?.trim()) count++
+  if (f.auditorName?.trim()) count++
+  if (f.posterName?.trim()) count++
   if (f.auxItems) {
     for (const ids of Object.values(f.auxItems)) {
       if (Array.isArray(ids) && ids.length) count++
@@ -92,10 +124,9 @@ const activeFilterCount = computed(() => {
   return count
 })
 
-const filterSummary = computed(() => {
+const collapsedSummary = computed(() => {
   const parts: string[] = []
   const f = props.filters
-  if (f.keyword?.trim()) parts.push(`关键词「${f.keyword.trim()}」`)
   if (f.status) parts.push(statusLabels[f.status] || f.status)
   if (f.dateRange?.length === 2 && f.dateRange[0] && f.dateRange[1]) {
     parts.push(`${f.dateRange[0]}~${f.dateRange[1]}`)
@@ -106,9 +137,16 @@ const filterSummary = computed(() => {
   if (f.period != null) parts.push(`${f.period}月`)
   if (f.voucherTypeIds?.length) parts.push(`类型${f.voucherTypeIds.length}项`)
   if (f.accountIds?.length) parts.push(`科目${f.accountIds.length}项`)
-  if (activeFilterCount.value === 0) return '未设置筛选条件，点击展开'
+  if (f.makerName?.trim() || f.auditorName?.trim() || f.posterName?.trim()) {
+    parts.push('经办人已设')
+  }
+  const auxCount =
+    Object.values(f.auxItems || {}).filter(ids => Array.isArray(ids) && ids.length).length +
+    Object.values(f.auxFields || {}).filter(val => val != null && val !== '').length
+  if (auxCount > 0) parts.push(`辅助${auxCount}项`)
+  if (parts.length === 0) return '更多条件'
   if (parts.length <= 2) return parts.join(' · ')
-  return `已设 ${activeFilterCount.value} 项：${parts.slice(0, 2).join(' · ')}…`
+  return `${parts.slice(0, 2).join(' · ')} 等${parts.length}项`
 })
 
 function confirmDateRange() {
@@ -138,6 +176,156 @@ function openDateDialog() {
   tempDateRange.value = [...props.filters.dateRange]
   showDateDialog.value = true
 }
+
+// 快捷时间选择
+function setQuickDate(type: 'today' | 'week' | 'month' | 'quarter' | 'year') {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = today.getMonth()
+  const date = today.getDate()
+  const day = today.getDay()
+
+  let startDate = ''
+  let endDate = ''
+
+  switch (type) {
+    case 'today':
+      startDate = endDate = formatDate(today)
+      break
+    case 'week':
+      // 本周一到今天
+      const monday = new Date(today)
+      monday.setDate(date - (day === 0 ? 6 : day - 1))
+      startDate = formatDate(monday)
+      endDate = formatDate(today)
+      break
+    case 'month':
+      // 本月1号到今天
+      startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`
+      endDate = formatDate(today)
+      break
+    case 'quarter':
+      // 本季度第一天到今天
+      const quarterStartMonth = Math.floor(month / 3) * 3
+      startDate = `${year}-${String(quarterStartMonth + 1).padStart(2, '0')}-01`
+      endDate = formatDate(today)
+      break
+    case 'year':
+      // 本年1月1日到今天
+      startDate = `${year}-01-01`
+      endDate = formatDate(today)
+      break
+  }
+
+  props.filters.dateRange = [startDate, endDate]
+  emit('search')
+}
+
+function formatDate(date: Date): string {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+// 查询方案相关函数
+function handleSaveScheme(overwriteId?: string) {
+  schemeOverwriteId.value = overwriteId ?? null
+  if (overwriteId && queryScheme) {
+    const existing = queryScheme.getScheme(overwriteId)
+    if (existing) {
+      schemeName.value = existing.name
+      schemeDescription.value = existing.description || ''
+      schemeSetAsDefault.value = !!existing.isDefault
+    }
+  } else {
+    schemeName.value = ''
+    schemeDescription.value = ''
+    schemeSetAsDefault.value = false
+  }
+  showSaveSchemeDialog.value = true
+}
+
+function confirmSaveScheme() {
+  if (!schemeName.value.trim()) {
+    ElMessage.warning('请输入方案名称')
+    return
+  }
+  if (!queryScheme) return
+
+  const snapshot = cloneVoucherFilters(props.filters)
+  const trimmedName = schemeName.value.trim()
+  const trimmedDesc = schemeDescription.value.trim()
+
+  if (schemeOverwriteId.value) {
+    queryScheme.updateScheme(schemeOverwriteId.value, {
+      name: trimmedName,
+      description: trimmedDesc,
+      filters: snapshot,
+    })
+    if (schemeSetAsDefault.value) {
+      queryScheme.setDefaultScheme(schemeOverwriteId.value)
+    } else {
+      const scheme = queryScheme.getScheme(schemeOverwriteId.value)
+      if (scheme?.isDefault) queryScheme.clearDefaultScheme()
+    }
+    ElMessage.success('查询方案已更新')
+  } else {
+    const duplicate = queryScheme.schemes.value.find(s => s.name === trimmedName)
+    if (duplicate) {
+      ElMessage.warning('方案名称已存在，请更换名称或在方案列表中选择「覆盖」')
+      return
+    }
+    const created = queryScheme.addScheme(trimmedName, snapshot, trimmedDesc)
+    if (schemeSetAsDefault.value) {
+      queryScheme.setDefaultScheme(created.id)
+    }
+    ElMessage.success('查询方案保存成功')
+  }
+
+  showSaveSchemeDialog.value = false
+  schemeOverwriteId.value = null
+}
+
+function handleLoadScheme(schemeId: string) {
+  if (!queryScheme) return
+
+  const filters = queryScheme.applyScheme(schemeId)
+  if (filters) {
+    emit('applyScheme', filters as VoucherFilters)
+    ElMessage.success('已加载查询方案')
+  }
+}
+
+function handleSchemeCommand(cmd: { action: 'load'; id: string }) {
+  if (cmd.action === 'load') handleLoadScheme(cmd.id)
+}
+
+function handleDeleteScheme(schemeId: string) {
+  if (!queryScheme) return
+
+  ElMessageBox.confirm('确定删除此查询方案吗？', '提示', {
+    type: 'warning',
+  })
+    .then(() => {
+      queryScheme.deleteScheme(schemeId)
+      ElMessage.success('删除成功')
+    })
+    .catch(() => {})
+}
+
+function handleSetDefault(schemeId: string) {
+  if (!queryScheme) return
+
+  const scheme = queryScheme.getScheme(schemeId)
+  if (scheme?.isDefault) {
+    queryScheme.clearDefaultScheme()
+    ElMessage.success('已取消默认方案')
+  } else {
+    queryScheme.setDefaultScheme(schemeId)
+    ElMessage.success('已设为默认方案')
+  }
+}
 </script>
 
 <template>
@@ -150,31 +338,99 @@ function openDateDialog() {
             <ArrowDown v-if="!filterExpanded" />
             <ArrowUp v-else />
           </el-icon>
-          {{ filterExpanded ? '收起筛选' : '展开筛选' }}
+          {{ filterExpanded ? '收起' : '筛选' }}
+          <el-badge
+            v-if="activeFilterCount > 0"
+            class="filter-active-badge"
+            :value="activeFilterCount"
+            :max="99"
+          />
         </el-button>
-        <span class="filter-summary-text" :title="filterSummary">{{ filterSummary }}</span>
+        <el-input
+          v-model="filters.keyword"
+          class="filter-keyword-inline"
+          size="small"
+          placeholder="凭证号 / 摘要 / 金额 / 科目 / 辅助"
+          clearable
+          @keyup.enter="emit('search')"
+        />
+        <span
+          v-if="!filterExpanded && collapsedSummary !== '更多条件'"
+          class="filter-summary-text"
+          :title="collapsedSummary"
+        >
+          {{ collapsedSummary }}
+        </span>
         <div class="filter-bar-actions">
-          <el-button type="primary" @click="emit('search')">查询</el-button>
+          <template v-if="enableQueryScheme">
+            <el-button size="small" plain @click="handleSaveScheme()">
+              <el-icon><FolderOpened /></el-icon>
+              保存方案
+            </el-button>
+            <el-dropdown trigger="click" @command="handleSchemeCommand">
+              <el-button size="small" plain>
+                我的方案
+                <el-icon class="el-icon--right"><ArrowDown /></el-icon>
+              </el-button>
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item v-if="!queryScheme?.schemes.value.length" disabled>
+                    暂无保存的方案
+                  </el-dropdown-item>
+                  <el-dropdown-item
+                    v-for="scheme in queryScheme?.schemes.value || []"
+                    :key="scheme.id"
+                    :command="{ action: 'load', id: scheme.id }"
+                  >
+                    <div class="filter-scheme-item">
+                      <span class="filter-scheme-item-name">
+                        <el-icon v-if="scheme.isDefault" class="filter-scheme-star">
+                          <StarFilled />
+                        </el-icon>
+                        {{ scheme.name }}
+                      </span>
+                      <div class="filter-scheme-item-actions">
+                        <el-button
+                          link
+                          size="small"
+                          title="覆盖保存"
+                          @click.stop="handleSaveScheme(scheme.id)"
+                        >
+                          覆盖
+                        </el-button>
+                        <el-button
+                          link
+                          size="small"
+                          :title="scheme.isDefault ? '取消默认' : '设为默认'"
+                          @click.stop="handleSetDefault(scheme.id)"
+                        >
+                          <el-icon :style="{ color: scheme.isDefault ? '#f59e0b' : '#909399' }">
+                            <component :is="scheme.isDefault ? StarFilled : Star" />
+                          </el-icon>
+                        </el-button>
+                        <el-button
+                          link
+                          type="danger"
+                          size="small"
+                          @click.stop="handleDeleteScheme(scheme.id)"
+                        >
+                          删
+                        </el-button>
+                      </div>
+                    </div>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
+          <el-button type="primary" size="small" @click="emit('search')">查询</el-button>
           <slot name="actions" />
         </div>
       </div>
 
       <el-collapse-transition>
-        <div v-show="filterExpanded" class="filter-panel filter-panel--grouped">
-          <div class="filter-group filter-group--search">
-            <span class="filter-group-label">检索</span>
-            <div class="filter-group-body">
-              <el-input
-                v-model="filters.keyword"
-                class="filter-keyword-input"
-                placeholder="凭证号 / 摘要 / 金额 / 制单人 / 科目 / 辅助核算"
-                clearable
-                @keyup.enter="emit('search')"
-              />
-            </div>
-          </div>
-
-          <div v-if="hasScopeGroup" class="filter-group">
+        <div v-show="filterExpanded" class="filter-panel-expanded">
+          <div v-if="hasScopeGroup" class="filter-group-row">
             <span class="filter-group-label">范围</span>
             <div class="filter-group-body">
               <el-select
@@ -182,6 +438,7 @@ function openDateDialog() {
                 v-model="filters.status"
                 placeholder="凭证状态"
                 class="filter-control filter-control--sm"
+                size="small"
                 clearable
                 @change="emit('search')"
               >
@@ -191,30 +448,45 @@ function openDateDialog() {
                 <el-option label="已记账" value="posted" />
               </el-select>
 
-              <el-button class="filter-date-btn" @click="openDateDialog">
+              <el-button class="filter-date-btn" size="small" @click="openDateDialog">
                 <el-icon><Calendar /></el-icon>
                 {{ dateRangeLabel }}
               </el-button>
+
+              <el-dropdown trigger="click" @command="(cmd: 'today' | 'week' | 'month' | 'quarter' | 'year') => setQuickDate(cmd)">
+                <el-button size="small">快捷日期</el-button>
+                <template #dropdown>
+                  <el-dropdown-menu>
+                    <el-dropdown-item command="today">今天</el-dropdown-item>
+                    <el-dropdown-item command="week">本周</el-dropdown-item>
+                    <el-dropdown-item command="month">本月</el-dropdown-item>
+                    <el-dropdown-item command="quarter">本季</el-dropdown-item>
+                    <el-dropdown-item command="year">本年</el-dropdown-item>
+                  </el-dropdown-menu>
+                </template>
+              </el-dropdown>
 
               <template v-if="enableYearPeriod">
                 <el-select
                   v-model="filters.year"
                   placeholder="会计年度"
                   class="filter-control filter-control--xs"
+                  size="small"
                   clearable
                   @change="emit('search')"
                 >
-                  <el-option label="全部年份" :value="(null as any)" />
+                  <el-option label="全部年份" :value="null as any" />
                   <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
                 </el-select>
                 <el-select
                   v-model="filters.period"
                   placeholder="会计期间"
                   class="filter-control filter-control--xs"
+                  size="small"
                   clearable
                   @change="emit('search')"
                 >
-                  <el-option label="全部月份" :value="(null as any)" />
+                  <el-option label="全部月份" :value="null as any" />
                   <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
                 </el-select>
               </template>
@@ -224,6 +496,7 @@ function openDateDialog() {
                 v-model="filters.voucherTypeIds"
                 placeholder="凭证类型"
                 class="filter-control filter-control--md"
+                size="small"
                 multiple
                 collapse-tags
                 collapse-tags-tooltip
@@ -231,18 +504,26 @@ function openDateDialog() {
                 @change="emit('search')"
               >
                 <el-option label="全部类型" value="" />
-                <el-option v-for="vt in voucherTypes" :key="vt.id" :label="vt.name" :value="vt.id" />
+                <el-option
+                  v-for="vt in voucherTypes"
+                  :key="vt.id"
+                  :label="vt.name"
+                  :value="vt.id"
+                />
               </el-select>
             </div>
           </div>
 
-          <div v-if="enableAccount" class="filter-group">
-            <span class="filter-group-label">科目</span>
+          <div v-if="enableAccount || enableOperator" class="filter-group-row">
+            <span class="filter-group-label">{{ enableAccount && enableOperator ? '科目/人' : enableAccount ? '科目' : '经办' }}</span>
             <div class="filter-group-body">
               <el-select
+                v-if="enableAccount"
                 v-model="filters.accountIds"
                 placeholder="选择科目（可多选）"
                 class="filter-control filter-control--lg"
+                :popper-class="ACCOUNT_SELECT_POPPER_CLASS"
+                size="small"
                 multiple
                 collapse-tags
                 collapse-tags-tooltip
@@ -258,22 +539,51 @@ function openDateDialog() {
                   :value="acc.id"
                 />
               </el-select>
+              <template v-if="enableOperator">
+                <el-input
+                  v-model="filters.makerName"
+                  placeholder="制单人"
+                  class="filter-control filter-control--xs"
+                  size="small"
+                  clearable
+                  @change="emit('search')"
+                />
+                <el-input
+                  v-model="filters.auditorName"
+                  placeholder="审核人"
+                  class="filter-control filter-control--xs"
+                  size="small"
+                  clearable
+                  @change="emit('search')"
+                />
+                <el-input
+                  v-model="filters.posterName"
+                  placeholder="记账人"
+                  class="filter-control filter-control--xs"
+                  size="small"
+                  clearable
+                  @change="emit('search')"
+                />
+              </template>
             </div>
           </div>
 
-          <div v-if="hasAuxGroup" class="filter-group">
+          <div v-if="hasAuxGroup" class="filter-group-row">
             <span class="filter-group-label">辅助</span>
-            <div class="filter-group-body">
+            <div class="filter-group-body filter-group-body--wrap">
               <template v-for="cat in auxCategories" :key="cat.id">
                 <el-select
                   v-model="filters.auxItems[cat.id]"
                   :placeholder="cat.name"
-                  class="filter-control filter-control--md"
+                  class="filter-control filter-control--sm"
+                  size="small"
                   multiple
                   collapse-tags
                   collapse-tags-tooltip
                   clearable
                   filterable
+                  remote
+                  :remote-method="(q: string) => emit('searchAuxItems', cat.id, q)"
                   @focus="emit('loadAuxItems', cat.id)"
                   @change="emit('search')"
                 >
@@ -289,7 +599,8 @@ function openDateDialog() {
                     v-if="field.field_type === 'text' || field.field_type === 'number'"
                     v-model="filters.auxFields[`${cat.id}_${field.field_key}`]"
                     :placeholder="field.field_name"
-                    class="filter-control filter-control--md"
+                    class="filter-control filter-control--sm"
+                    size="small"
                     clearable
                     @change="emit('search')"
                   />
@@ -297,7 +608,8 @@ function openDateDialog() {
                     v-else-if="field.field_type === 'select'"
                     v-model="filters.auxFields[`${cat.id}_${field.field_key}`]"
                     :placeholder="field.field_name"
-                    class="filter-control filter-control--md"
+                    class="filter-control filter-control--sm"
+                    size="small"
                     clearable
                     @change="emit('search')"
                   >
@@ -314,7 +626,8 @@ function openDateDialog() {
                     type="date"
                     :placeholder="field.field_name"
                     value-format="YYYY-MM-DD"
-                    class="filter-control filter-control--md"
+                    class="filter-control filter-control--sm"
+                    size="small"
                     clearable
                     @change="emit('search')"
                   />
@@ -323,13 +636,14 @@ function openDateDialog() {
             </div>
           </div>
 
-          <div v-if="enableSort" class="filter-group">
+          <div v-if="enableSort" class="filter-group-row">
             <span class="filter-group-label">排序</span>
             <div class="filter-group-body">
               <el-select
                 v-model="filters.sortField"
                 placeholder="排序字段"
                 class="filter-control filter-control--sort"
+                size="small"
                 @change="emit('sortChange', filters.sortField, filters.sortOrder)"
               >
                 <el-option label="凭证日期" value="voucher_date" />
@@ -342,6 +656,7 @@ function openDateDialog() {
                 v-model="filters.sortOrder"
                 placeholder="排序方式"
                 class="filter-control filter-control--xs"
+                size="small"
                 @change="emit('sortChange', filters.sortField, filters.sortOrder)"
               >
                 <el-option label="升序" value="asc" />
@@ -351,6 +666,27 @@ function openDateDialog() {
           </div>
         </div>
       </el-collapse-transition>
+
+      <div
+        v-if="
+          !filterExpanded &&
+          enableQueryScheme &&
+          queryScheme &&
+          queryScheme.schemes.value.length > 0
+        "
+        class="filter-quick-tags"
+      >
+        <el-tag
+          v-for="scheme in queryScheme.schemes.value.slice(0, 4)"
+          :key="scheme.id"
+          :type="scheme.isDefault ? 'warning' : 'info'"
+          size="small"
+          class="filter-quick-tag"
+          @click="handleLoadScheme(scheme.id)"
+        >
+          {{ scheme.name }}
+        </el-tag>
+      </div>
     </div>
 
     <!-- 单行布局（兼容旧页） -->
@@ -376,12 +712,24 @@ function openDateDialog() {
       </el-select>
       <el-button :icon="Calendar" circle @click="openDateDialog" />
       <template v-if="enableYearPeriod">
-        <el-select v-model="filters.year" placeholder="年度" style="width: 100px" clearable @change="emit('search')">
-          <el-option label="全部年份" :value="(null as any)" />
+        <el-select
+          v-model="filters.year"
+          placeholder="年度"
+          style="width: 100px"
+          clearable
+          @change="emit('search')"
+        >
+          <el-option label="全部年份" :value="null as any" />
           <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
         </el-select>
-        <el-select v-model="filters.period" placeholder="月份" style="width: 100px" clearable @change="emit('search')">
-          <el-option label="全部月份" :value="(null as any)" />
+        <el-select
+          v-model="filters.period"
+          placeholder="月份"
+          style="width: 100px"
+          clearable
+          @change="emit('search')"
+        >
+          <el-option label="全部月份" :value="null as any" />
           <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
         </el-select>
       </template>
@@ -404,6 +752,7 @@ function openDateDialog() {
         v-model="filters.accountIds"
         placeholder="科目"
         style="width: 180px"
+        :popper-class="ACCOUNT_SELECT_POPPER_CLASS"
         multiple
         collapse-tags
         collapse-tags-tooltip
@@ -430,6 +779,8 @@ function openDateDialog() {
             collapse-tags-tooltip
             clearable
             filterable
+            remote
+            :remote-method="(q: string) => emit('searchAuxItems', cat.id, q)"
             @focus="emit('loadAuxItems', cat.id)"
             @change="emit('search')"
           >
@@ -534,24 +885,72 @@ function openDateDialog() {
       <el-button type="primary" @click="confirmDateRange">确定</el-button>
     </template>
   </el-dialog>
+
+  <!-- 保存查询方案对话框 -->
+  <el-dialog
+    v-model="showSaveSchemeDialog"
+    :title="schemeOverwriteId ? '覆盖查询方案' : '保存查询方案'"
+    width="500px"
+  >
+    <el-form label-width="100px">
+      <el-form-item label="方案名称" required>
+        <el-input
+          v-model="schemeName"
+          placeholder="如：本月费用凭证"
+          maxlength="50"
+          show-word-limit
+        />
+      </el-form-item>
+      <el-form-item label="方案说明">
+        <el-input
+          v-model="schemeDescription"
+          type="textarea"
+          :rows="3"
+          placeholder="可选，描述此方案的用途"
+          maxlength="200"
+          show-word-limit
+        />
+      </el-form-item>
+      <el-form-item label="默认方案">
+        <el-checkbox v-model="schemeSetAsDefault">设为默认方案（置顶显示，便于快速加载）</el-checkbox>
+      </el-form-item>
+      <el-alert type="info" :closable="false" show-icon>
+        <template #default>
+          <div style="font-size: 13px; line-height: 1.6">
+            <p style="margin: 0">将保存当前所有筛选条件，包括：</p>
+            <ul style="margin: 4px 0 0 0; padding-left: 20px">
+              <li>关键词、状态、日期范围、年度/期间</li>
+              <li>凭证类型、科目、经办人</li>
+              <li>辅助核算项目、排序方式</li>
+            </ul>
+          </div>
+        </template>
+      </el-alert>
+    </el-form>
+    <template #footer>
+      <el-button @click="showSaveSchemeDialog = false">取消</el-button>
+      <el-button type="primary" @click="confirmSaveScheme">
+        {{ schemeOverwriteId ? '覆盖保存' : '保存' }}
+      </el-button>
+    </template>
+  </el-dialog>
 </template>
 
 <style scoped>
 .filter-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
 }
 
 .voucher-filter-actions {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   margin-left: auto;
 }
 
-/* 分组布局 */
 .filter-panel-wrap {
   width: 100%;
 }
@@ -559,14 +958,14 @@ function openDateDialog() {
 .filter-bar-compact {
   display: flex;
   align-items: center;
-  gap: 8px;
-  min-height: 32px;
+  gap: 6px;
+  min-height: 28px;
 }
 
 .filter-toggle-btn {
   flex-shrink: 0;
-  padding: 0 6px !important;
-  height: 28px !important;
+  padding: 0 4px !important;
+  height: 26px !important;
   font-size: 12px !important;
   color: #48484a !important;
   font-weight: 600;
@@ -576,10 +975,31 @@ function openDateDialog() {
   margin-right: 2px;
 }
 
+.filter-active-badge {
+  margin-left: 4px;
+}
+
+.filter-active-badge :deep(.el-badge__content) {
+  height: 16px;
+  line-height: 16px;
+  padding: 0 5px;
+  font-size: 11px;
+}
+
+.filter-keyword-inline {
+  flex: 1;
+  min-width: 140px;
+  max-width: 360px;
+}
+
+.filter-keyword-inline :deep(.el-input__wrapper) {
+  min-height: 26px !important;
+}
+
 .filter-summary-text {
   flex: 1;
   min-width: 0;
-  font-size: 12px;
+  font-size: 11px;
   color: #909399;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -589,89 +1009,123 @@ function openDateDialog() {
 .filter-bar-actions {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 4px;
   flex-shrink: 0;
   margin-left: auto;
 }
 
 .filter-bar-actions :deep(.el-button) {
-  height: 28px;
-  padding: 0 12px;
+  height: 26px;
+  padding: 0 10px;
   font-size: 12px;
 }
 
-.filter-panel--grouped {
+.filter-panel-expanded {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 8px;
-  padding-top: 8px;
+  gap: 4px;
+  margin-top: 6px;
+  padding-top: 6px;
   border-top: 1px solid rgba(0, 0, 0, 0.06);
 }
 
-.filter-group {
+.filter-group-row {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 6px 10px;
-  background: #fafbfc;
-  border-radius: 6px;
-  border: 1px solid rgba(0, 0, 0, 0.05);
+  gap: 6px;
+  padding: 3px 0;
 }
 
 .filter-group-label {
   flex-shrink: 0;
-  width: 40px;
-  font-size: 12px;
+  width: 44px;
+  font-size: 11px;
   font-weight: 600;
   color: #6e6e73;
-  line-height: 28px;
+  line-height: 26px;
   text-align: right;
 }
 
 .filter-group-body {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 4px;
   align-items: center;
   flex: 1;
   min-width: 0;
 }
 
-.filter-group--search .filter-group-body {
-  flex: 1;
-}
-
-.filter-keyword-input {
-  flex: 1;
-  min-width: 240px;
-  max-width: 100%;
+.filter-group-body--wrap {
+  row-gap: 4px;
 }
 
 .filter-control--xs {
-  width: 100px;
+  width: 96px;
 }
 
 .filter-control--sm {
-  width: 120px;
+  width: 112px;
 }
 
 .filter-control--md {
-  width: 160px;
+  width: 140px;
 }
 
 .filter-control--lg {
-  width: 280px;
+  width: 220px;
   max-width: 100%;
 }
 
 .filter-control--sort {
-  width: 120px;
+  width: 112px;
 }
 
 .filter-date-btn {
-  height: 28px;
-  padding: 0 10px;
+  height: 26px;
+  padding: 0 8px;
   font-size: 12px;
+  min-width: 120px;
+  max-width: 160px;
+}
+
+.filter-scheme-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  min-width: 220px;
+  gap: 8px;
+}
+
+.filter-scheme-item-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filter-scheme-star {
+  color: #f59e0b;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.filter-scheme-item-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 8px;
+}
+
+.filter-quick-tags {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-top: 4px;
+  flex-wrap: wrap;
+}
+
+.filter-quick-tag {
+  cursor: pointer;
 }
 </style>

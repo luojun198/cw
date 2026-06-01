@@ -148,6 +148,7 @@
                     placeholder="选择转出科目"
                     size="small"
                     class="account-select"
+                    :popper-class="ACCOUNT_SELECT_POPPER_CLASS"
                     @change="updateFromName(scope.row)"
                   >
                     <el-option
@@ -168,6 +169,7 @@
                     placeholder="选择明细科目"
                     size="small"
                     class="account-select"
+                    :popper-class="ACCOUNT_SELECT_POPPER_CLASS"
                     @change="updateToName(scope.row)"
                   >
                     <el-option
@@ -243,6 +245,7 @@ import { Plus, Delete, InfoFilled, Warning } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { showSuccess, showWarning, showOperationError } from '@/composables/useMessage'
 import { useConfirm } from '@/composables/useConfirm'
+import { ACCOUNT_SELECT_POPPER_CLASS } from '@/utils/accountSelectDisplay'
 
 const contentTableRef = ref()
 const {
@@ -541,7 +544,7 @@ async function deleteSelectedItems() {
 
 async function fetchData() {
   const [accountRes, typeRes, itemRes] = await Promise.all([
-    request.get<any[]>('/base/accounts'),
+    request.get<any[]>('/base/accounts', { params: { all: 1 } }),
     request.get<TransferType[]>('/system/transfer-types'),
     request.get<TransferItem[]>('/system/transfer-items'),
   ])
@@ -1001,12 +1004,16 @@ onActivated(() => reloadContentColumnWidths())
 }
 
 .compact-table :deep(th.el-table__cell .cell) {
-  font-size: 11px;
+  font-family: var(--cw-table-header-font-family);
+  font-size: var(--cw-table-header-font-size);
+  font-weight: var(--cw-table-header-font-weight);
 }
 
 .compact-table :deep(th.el-table__cell) {
   background-color: var(--el-fill-color-lighter);
-  font-weight: 600;
+  font-family: var(--cw-table-header-font-family);
+  font-weight: var(--cw-table-header-font-weight);
+  font-size: var(--cw-table-header-font-size);
 }
 
 .content-table {

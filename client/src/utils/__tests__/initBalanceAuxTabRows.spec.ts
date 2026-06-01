@@ -21,13 +21,31 @@ describe('initBalanceAuxTabRows', () => {
     ],
   }
 
-  it('为当前类目每个项目预设一行（仅含该类目 selection）', () => {
+  it('无已保存行时不预生成空行', () => {
     const rows = buildTabGridRows({
       activeCategoryId: catA,
       itemsByCategory: items,
       combinationStore: new Map(),
     })
-    expect(rows).toHaveLength(2)
+    expect(rows).toHaveLength(0)
+  })
+
+  it('仅展示 combinationStore 中当前类目的行', () => {
+    const store = new Map<string, AuxGridRow>()
+    store.set('dept:d1', {
+      key: 'dept:d1',
+      selection: { [catA]: 'd1' },
+      opening_debit: 0,
+      opening_credit: 0,
+      pre_book_debit: 0,
+      pre_book_credit: 0,
+    })
+    const rows = buildTabGridRows({
+      activeCategoryId: catA,
+      itemsByCategory: items,
+      combinationStore: store,
+    })
+    expect(rows).toHaveLength(1)
     expect(rows[0].selection).toEqual({ [catA]: 'd1' })
     expect(rows[0].selection[catB]).toBeUndefined()
   })

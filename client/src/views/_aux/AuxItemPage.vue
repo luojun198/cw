@@ -2,25 +2,26 @@
   <div class="page">
     <div class="page-header">
       <h3>{{ title }}</h3>
-      <div>
+      <div class="page-header-actions">
         <el-input
           v-model="searchKeyword"
           :placeholder="`搜索编码、${nameLabel}...`"
           clearable
-          style="width: 200px; margin-right: 12px"
+          class="search-input filter-ctl--lg"
           prefix-icon="Search"
         />
         <el-button type="primary" @click="openDialog('add')">新增{{ entityName }}</el-button>
       </div>
     </div>
+    <div ref="tableContainerRef" class="page-table-fill">
     <el-table
       ref="tableRef"
+      :height="tableHeight"
       :data="filteredData"
       stripe
       border
       size="small"
       class="compact-data-table"
-      height="100%"
       @header-dragend="onDragEnd"
     >
       <el-table-column prop="code" label="编码" :width="colWidth('code', 120)">
@@ -48,6 +49,7 @@
         </template>
       </el-table-column>
     </el-table>
+    </div>
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="400px">
       <el-form :model="form" label-width="80px">
         <el-form-item label="编码" required><el-input v-model="form.code" /></el-form-item>
@@ -67,16 +69,28 @@
         <el-button type="primary" @click="handleSave">保存</el-button>
       </template>
     </el-dialog>
+
+    <AuxItemDeleteBlockDialog
+      v-model="deleteBlockVisible"
+      :detail="deleteBlockDetail"
+      @open-voucher="openBlockedVoucher"
+      @go-init-balance-aux="goInitBalanceAux"
+    />
+    <VoucherEntryDialogHost ref="entryDialogHostRef" />
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import request from '@/api/request'
+import AuxItemDeleteBlockDialog from '@/components/base/AuxItemDeleteBlockDialog.vue'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { useTableSearch } from '@/composables/useTableSearch'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import { useAuxItemDeleteBlock } from '@/composables/useAuxItemDeleteBlock'
 
 interface Props {
   title: string
@@ -90,6 +104,15 @@ const props = withDefaults(defineProps<Props>(), {
 })
 
 const { tableRef, onDragEnd, colWidth } = useListColumnWidth(`aux_item_${props.entityType}`)
+const { containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const {
+  deleteBlockVisible,
+  deleteBlockDetail,
+  deleteAuxItemWithDialog,
+  openBlockedVoucher,
+  goInitBalanceAux,
+} = useAuxItemDeleteBlock(entryDialogHostRef)
 const list = ref<any[]>([])
 const dialogVisible = ref(false)
 const dialogType = ref('add')
@@ -141,12 +164,10 @@ async function handleDelete(row: any) {
   const confirmed = await useDeleteConfirm(`${props.entityName}「${row.code} ${row.name}」`)
   if (!confirmed) return
 
-  try {
-    await request.delete(`/base/aux-items/${row.id}`)
+  const result = await deleteAuxItemWithDialog(row.id, `删除${props.entityName}`)
+  if (result === 'success') {
     showSuccess('删除成功')
     fetchData()
-  } catch (error) {
-    showOperationError(`删除${props.entityName}`, error)
   }
 }
 

@@ -9,10 +9,12 @@ import {
   getBatchVoucherFilters,
   getVoucherById,
   loadBatchDraftVouchers,
+  sendBatchVoucherOperationResponse,
   validateVoucherForAudit,
   validateBatchVoucherFilters,
   validateVoucherForUnAudit,
 } from '../services/voucherEntry.js'
+import { isVoucherVisibleInAccountScope } from '../services/accountAuthorization.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -31,6 +33,12 @@ router.post(
     if (validationError) {
       const status = validationError === '凭证不存在' ? 404 : 400
       return res.status(status).json({ code: status, message: validationError })
+    }
+    if (
+      req.accountScope &&
+      !isVoucherVisibleInAccountScope(db, req.accountScope, id, req.accountSetId || '')
+    ) {
+      return res.status(404).json({ code: 404, message: '凭证不存在' })
     }
     applyVoucherAudit({
       db,
@@ -60,6 +68,7 @@ router.post(
       const vouchers = loadBatchDraftVouchers({
         db,
         accountSetId: req.accountSetId || '',
+        accountScope: req.accountScope,
         filters,
       })
 
@@ -92,20 +101,29 @@ router.post(
       return res.status(400).json({ code: 400, message: '请选择要审核的凭证' })
     }
 
-    if (voucherIds.length > 100) {
-      return res.status(400).json({ code: 400, message: '单次最多审核100张凭证' })
+    // FIX-014 / P1-13：批量上限从 100 提至 1000（满足月底集中审核场景）
+    if (voucherIds.length > 1000) {
+      return res.status(400).json({ code: 400, message: '单次最多审核 1000 张凭证，请分批操作或改用日期 + 凭证类型筛选模式' })
     }
 
     const db = getDb()
-    const results: Array<{ id: string; success: boolean; error?: string }> = []
+    const results: Array<{ id: string; voucher_no: string; success: boolean; error?: string }> = []
 
     for (const id of voucherIds) {
       try {
         const voucher = getVoucherById({ db, voucherId: id })
+        const voucherNo = voucher?.voucher_no || id
         const validationError = validateVoucherForAudit(voucher, req.userId)
 
         if (validationError) {
-          results.push({ id, success: false, error: validationError })
+          results.push({ id, voucher_no: voucherNo, success: false, error: validationError })
+          continue
+        }
+        if (
+          req.accountScope &&
+          !isVoucherVisibleInAccountScope(db, req.accountScope, id, req.accountSetId || '')
+        ) {
+          results.push({ id, voucher_no: voucherNo, success: false, error: '凭证不存在' })
           continue
         }
 
@@ -116,40 +134,78 @@ router.post(
           userName: req.userName,
         })
 
-        results.push({ id, success: true })
+        results.push({ id, voucher_no: voucherNo, success: true })
       } catch (error: any) {
-        results.push({ id, success: false, error: error.message || '审核失败' })
+        const voucher = getVoucherById({ db, voucherId: id })
+        results.push({
+          id,
+          voucher_no: voucher?.voucher_no || id,
+          success: false,
+          error: error.message || '审核失败',
+        })
       }
     }
 
-    const successCount = results.filter(r => r.success).length
-    const failCount = results.filter(r => !r.success).length
+    return sendBatchVoucherOperationResponse(res, '审核', voucherIds, results)
+  }
+)
 
-    // 全部失败：返回 400，避免前端把"全失败"误显示为"操作成功"
-    if (successCount === 0 && failCount > 0) {
-      const firstError = results.find(r => !r.success)?.error || '审核失败'
-      return res.status(400).json({
-        code: 400,
-        message: `批量审核失败：${firstError}（共 ${failCount} 张全部失败）`,
-        data: {
-          total: voucherIds.length,
-          success: 0,
-          fail: failCount,
-          details: results,
-        },
-      })
+// 批量反审核（按 voucherIds；条件筛选由 voucherBatch 路由处理）
+router.post(
+  '/vouchers/batch-unaudit',
+  requirePermission('voucher:audit'),
+  operationLog('批量反审核凭证', '凭证管理'),
+  (req: AuthRequest, res, next) => {
+    const { voucherIds } = req.body
+
+    if (!Array.isArray(voucherIds)) {
+      return next()
     }
 
-    res.json({
-      code: 0,
-      message: `批量审核完成：成功 ${successCount} 张，失败 ${failCount} 张`,
-      data: {
-        total: voucherIds.length,
-        success: successCount,
-        fail: failCount,
-        details: results,
-      },
-    })
+    if (voucherIds.length === 0) {
+      return res.status(400).json({ code: 400, message: '请选择要反审核的凭证' })
+    }
+
+    // FIX-014 / P1-13：批量上限从 100 提至 1000
+    if (voucherIds.length > 1000) {
+      return res.status(400).json({ code: 400, message: '单次最多反审核 1000 张凭证，请分批操作' })
+    }
+
+    const db = getDb()
+    const results: Array<{ id: string; voucher_no: string; success: boolean; error?: string }> = []
+
+    for (const id of voucherIds) {
+      try {
+        const voucher = getVoucherById({ db, voucherId: id })
+        const voucherNo = voucher?.voucher_no || id
+        const validationError = validateVoucherForUnAudit(voucher)
+
+        if (validationError) {
+          results.push({ id, voucher_no: voucherNo, success: false, error: validationError })
+          continue
+        }
+        if (
+          req.accountScope &&
+          !isVoucherVisibleInAccountScope(db, req.accountScope, id, req.accountSetId || '')
+        ) {
+          results.push({ id, voucher_no: voucherNo, success: false, error: '凭证不存在' })
+          continue
+        }
+
+        applyVoucherUnAudit({ db, voucherId: id })
+        results.push({ id, voucher_no: voucherNo, success: true })
+      } catch (error: any) {
+        const voucher = getVoucherById({ db, voucherId: id })
+        results.push({
+          id,
+          voucher_no: voucher?.voucher_no || id,
+          success: false,
+          error: error.message || '反审核失败',
+        })
+      }
+    }
+
+    return sendBatchVoucherOperationResponse(res, '反审核', voucherIds, results)
   }
 )
 
@@ -164,6 +220,12 @@ router.post(
     const validationError = validateVoucherForUnAudit(voucher)
     if (validationError) {
       return res.status(400).json({ code: 400, message: validationError })
+    }
+    if (
+      req.accountScope &&
+      !isVoucherVisibleInAccountScope(db, req.accountScope, id, req.accountSetId || '')
+    ) {
+      return res.status(404).json({ code: 404, message: '凭证不存在' })
     }
     applyVoucherUnAudit({ db, voucherId: id })
     res.json({ code: 0, message: '反审核成功' })

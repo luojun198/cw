@@ -3,6 +3,11 @@ import {
   buildAuxVoucherEntryFilter,
   lookupAuxItemCode,
 } from '../utils/auxLedgerQuery.js'
+import {
+  calcInitBalanceFromDebitCredit,
+  calcSignedBalance,
+  resolveBalanceDisplayDirection,
+} from '../utils/accountBalance.js'
 
 export interface RealtimeBalanceResult {
   init_balance: number
@@ -24,25 +29,13 @@ export interface RealtimeAuxBalanceItem {
   is_same_side: boolean
 }
 
-function calcEndBalance(
-  accountDirection: 'debit' | 'credit',
-  initBalance: number,
-  totalDebit: number,
-  totalCredit: number
-): number {
-  if (accountDirection === 'debit') {
-    return initBalance + totalDebit - totalCredit
-  }
-  return initBalance + totalCredit - totalDebit
-}
-
 function formatBalanceResult(
   accountDirection: 'debit' | 'credit',
   initBalance: number,
   totalDebit: number,
   totalCredit: number
 ): RealtimeBalanceResult {
-  const endBalance = calcEndBalance(accountDirection, initBalance, totalDebit, totalCredit)
+  const endBalance = calcSignedBalance(accountDirection, initBalance, totalDebit, totalCredit)
   return {
     init_balance: initBalance,
     current_debit: totalDebit,
@@ -136,14 +129,17 @@ export function getAccountRealtimeAuxBalance(
   const initBal = db
     .prepare(
       `SELECT
-        COALESCE(SUM(CASE
-          WHEN init_debit != 0 OR init_credit != 0 THEN init_debit - init_credit
-          ELSE init_balance
-        END), 0) as init_balance
+        COALESCE(SUM(init_balance), 0) as init_balance,
+        COALESCE(SUM(init_debit), 0) as init_debit,
+        COALESCE(SUM(init_credit), 0) as init_credit
        FROM init_balances
        WHERE account_id=? AND year=? AND account_set_id=? AND aux_item_id=?`
     )
-    .get(params.accountId, params.year, params.accountSetId, auxItemId) as { init_balance: number }
+    .get(params.accountId, params.year, params.accountSetId, auxItemId) as {
+    init_balance: number
+    init_debit: number
+    init_credit: number
+  }
 
   const voucherExclude = voucherExcludeClause(params.excludeVoucherId)
   const debitCreditParams: (string | number)[] = [
@@ -167,12 +163,16 @@ export function getAccountRealtimeAuxBalance(
     )
     .get(...debitCreditParams) as { total_debit: number; total_credit: number }
 
-  const initBalance = initBal?.init_balance || 0
+  const initBalance = calcInitBalanceFromDebitCredit(
+    params.accountDirection,
+    initBal?.init_debit || 0,
+    initBal?.init_credit || 0,
+    initBal?.init_balance || 0
+  )
   const totalDebit = debitCredit?.total_debit || 0
   const totalCredit = debitCredit?.total_credit || 0
-  const endBalance = calcEndBalance(params.accountDirection, initBalance, totalDebit, totalCredit)
-  const balanceDirection: 'debit' | 'credit' =
-    endBalance >= 0 ? params.accountDirection : params.accountDirection === 'debit' ? 'credit' : 'debit'
+  const endBalance = calcSignedBalance(params.accountDirection, initBalance, totalDebit, totalCredit)
+  const balanceDirection = resolveBalanceDisplayDirection(endBalance, params.accountDirection)
 
   return {
     category_code: params.categoryCode,

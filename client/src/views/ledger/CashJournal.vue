@@ -12,7 +12,8 @@
           v-model="filters.account_id"
           filterable
           placeholder="选择具体科目"
-          style="width: 200px"
+          class="filter-ctl--lg"
+          :popper-class="ACCOUNT_SELECT_POPPER_CLASS"
           clearable
           @visible-change="onAccountSelectOpen"
         >
@@ -22,14 +23,19 @@
             :label="`${a.code} ${a.name}`"
             :value="a.id"
           >
-            <span :style="{ paddingLeft: `${a.level * 16}px` }"> {{ a.code }} {{ a.name }} </span>
+            <span
+              class="account-select-option__row"
+              :style="{ paddingLeft: `${a.level * 16}px` }"
+            >
+              {{ a.code }} {{ a.name }}
+            </span>
           </el-option>
         </el-select>
         <el-select
           v-model="filters.year"
           placeholder="年份"
           clearable
-          style="width: 100px"
+          class="filter-ctl--xs"
           @change="onYearPeriodChange"
         >
           <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
@@ -38,7 +44,7 @@
           v-model="filters.period"
           placeholder="月份"
           clearable
-          style="width: 100px"
+          class="filter-ctl--xs"
           @change="onYearPeriodChange"
         >
           <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
@@ -48,7 +54,7 @@
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="开始日期"
-          style="width: 140px"
+          class="filter-ctl--md"
           clearable
           @change="onDateRangeChange"
         />
@@ -57,7 +63,7 @@
           type="date"
           value-format="YYYY-MM-DD"
           placeholder="结束日期"
-          style="width: 140px"
+          class="filter-ctl--md"
           clearable
           @change="onDateRangeChange"
         />
@@ -65,7 +71,7 @@
           v-model="filters.direction"
           placeholder="收支类型"
           clearable
-          style="width: 120px"
+          class="filter-ctl--sm"
         >
           <el-option label="收入(借方)" value="debit" />
           <el-option label="支出(贷方)" value="credit" />
@@ -95,22 +101,25 @@
       </div>
     </div>
 
+    <AccountScopeAlert :accounts-count="cashBankAccounts.length" />
+
     <div class="print-title-row">
       <h2 class="print-title">日记账</h2>
       <p class="print-date-range">{{ printDateLabel }}</p>
     </div>
 
-    <div v-if="queried" class="table-summary-scroll table-summary-scroll--wide">
+    <div v-if="queried" ref="tableContainerRef" class="table-summary-scroll table-summary-scroll--wide">
     <el-table
       ref="tableRef"
+      :height="tableHeight"
       :data="list"
       :style="{ width: `${ledgerTableWidth}px` }"
       :fit="false"
-      stripe
       border
       size="small"
       class="compact-data-table"
       highlight-current-row
+      :row-class-name="getRowClassName"
       @header-dragend="handleHeaderDragEnd"
       @row-dblclick="handleLedgerRowDblClick"
     >
@@ -133,10 +142,21 @@
         :width="colWidth('opposite_accounts', 180)"
       />
       <el-table-column column-key="借贷" label="借贷" :width="colWidth('借贷', 50)">
-        <template #default="{ row }">{{ row.is_opening_balance ? '' : row.direction === 'debit' ? '借' : '贷' }}</template>
+        <template #default="{ row }">
+          <template v-if="row.is_monthly_subtotal || row.is_yearly_subtotal">借/贷</template>
+          <template v-else>{{ row.is_opening_balance ? '' : row.direction === 'debit' ? '借' : '贷' }}</template>
+        </template>
       </el-table-column>
       <el-table-column column-key="金额" label="金额" :width="colWidth('金额', 140)" align="right">
-        <template #default="{ row }">{{ row.is_opening_balance ? '' : formatAmount(row.amount) }}</template>
+        <template #default="{ row }">
+          <template v-if="row.is_monthly_subtotal">
+            借: {{ formatAmount(row.monthly_debit) }} / 贷: {{ formatAmount(row.monthly_credit) }}
+          </template>
+          <template v-else-if="row.is_yearly_subtotal">
+            借: {{ formatAmount(row.yearly_debit) }} / 贷: {{ formatAmount(row.yearly_credit) }}
+          </template>
+          <template v-else>{{ row.is_opening_balance ? '' : formatAmount(row.amount) }}</template>
+        </template>
       </el-table-column>
       <el-table-column column-key="余额" label="余额" :width="colWidth('余额', 140)" align="right">
         <template #default="{ row }">{{ formatAmount(row.running_balance) }}</template>
@@ -149,6 +169,9 @@
     </el-table>
     </div>
 
+    <div v-else-if="isScopeBlocked" class="journal-empty-wrap">
+      <EmptyState type="account" :description="scopeEmptyDescription" />
+    </div>
     <div v-else class="journal-empty-wrap">
       <EmptyState
         type="data"
@@ -167,29 +190,43 @@
         @current-change="fetchData"
       />
     </div>
+
+    <VoucherEntryDialogHost ref="entryDialogHostRef" @saved="fetchData" />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onActivated, watch, onBeforeUnmount } from 'vue'
 import { useRoute } from 'vue-router'
 import { Printer, Search, Download } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import EmptyState from '@/components/EmptyState.vue'
+import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
+import { useAccountScopeHint } from '@/composables/useAccountScopeHint'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
 import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
-import { useLedgerVoucherNavigate } from '@/composables/useLedgerVoucherNavigate'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import {
+  useLedgerVoucherNavigate,
+  resolveLedgerVoucherId,
+} from '@/composables/useLedgerVoucherNavigate'
+import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 import { showWarning } from '@/composables/useMessage'
 import { formatAmount } from '@/utils/format'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import { ACCOUNT_SELECT_POPPER_CLASS } from '@/utils/accountSelectDisplay'
 
 const route = useRoute()
-const { handleLedgerRowDblClick } = useLedgerVoucherNavigate()
 const list = ref<any[]>([])
 const total = ref(0)
 const queried = ref(false)
 const currentPage = ref(1)
 const pageSize = ref(100)
 const cashBankAccounts = ref<any[]>([])
+const cashBankAccountsCount = computed(() => cashBankAccounts.value.length)
+const { isBlocked: isScopeBlocked, emptyDescription: scopeEmptyDescription } = useAccountScopeHint({
+  accountsCount: cashBankAccountsCount,
+})
 const filters = ref<any>({
   year: new Date().getFullYear(),
   period: new Date().getMonth() + 1,
@@ -202,7 +239,36 @@ const filters = ref<any>({
   account_code_end: '',
   include_unposted: true,
 })
-const years = Array.from({ length: 10 }, (_, i) => new Date().getFullYear() - i)
+const years = Array.from({ length: new Date().getFullYear() - 2000 + 1 }, (_, i) => new Date().getFullYear() - i)
+
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const { tryRestoreVoucherModal } = useVoucherModalRestore(entryDialogHostRef)
+
+const { handleLedgerRowDblClick } = useLedgerVoucherNavigate({
+  returnLabel: '日记账',
+  getReturnQuery: () => ({
+    account_id: filters.value.account_id || '',
+    year: filters.value.year ? String(filters.value.year) : '',
+    period: filters.value.period ? String(filters.value.period) : '',
+    start_date: filters.value.start_date || '',
+    end_date: filters.value.end_date || '',
+    account_type: filters.value.account_type || '',
+  }),
+  openVoucherModal: row => {
+    // 忽略小计行和期初余额行
+    if (row.is_monthly_subtotal || row.is_yearly_subtotal || row.is_opening_balance) {
+      return
+    }
+    
+    const voucherId = resolveLedgerVoucherId(row)
+    if (!voucherId) return
+    entryDialogHostRef.value?.open({
+      _voucherId: voucherId,
+      id: voucherId,
+      status: row.voucher_status,
+    })
+  },
+})
 
 /** 已选择具体科目，或现金/银行快捷范围 */
 const hasAccountScope = computed(
@@ -275,6 +341,7 @@ const ledgerColumnDefs = computed(() => [
 
 const { tableRef, colWidth, ledgerTableWidth, handleHeaderDragEnd, afterTableLayout } =
   useLedgerWideTable('ledger_cash_journal', ledgerColumnDefs)
+const { containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
 
 function isDateFilterActive() {
   return Boolean(filters.value.start_date || filters.value.end_date)
@@ -332,6 +399,13 @@ function getOpeningBalanceDate() {
   return `${year}-${String(period).padStart(2, '0')}-01`
 }
 
+function getRowClassName({ row }: { row: any }) {
+  if (row.is_monthly_subtotal) return 'monthly-subtotal-row'
+  if (row.is_yearly_subtotal) return 'yearly-subtotal-row'
+  if (row.is_opening_balance) return 'carry-forward-row'
+  return ''
+}
+
 function buildOpeningBalanceRow(balance: number) {
   return {
     id: '__opening_balance__',
@@ -350,7 +424,129 @@ function buildOpeningBalanceRow(balance: number) {
   }
 }
 
+function insertMonthlySubtotals(entries: any[], account: any): any[] {
+  if (entries.length === 0) return entries
+  
+  const result: any[] = []
+  let currentMonth = ''
+  let monthlyDebit = 0
+  let monthlyCredit = 0
+  let yearlyDebit = 0
+  let yearlyCredit = 0
+  let currentYear = ''
+  
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    const entryMonth = entry.voucher_date.substring(0, 7)
+    const entryYear = entry.voucher_date.substring(0, 4)
+    
+    if (entryYear !== currentYear) {
+      currentYear = entryYear
+      yearlyDebit = 0
+      yearlyCredit = 0
+    }
+    
+    if (currentMonth && entryMonth !== currentMonth) {
+      result.push({
+        id: `__monthly_subtotal_${currentMonth}__`,
+        voucher_date: currentMonth + '-31',
+        voucher_no: '',
+        account_code: '',
+        account_name: '',
+        summary: '本月合计',
+        opposite_accounts: '',
+        direction: '',
+        amount: 0,
+        running_balance: result[result.length - 1].running_balance,
+        maker_name: '',
+        auditor_name: '',
+        is_monthly_subtotal: true,
+        monthly_debit: monthlyDebit,
+        monthly_credit: monthlyCredit,
+      })
+      
+      result.push({
+        id: `__yearly_subtotal_${currentMonth}__`,
+        voucher_date: currentMonth + '-31',
+        voucher_no: '',
+        account_code: '',
+        account_name: '',
+        summary: '本年累计',
+        opposite_accounts: '',
+        direction: '',
+        amount: 0,
+        running_balance: result[result.length - 1].running_balance,
+        maker_name: '',
+        auditor_name: '',
+        is_yearly_subtotal: true,
+        yearly_debit: yearlyDebit,
+        yearly_credit: yearlyCredit,
+      })
+      
+      monthlyDebit = 0
+      monthlyCredit = 0
+    }
+    
+    if (entry.direction === 'debit') {
+      monthlyDebit += entry.amount
+      yearlyDebit += entry.amount
+    } else if (entry.direction === 'credit') {
+      monthlyCredit += entry.amount
+      yearlyCredit += entry.amount
+    }
+    
+    currentMonth = entryMonth
+    result.push(entry)
+  }
+  
+  if (currentMonth && entries.length > 0) {
+    result.push({
+      id: `__monthly_subtotal_${currentMonth}__`,
+      voucher_date: currentMonth + '-31',
+      voucher_no: '',
+      account_code: '',
+      account_name: '',
+      summary: '本月合计',
+      opposite_accounts: '',
+      direction: '',
+      amount: 0,
+      running_balance: result[result.length - 1].running_balance,
+      maker_name: '',
+      auditor_name: '',
+      is_monthly_subtotal: true,
+      monthly_debit: monthlyDebit,
+      monthly_credit: monthlyCredit,
+    })
+    
+    result.push({
+      id: `__yearly_subtotal_${currentMonth}__`,
+      voucher_date: currentMonth + '-31',
+      voucher_no: '',
+      account_code: '',
+      account_name: '',
+      summary: '本年累计',
+      opposite_accounts: '',
+      direction: '',
+      amount: 0,
+      running_balance: result[result.length - 1].running_balance,
+      maker_name: '',
+      auditor_name: '',
+      is_yearly_subtotal: true,
+      yearly_debit: yearlyDebit,
+      yearly_credit: yearlyCredit,
+    })
+  }
+  
+  return result
+}
+
 async function fetchData() {
+  if (isScopeBlocked.value) {
+    queried.value = false
+    list.value = []
+    total.value = 0
+    return
+  }
   if (!hasAccountScope.value) {
     queried.value = false
     list.value = []
@@ -362,15 +558,16 @@ async function fetchData() {
   const res = await request.get<any>('/ledger/cash-journal', { params })
   queried.value = true
   const entries = res.data || []
+  const entriesWithSubtotals = insertMonthlySubtotals(entries, null)
   const openingRow = buildOpeningBalanceRow((res as any).initBalance || 0)
-  list.value = currentPage.value === 1 ? [openingRow, ...entries] : entries
+  list.value = currentPage.value === 1 ? [openingRow, ...entriesWithSubtotals] : entriesWithSubtotals
   total.value = res.total || 0
   await afterTableLayout()
 }
 
 async function fetchCashBankAccounts() {
   const res = await request.get<any[]>('/base/accounts', {
-    params: { is_enabled: 1 },
+    params: { is_enabled: 1, all: 1 },
   })
   // 筛选现金和银行科目（包括父科目和明细科目），并按编码排序
   const filtered = res.data.filter((a: any) => {
@@ -433,7 +630,9 @@ async function exportData() {
   // 导出全部数据
   const params = buildQueryParams(1, 10000)
   const res = await request.get<any>('/ledger/cash-journal', { params })
-  const allData = [buildOpeningBalanceRow((res as any).initBalance || 0), ...(res.data || [])]
+  const entries = res.data || []
+  const entriesWithSubtotals = insertMonthlySubtotals(entries, null)
+  const allData = [buildOpeningBalanceRow((res as any).initBalance || 0), ...entriesWithSubtotals]
   const dateRange = isDateFilterActive()
     ? `${filters.value.start_date || '不限'}_${filters.value.end_date || '不限'}`
     : `${filters.value.year || new Date().getFullYear()}_${filters.value.period || new Date().getMonth() + 1}`
@@ -453,14 +652,25 @@ async function exportData() {
       label: '借贷',
       width: colWidth('借贷', 50),
       align: 'center',
-      value: row => (row.is_opening_balance ? '' : row.direction === 'debit' ? '借' : '贷'),
+      value: row => {
+        if (row.is_monthly_subtotal || row.is_yearly_subtotal) return '借/贷'
+        return row.is_opening_balance ? '' : row.direction === 'debit' ? '借' : '贷'
+      },
     },
     {
       label: '金额',
       width: colWidth('金额', 140),
       align: 'right',
       type: 'amount',
-      value: row => (row.is_opening_balance ? '' : row.amount),
+      value: row => {
+        if (row.is_monthly_subtotal) {
+          return `借: ${formatAmount(row.monthly_debit)} / 贷: ${formatAmount(row.monthly_credit)}`
+        }
+        if (row.is_yearly_subtotal) {
+          return `借: ${formatAmount(row.yearly_debit)} / 贷: ${formatAmount(row.yearly_credit)}`
+        }
+        return row.is_opening_balance ? '' : row.amount
+      },
     },
     {
       label: '余额',
@@ -505,9 +715,28 @@ onMounted(async () => {
     await applyCashScope()
   }
 })
+
+onActivated(() => {
+  void tryRestoreVoucherModal()
+})
 </script>
 
 <style scoped>
+:deep(.monthly-subtotal-row) {
+  background-color: #e0f2fe !important;
+  font-weight: 600;
+}
+
+:deep(.yearly-subtotal-row) {
+  background-color: #fef9c3 !important;
+  font-weight: 600;
+}
+
+:deep(.carry-forward-row) {
+  background-color: #f3f4f6 !important;
+  font-weight: 500;
+}
+
 .page {
   padding: 16px;
 }
@@ -524,16 +753,12 @@ onMounted(async () => {
 }
 .quick-filter-btns {
   display: flex;
+  flex-wrap: nowrap;
   gap: 8px;
-}
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
 }
 
 .pagination {
-  margin-top: 16px;
+  margin-top: 4px;
   display: flex;
   justify-content: flex-end;
 }

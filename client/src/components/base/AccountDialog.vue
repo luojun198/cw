@@ -15,8 +15,13 @@
       <el-form-item label="上级科目">
         <el-tree-select
           v-model="form.parent_id"
+          class="account-tree-select"
+          size="small"
           :data="treeSelectData"
           :props="treeSelectProps"
+          :popper-class="ACCOUNT_TREE_SELECT_POPPER_CLASS"
+          :popper-style="ACCOUNT_TREE_SELECT_POPPER_STYLE"
+          :fit-input-width="false"
           check-strictly
           filterable
           :filter-node-method="filterTreeNode"
@@ -24,7 +29,14 @@
           placeholder="不选则为顶级科目"
           style="width: 100%"
           @change="handleParentChange"
-        />
+        >
+          <template #default="{ data }">
+            <span class="account-tree-node-option" :title="data.displayLabel">
+              <span class="account-tree-node-option__code">{{ data.code }}</span>
+              <span class="account-tree-node-option__name">{{ data.name }}</span>
+            </span>
+          </template>
+        </el-tree-select>
       </el-form-item>
       <el-form-item label="科目编码" required>
         <el-input v-model="form.code" :disabled="mode === 'edit'" placeholder="如: 1001" />
@@ -88,13 +100,18 @@
               placeholder="默认项目"
               clearable
               filterable
+              remote
+              remote-show-suffix
               style="flex: 1"
               :disabled="!item.cat_id"
+              :loading="isAuxSelectLoading(item.cat_id)"
+              :remote-method="(q: string) => searchAuxItems(item.cat_id, q)"
+              @visible-change="(visible: boolean) => visible && onAuxDropdownOpen(item.cat_id)"
             >
               <el-option
-                v-for="i in getAuxItemsByCat(item.cat_id)"
+                v-for="i in getAuxOptions(item.cat_id)"
                 :key="i.id"
-                :label="i.name"
+                :label="formatAuxItemLabel(i)"
                 :value="i.id"
               />
             </el-select>
@@ -123,29 +140,23 @@
       </el-form-item>
 
       <el-alert
-        v-if="parentUsage && parentUsage.voucherCount > 0"
+        v-if="mode === 'add' && parentUsage"
         type="warning"
         :closable="false"
         show-icon
         style="margin-top: 8px"
       >
-        <template #title>
-          该上级科目已被使用：{{ parentUsage.voucherCount }} 条凭证分录，{{
-            parentUsage.years.join('、')
-          }}年度数据
-        </template>
+        <template #title> 上级科目已有数据，将自动转入本次新建的子科目 </template>
         <template #default>
-          勾选下方选项可将余额和凭证自动转入新科目，凭证录入时只能选择最明细科目。
+          上级科目从末级变为汇总级后不能再记账/挂期初，其
+          <template v-if="parentUsage.voucherCount > 0"
+            >{{ parentUsage.voucherCount }} 条凭证分录、</template
+          ><template v-if="parentUsage.initBalanceCount > 0">年初余额、</template
+          ><template v-if="parentUsage.auxInitCount > 0"
+            >{{ parentUsage.auxInitCount }} 条辅助期初、</template
+          >以及辅助核算、方向等会计属性将自动转入本子科目。凭证录入时只能选择最明细科目。
         </template>
       </el-alert>
-
-      <el-form-item
-        v-if="parentUsage && parentUsage.voucherCount > 0"
-        label="数据迁移"
-        style="margin-top: 8px"
-      >
-        <el-checkbox v-model="form.migrate_from_parent">将余额和凭证迁移到新科目</el-checkbox>
-      </el-form-item>
     </el-form>
     <template #footer>
       <el-button @click="handleClose">取消</el-button>
@@ -161,6 +172,10 @@
 
 <script setup lang="ts">
 import { ref, watch } from 'vue'
+import {
+  ACCOUNT_TREE_SELECT_POPPER_CLASS,
+  ACCOUNT_TREE_SELECT_POPPER_STYLE,
+} from '@/utils/accountSelectDisplay'
 
 interface Props {
   modelValue: boolean
@@ -171,7 +186,10 @@ interface Props {
   childrenCount?: number
   treeSelectData: any[]
   getAvailableCats: (item: any) => any[]
-  getAuxItemsByCat: (catId: string) => any[]
+  getAuxOptions: (catId: string) => any[]
+  searchAuxItems: (catId: string, keyword: string) => void
+  onAuxDropdownOpen: (catId: string) => void
+  isAuxSelectLoading: (catId: string) => boolean
   onAuxCatChange: (item: any, val: string) => void
   addAux: () => void
   removeAux: (index: number) => void
@@ -190,7 +208,7 @@ const visible = ref(props.modelValue)
 const childrenCount = ref(0)
 
 const treeSelectProps = {
-  label: 'name',
+  label: 'displayLabel',
   value: 'id',
   children: 'children',
   disabled: 'disabled',
@@ -201,6 +219,12 @@ function filterTreeNode(value: string, data: any) {
   const lower = value.toLowerCase()
   return (data.name && data.name.toLowerCase().includes(lower)) ||
          (data.code && data.code.toLowerCase().includes(lower))
+}
+
+function formatAuxItemLabel(item: { code?: string; name?: string }) {
+  const code = String(item.code || '').trim()
+  const name = String(item.name || '').trim()
+  return code ? `${code} ${name}` : name
 }
 
 watch(

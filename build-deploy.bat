@@ -124,10 +124,16 @@ copy /y "server\src\db\schema.sql" "%DEPLOY%\server\schema.sql" >nul
 echo # CW Finance - Deployment .env > "%DEPLOY%\server\.env"
 echo # JWT Secret - change to a strong random string in production >> "%DEPLOY%\server\.env"
 echo JWT_SECRET=your-secret-key-change-this-in-production >> "%DEPLOY%\server\.env"
-echo # Keep deployment package database blank; users create account sets on first use >> "%DEPLOY%\server\.env"
+echo # Packaged with development database from data/finance.db >> "%DEPLOY%\server\.env"
 echo SEED_DEFAULT_ACCOUNT_SET=false >> "%DEPLOY%\server\.env"
 
+if exist "%ROOT%\%DEPLOY%\client\dist" rmdir /s /q "%ROOT%\%DEPLOY%\client\dist"
+mkdir "%ROOT%\%DEPLOY%\client\dist"
 xcopy "client\dist\*" "%DEPLOY%\client\dist\" /E /I /Y >nul
+if errorlevel 1 (
+    echo ERROR: Failed to copy client dist into deploy package
+    exit /b 1
+)
 
 powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\copy-deploy-templates.ps1" "%ROOT%" "%DEPLOY%"
 if errorlevel 1 (
@@ -137,9 +143,9 @@ if errorlevel 1 (
 
 copy /y "QR.png" "%DEPLOY%\QR.png" >nul 2>nul
 
-"%ROOT%\%DEPLOY%\node\node.exe" "scripts\create-blank-deploy-db.cjs" "%ROOT%\%DEPLOY%"
+"%ROOT%\%DEPLOY%\node\node.exe" "%ROOT%\scripts\copy-dev-db-to-deploy.cjs" "%ROOT%" "%ROOT%\%DEPLOY%"
 if errorlevel 1 (
-    echo ERROR: Blank database creation failed
+    echo ERROR: Dev database copy failed
     exit /b 1
 )
 
@@ -169,7 +175,9 @@ if errorlevel 1 (
   echo echo   CW Finance - Starting...
   echo echo ========================================
   echo echo.
-  echo echo   First use: create an account set, then login admin / admin123
+  echo echo   Database: bundled from dev data/finance.db ^(license cleared^)
+  echo echo   First launch requires software activation
+  echo echo   Login with your existing account set / admin account
   echo echo ========================================
   echo echo.
   echo set "PATH=%%~dp0node;%%PATH%%"
@@ -183,17 +191,41 @@ if errorlevel 1 (
   echo ^)
   echo echo Starting server...
   echo start "" /b "%%~dp0node\node.exe" server\bundle.cjs
-  echo echo Waiting for server to be ready...
+  echo echo Waiting for server to be ready ^(max 30s^)...
+  echo set /a retry=0
   echo :wait_loop
   echo timeout /t 2 /nobreak ^>nul
-  echo "%%~dp0node\node.exe" -e "var h=require('http');h.get('http://localhost:3005/api/health',function(r){process.exit(r.statusCode===200?0:1)}).on('error',function(){process.exit(1)}).setTimeout(3000,function(){process.exit(1)})" ^>nul 2^>nul
-  echo if errorlevel 1 goto wait_loop
-  echo start http://localhost:3005
+  echo "%%~dp0node\node.exe" -e "var h=require('http');var req=h.get('http://127.0.0.1:3005/',function(r){r.resume();process.exit(r.statusCode===200?0:1)});req.on('error',function(){process.exit(1)});req.setTimeout(3000,function(){req.destroy();process.exit(1)})" ^>nul 2^>nul
+  echo if not errorlevel 1 goto server_ready
+  echo set /a retry+=1
+  echo if %%retry%% lss 15 goto wait_loop
   echo echo.
-  echo echo Server is ready. Opening browser...
+  echo echo Server failed to start within 30s. Please check the log above.
+  echo pause
+  echo exit /b 1
+  echo :server_ready
+  echo echo.
+  echo echo Server is ready.
+  echo echo Opening browser...
+  echo start "" "http://127.0.0.1:3005/"
+  echo if errorlevel 1 ^(
+  echo   echo Browser could not be opened automatically.
+  echo   echo Please manually open: http://127.0.0.1:3005/
+  echo ^)
+  echo echo.
   echo echo Do not close this window.
   echo pause
 ) > "%DEPLOY%\start.bat"
+
+node "%ROOT%\scripts\write-deploy-build-stamp.cjs" "%ROOT%" "%DEPLOY%"
+if errorlevel 2 (
+    echo ERROR: deploy-final client/server artifacts do not match project build outputs
+    exit /b 1
+)
+if errorlevel 1 (
+    echo ERROR: Failed to write BUILD_STAMP.json
+    exit /b 1
+)
 echo       OK
 echo.
 
@@ -209,6 +241,9 @@ echo   Next steps:
 echo   1. Copy '%DEPLOY%' folder to target server
 echo   2. Double-click start.bat
 echo   3. Open http://localhost:3005
-echo   4. Create an account set first, then login with admin / admin123
+echo   4. Login with existing dev account set credentials
+echo.
+echo   Tip: Login page shows build number. Check deploy-final\BUILD_STAMP.json
+echo        dbInSyncWithDev=true means report/print templates match dev DB.
 echo.
 exit /b 0

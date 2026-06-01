@@ -21,7 +21,7 @@ import {
 } from './voucherPosting.js'
 import { applyAuxItemIdToEntryFields } from '../utils/auxItemId.js'
 import { isYearlyTransferDue } from '../utils/transferPeriodType.js'
-import { yuanToCents } from '../utils/amountUtils.js'
+import { yuanToCents, MONEY_EPSILON } from '../utils/amountUtils.js'
 
 export const AUTO_TRANSFER_TYPE = 'income-expense'
 
@@ -79,23 +79,115 @@ export function getAutoTransferSummary(period: number, type: 'income' | 'expense
   return `${period}月结转平衡`
 }
 
-export function getIncomeExpenseTransferAccounts(
-  accounts: Array<{ id: string; code: string; name: string; direction: string }>,
-  preferredTargetCodes: string[] = []
+/**
+ * FIX-005 / P0-7：按会计准则识别"损益结转"涉及的收入/费用/本年利润科目。
+ *
+ * 三套准则下的编码体系完全不同，旧实现写死 4xxx 收入 / 5xxx 费用 / 3001 平衡，
+ * 仅适配政府会计制度，在企业准则、小企业准则下会全部错乱。
+ *
+ * 各准则识别规则（保持与 detectStaticReportStandard 一致）：
+ *   - enterprise（新企业会计准则）
+ *     · 收入：6001–6303 等以 6 打头的贷方科目（含主营业务收入、营业外收入、投资收益等）
+ *     · 费用：6401–6801 以 6 打头的借方科目（主营业务成本、销售/管理/财务费用、营业外支出、所得税等）
+ *     · 平衡科目：本年利润 4103（兼容 4101）
+ *   - small_business（小企业会计准则 2013）
+ *     · 收入：5001 / 5051 / 5111 / 5301 等 5 打头的贷方科目
+ *     · 费用：5401 / 5402 / 5403 / 5501 / 5502 / 5503 / 5601 / 5701 等 5 打头的借方科目
+ *     · 平衡科目：本年利润 3131（部分版本 3103）
+ *   - government（政府会计制度，财务会计口径）
+ *     · 收入：4xxx 全部（财政拨款收入 / 事业收入 / 上级补助收入 等）
+ *     · 费用：5xxx 全部（业务活动费用 / 单位管理费用 等）
+ *     · 平衡科目：本期盈余 3201（兼容旧版"累计盈余 3001"）
+ *
+ * 实际识别采用两层判断：① 编码前缀；② 科目自身借贷方向。
+ * 这样即使用户准则下科目细分有出入，按借贷方向自动归类也能避免错配。
+ */
+export type AutoTransferStandard = 'enterprise' | 'small_business' | 'government'
+
+export interface AutoTransferAccount {
+  id: string
+  code: string
+  name: string
+  direction: string
+}
+
+/**
+ * 取本年利润 / 累计盈余 类平衡科目候选编码列表（按准则）
+ */
+function getDefaultBalanceAccountCodes(standard: AutoTransferStandard): string[] {
+  switch (standard) {
+    case 'enterprise':
+      return ['4103', '4101']
+    case 'small_business':
+      return ['3131', '3103']
+    case 'government':
+      return ['3201', '3001']
+    default:
+      return ['4103']
+  }
+}
+
+/**
+ * 损益科目前缀（与 staticReportConfig.getProfitLossAccountCodePrefixes 保持一致）
+ */
+function getProfitLossPrefixes(standard: AutoTransferStandard): string[] {
+  switch (standard) {
+    case 'enterprise':
+      return ['6']
+    case 'small_business':
+      return ['5']
+    case 'government':
+      return ['4', '5']
+    default:
+      return ['6']
+  }
+}
+
+/**
+ * 按准则识别收入 / 费用 / 平衡科目（推荐新调用方使用此 API）。
+ */
+export function getProfitLossTransferAccounts(
+  accounts: AutoTransferAccount[],
+  opts: {
+    standard: AutoTransferStandard
+    preferredTargetCodes?: string[]
+  }
 ) {
-  const incomeAccounts = accounts.filter(account => /^4/.test(account.code))
-  const expenseAccounts = accounts.filter(account => /^5/.test(account.code))
-  const configuredBalanceAccount = preferredTargetCodes
-    .map(code => accounts.find(account => account.code === code.trim()))
-    .find(Boolean)
+  const prefixes = getProfitLossPrefixes(opts.standard)
+  const profitLossAccounts = accounts.filter(account =>
+    prefixes.some(p => account.code.startsWith(p))
+  )
+  // 双判定：编码 + 借贷方向。收入是贷方科目；费用是借方科目。
+  // 兼顾用户自定义科目时编码前缀不规范的情况。
+  const incomeAccounts = profitLossAccounts.filter(account => account.direction === 'credit')
+  const expenseAccounts = profitLossAccounts.filter(account => account.direction === 'debit')
+
+  const preferredCodes = (opts.preferredTargetCodes ?? []).map(c => String(c).trim()).filter(Boolean)
+  const defaultBalanceCodes = getDefaultBalanceAccountCodes(opts.standard)
   const balanceAccount =
-    configuredBalanceAccount ||
-    accounts.find(account => /^3001/.test(account.code)) ||
-    accounts.find(account => account.code === '3101') ||
-    accounts.find(account => /^3/.test(account.code)) ||
+    preferredCodes
+      .map(code => accounts.find(account => account.code === code))
+      .find((a): a is AutoTransferAccount => Boolean(a)) ||
+    defaultBalanceCodes
+      .map(code => accounts.find(account => account.code === code))
+      .find((a): a is AutoTransferAccount => Boolean(a)) ||
     null
 
   return { incomeAccounts, expenseAccounts, balanceAccount }
+}
+
+/**
+ * @deprecated 旧签名硬编码为政府会计制度规则，已被 getProfitLossTransferAccounts 取代。
+ * 保留仅为外部调用兼容；新代码请显式传 standard 参数。
+ */
+export function getIncomeExpenseTransferAccounts(
+  accounts: AutoTransferAccount[],
+  preferredTargetCodes: string[] = []
+) {
+  return getProfitLossTransferAccounts(accounts, {
+    standard: 'government',
+    preferredTargetCodes,
+  })
 }
 
 export function getAutoTransferTargetAccountCodes(params: {
@@ -131,7 +223,7 @@ export function buildAutoTransferEntries(params: {
 
   for (const balance of params.incomeBalances) {
     const amount = Math.abs(Number(balance.end_balance || 0))
-    if (amount <= 0.001) continue
+    if (amount <= MONEY_EPSILON) continue
     totalIncome += amount
     appendTransferEntry(
       entries,
@@ -149,7 +241,7 @@ export function buildAutoTransferEntries(params: {
 
   for (const balance of params.expenseBalances) {
     const amount = Math.abs(Number(balance.end_balance || 0))
-    if (amount <= 0.001) continue
+    if (amount <= MONEY_EPSILON) continue
     totalExpense += amount
     appendTransferEntry(
       entries,
@@ -166,22 +258,37 @@ export function buildAutoTransferEntries(params: {
   }
 
   const diff = Math.abs(totalIncome - totalExpense)
-  if (diff > 0.001 && params.balanceAccount) {
-    entries.push({
-      account_id: params.balanceAccount.id,
-      account_code: params.balanceAccount.code,
-      account_name: params.balanceAccount.name,
-      direction: totalIncome > totalExpense ? 'credit' : 'debit',
-      amount: diff,
-      summary: getAutoTransferSummary(params.period, 'balance'),
-    })
+
+  if (params.balanceAccount) {
+    if (totalIncome > MONEY_EPSILON) {
+      entries.push({
+        account_id: params.balanceAccount.id,
+        account_code: params.balanceAccount.code,
+        account_name: params.balanceAccount.name,
+        direction: 'credit',
+        amount: totalIncome,
+        summary: getAutoTransferSummary(params.period, 'income'),
+      })
+    }
+
+    if (totalExpense > MONEY_EPSILON) {
+      entries.push({
+        account_id: params.balanceAccount.id,
+        account_code: params.balanceAccount.code,
+        account_name: params.balanceAccount.name,
+        direction: 'debit',
+        amount: totalExpense,
+        summary: getAutoTransferSummary(params.period, 'expense'),
+      })
+    }
   }
 
   return {
     entries,
     totalIncome,
     totalExpense,
-    difference: diff,
+    imbalance: diff > MONEY_EPSILON ? diff : 0,
+    hasImbalance: diff > MONEY_EPSILON,
   }
 }
 
@@ -309,10 +416,7 @@ export function getPeriodEndBalanceByCode(params: {
   year: number
   period: number
   accountCode: string
-}):
-  | TransferBalanceRow
-  | null
-  | TransferBalanceRow[] {
+}): TransferBalanceRow | null | TransferBalanceRow[] {
   const account = params.db
     .prepare(
       `SELECT id, code, name, is_aux FROM accounts
@@ -347,9 +451,14 @@ export function getPeriodEndBalanceByCode(params: {
 
   const rows = params.db
     .prepare(PERIOD_END_BALANCE_SQL)
-    .all(params.accountSetId, params.year, params.period, params.accountCode) as TransferBalanceRow[]
+    .all(
+      params.accountSetId,
+      params.year,
+      params.period,
+      params.accountCode
+    ) as TransferBalanceRow[]
 
-  const nonZeroRows = rows.filter(row => Math.abs(Number(row.end_balance || 0)) > 0.001)
+  const nonZeroRows = rows.filter(row => Math.abs(Number(row.end_balance || 0)) > MONEY_EPSILON)
   if (nonZeroRows.length === 0) return null
   if (account.is_aux === 1 || nonZeroRows.length > 1) return nonZeroRows
   return nonZeroRows[0]
@@ -357,7 +466,7 @@ export function getPeriodEndBalanceByCode(params: {
 
 function getTransferAmount(item: TransferItemConfig, endBalance: number) {
   const base = Math.abs(endBalance)
-  if (base <= 0.001) return 0
+  if (base <= MONEY_EPSILON) return 0
   if (item.transfer_type !== 'partial') return base
   const rawRatio = Number(item.ratio ?? 100)
   const ratio = Number.isFinite(rawRatio) ? Math.max(0, Math.min(100, rawRatio)) : 100
@@ -385,22 +494,26 @@ export function buildEntriesFromTransferItems(params: {
   const accountByCode = new Map(params.accounts.map(account => [account.code, account]))
   const accountById = new Map(params.accounts.map(account => [account.id, account]))
 
-  // 分离转入目标和转出源
+  // 分离转入目标、纯转出源、一对一配对。
+  // 关键约束：sourceItems 必须排除 pairItems，否则同时存在 targetItem + pairItem 时，
+  // pair 项会先被"汇总结转"循环（line 407+）处理一次，又被"一对一"循环（line 504+）
+  // 处理一次，导致结转金额翻倍（曾出现 501 → 1002 的损益科目无法清零的 bug）。
   const targetItems = params.items.filter(item => {
     const toCode = String(item.to_code || '').trim()
     const fromCode = String(item.from_code || '').trim()
-    return Boolean(toCode) && !fromCode // 只有 to_code，没有 from_code
+    return Boolean(toCode) && !fromCode // 仅 to_code
   })
 
   const sourceItems = params.items.filter(item => {
     const fromCode = String(item.from_code || '').trim()
-    return Boolean(fromCode)
+    const toCode = String(item.to_code || '').trim()
+    return Boolean(fromCode) && !toCode // 仅 from_code，不含 pair
   })
 
   const pairItems = params.items.filter(item => {
     const fromCode = String(item.from_code || '').trim()
     const toCode = String(item.to_code || '').trim()
-    return Boolean(fromCode) && Boolean(toCode) // 同时有 from_code 和 to_code
+    return Boolean(fromCode) && Boolean(toCode) // 同时 from_code + to_code
   })
 
   // 处理汇总结转模式：多个转出源 -> 一个转入目标（与结转维护页约束一致，仅取第一个转入科目）
@@ -433,7 +546,7 @@ export function buildEntriesFromTransferItems(params: {
           for (const childBalance of balanceResult) {
             const endBalance = Number(childBalance.end_balance || 0)
             const amount = getTransferAmount(sourceItem, endBalance)
-            if (amount <= 0.001) continue
+            if (amount <= MONEY_EPSILON) continue
 
             const summary = String(sourceItem.summary || '').trim() || `${params.period}月结转`
             const childAccount = accountById.get(childBalance.account_id)
@@ -461,7 +574,7 @@ export function buildEntriesFromTransferItems(params: {
           // 处理返回单个对象的情况（明细科目）
           const endBalance = Number(balanceResult?.end_balance || 0)
           const amount = getTransferAmount(sourceItem, endBalance)
-          if (amount > 0.001) {
+          if (amount > MONEY_EPSILON) {
             const summary = String(sourceItem.summary || '').trim() || `${params.period}月结转`
             const fromDirection = fromAccount.direction === 'credit' ? 'debit' : 'credit'
             if (!sourceDirection) sourceDirection = fromAccount.direction as 'debit' | 'credit'
@@ -486,8 +599,9 @@ export function buildEntriesFromTransferItems(params: {
       }
 
       // 生成转入目标的汇总分录
-      if (targetTotalAmount > 0.001) {
-        const toDirection: 'debit' | 'credit' = sourceDirection || (toAccount.direction === 'credit' ? 'credit' : 'debit')
+      if (targetTotalAmount > MONEY_EPSILON) {
+        const toDirection: 'debit' | 'credit' =
+          sourceDirection || (toAccount.direction === 'credit' ? 'credit' : 'debit')
         entries.push({
           account_id: toAccount.id,
           account_code: toAccount.code,
@@ -521,7 +635,7 @@ export function buildEntriesFromTransferItems(params: {
       for (const childBalance of balanceResult) {
         const endBalance = Number(childBalance.end_balance || 0)
         const amount = getTransferAmount(item, endBalance)
-        if (amount <= 0.001) continue
+        if (amount <= MONEY_EPSILON) continue
 
         const childAccount = accountById.get(childBalance.account_id)
         if (!childAccount) continue
@@ -546,8 +660,9 @@ export function buildEntriesFromTransferItems(params: {
 
       // 生成转入分录（汇总金额）
       // 转入方向 = 转出源（父科目）的余额方向；子科目继承父方向，所以用 fromAccount.direction 即可
-      if (totalAmount > 0.001) {
-        const toDirection: 'debit' | 'credit' = fromAccount.direction === 'credit' ? 'credit' : 'debit'
+      if (totalAmount > MONEY_EPSILON) {
+        const toDirection: 'debit' | 'credit' =
+          fromAccount.direction === 'credit' ? 'credit' : 'debit'
         entries.push({
           account_id: toAccount.id,
           account_code: toAccount.code,
@@ -562,7 +677,7 @@ export function buildEntriesFromTransferItems(params: {
       // 处理返回单个对象的情况（明细科目）
       const endBalance = Number(balanceResult?.end_balance || 0)
       const amount = getTransferAmount(item, endBalance)
-      if (amount > 0.001) {
+      if (amount > MONEY_EPSILON) {
         const fromDirection = fromAccount.direction === 'credit' ? 'debit' : 'credit'
         const toDirection = fromDirection === 'debit' ? 'credit' : 'debit'
 
@@ -618,12 +733,7 @@ function getExistingTransferRunByType(params: {
 }) {
   return params.db
     .prepare(EXISTING_TRANSFER_RUN_SQL)
-    .get(
-      params.accountSetId,
-      params.year,
-      params.period,
-      params.transferTypeCode
-    ) as any
+    .get(params.accountSetId, params.year, params.period, params.transferTypeCode) as any
 }
 
 /** 查询指定期间已生成的全部结转凭证（供结转工作台顶部展示） */
@@ -894,15 +1004,18 @@ export function buildAutoTransferPreview(params: {
   if (balanceDiff > 0.01 && preview.entries.length > 0) {
     if (balanceDiff <= 1.0) {
       // 微小误差：调整最大金额分录的金额来平衡
-      const biggestEntry = preview.entries.reduce((a, b) => a.amount > b.amount ? a : b)
+      const biggestEntry = preview.entries.reduce((a, b) => (a.amount > b.amount ? a : b))
       const deficit = totals.debitTotal - totals.creditTotal
       // 借方不足则增加最大借方分录，贷方不足则增加最大贷方分录
       if (deficit > 0) {
         // 借方多，需要在贷方补
         const creditEntries = preview.entries.filter(e => e.direction === 'credit')
         if (creditEntries.length > 0) {
-          creditEntries.reduce((a, b) => a.amount > b.amount ? a : b).amount =
-            Number((creditEntries.reduce((a, b) => a.amount > b.amount ? a : b).amount + deficit).toFixed(2))
+          creditEntries.reduce((a, b) => (a.amount > b.amount ? a : b)).amount = Number(
+            (
+              creditEntries.reduce((a, b) => (a.amount > b.amount ? a : b)).amount + deficit
+            ).toFixed(2)
+          )
         } else {
           // 没有贷方分录，加一条平衡分录
           preview.entries.push({
@@ -918,8 +1031,12 @@ export function buildAutoTransferPreview(params: {
         // 贷方多，需要在借方补
         const debitEntries = preview.entries.filter(e => e.direction === 'debit')
         if (debitEntries.length > 0) {
-          debitEntries.reduce((a, b) => a.amount > b.amount ? a : b).amount =
-            Number((debitEntries.reduce((a, b) => a.amount > b.amount ? a : b).amount + Math.abs(deficit)).toFixed(2))
+          debitEntries.reduce((a, b) => (a.amount > b.amount ? a : b)).amount = Number(
+            (
+              debitEntries.reduce((a, b) => (a.amount > b.amount ? a : b)).amount +
+              Math.abs(deficit)
+            ).toFixed(2)
+          )
         } else {
           preview.entries.push({
             account_id: '',
@@ -1084,14 +1201,17 @@ export function buildAllTransferPreviews(params: {
     .prepare(
       'SELECT code, name, voucher_type, period_type FROM transfer_types WHERE account_set_id=? ORDER BY code'
     )
-    .all(params.accountSetId) as Array<{ code: string; name: string; voucher_type: string; period_type: string }>
+    .all(params.accountSetId) as Array<{
+    code: string
+    name: string
+    voucher_type: string
+    period_type: string
+  }>
 
   if (transferTypes.length === 0) {
     return {
       closed,
-      blockedReason: closed
-        ? '该期间已结账，不能生成自动结转凭证'
-        : '未配置结转类型',
+      blockedReason: closed ? '该期间已结账，不能生成自动结转凭证' : '未配置结转类型',
       generatedVouchers,
       summary: {
         totalTypes: 0,
@@ -1165,8 +1285,13 @@ export function buildAllTransferPreviews(params: {
     })
 
     const totals = calculateVoucherTotals(preview.entries)
-    const unbalanced = preview.entries.length > 0 && Math.abs(totals.debitTotal - totals.creditTotal) > 0.01
-    const status: TransferPreviewStatus = unbalanced ? 'unbalanced' : preview.entries.length > 0 ? 'ready' : 'empty'
+    const unbalanced =
+      preview.entries.length > 0 && Math.abs(totals.debitTotal - totals.creditTotal) > 0.01
+    const status: TransferPreviewStatus = unbalanced
+      ? 'unbalanced'
+      : preview.entries.length > 0
+        ? 'ready'
+        : 'empty'
     const emptyReason = preview.entries.length === 0 ? getPreviewEmptyReason(preview) : null
 
     previews.push({
@@ -1241,8 +1366,7 @@ export function resolveVoucherTypeIdByRef(params: {
     return row?.id || null
   }
 
-  const tryResolve = (value: string) =>
-    findByField('name', value) || findByField('code', value)
+  const tryResolve = (value: string) => findByField('name', value) || findByField('code', value)
 
   const candidates = new Set<string>()
   if (ref) candidates.add(ref)
@@ -1695,7 +1819,9 @@ export function createAllTransferVouchers(params: {
 
   // 获取所有结转类型
   const transferTypes = params.db
-    .prepare('SELECT code, name, period_type FROM transfer_types WHERE account_set_id=? ORDER BY code')
+    .prepare(
+      'SELECT code, name, period_type FROM transfer_types WHERE account_set_id=? ORDER BY code'
+    )
     .all(params.accountSetId) as Array<{ code: string; name: string; period_type: string }>
 
   if (transferTypes.length === 0) {
@@ -1707,7 +1833,11 @@ export function createAllTransferVouchers(params: {
 
   const hasTypeFilter = Array.isArray(params.transferTypeCodes)
   const selectedCodes = hasTypeFilter
-    ? Array.from(new Set((params.transferTypeCodes || []).map(code => String(code || '').trim()).filter(Boolean)))
+    ? Array.from(
+        new Set(
+          (params.transferTypeCodes || []).map(code => String(code || '').trim()).filter(Boolean)
+        )
+      )
     : []
   const selectedCodeSet = new Set(selectedCodes)
   const availableCodes = new Set(transferTypes.map(type => type.code))

@@ -255,12 +255,12 @@
 /* ========== 表格 ========== */
 .el-table th.el-table__cell {
   background: linear-gradient(to bottom, var(--gray-100) 0%, var(--gray-200) 100%) !important;
-  font-weight: 600 !important;
-  font-size: 12px !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.05em !important;
-  color: var(--text-secondary) !important;
-  font-family: var(--font-body) !important;
+  font-family: var(--cw-table-header-font-family) !important;
+  font-weight: var(--cw-table-header-font-weight) !important;
+  font-size: var(--cw-table-header-font-size) !important;
+  text-transform: none !important;
+  letter-spacing: 0 !important;
+  color: var(--cw-text-primary) !important;
 }
 
 .el-table .cell {
@@ -271,13 +271,152 @@
   transition: background-color var(--duration-fast) var(--ease-out) !important;
 }
 
-.el-table tbody tr:hover > td.el-table__cell {
+.el-table tbody tr:hover > td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
   background: rgba(0, 122, 255, 0.06) !important;
 }
 
-.el-table tbody tr.current-row > td.el-table__cell {
+.el-table tbody tr.current-row > td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
   background: rgba(0, 122, 255, 0.12) !important;
   font-weight: 500 !important;
+}
+
+/* EP 2.6+ sticky 冻结列：须不透明 background，选择器优先级需不低于 EP 的 background:inherit !important
+ * 覆盖全站所有 fixed="right"/fixed="left" 操作列，含：用户/角色/账套、科目/项目/模板、
+ * 凭证审核/模板/录入、期初余额、备份、动态报表、转账类型等列表与对话框内表格 */
+.el-table__body-wrapper tr td.el-table-fixed-column--left,
+.el-table__body-wrapper tr td.el-table-fixed-column--right,
+.el-table__footer-wrapper tr td.el-table-fixed-column--left,
+.el-table__footer-wrapper tr td.el-table-fixed-column--right,
+.el-table__header-wrapper tr th.el-table-fixed-column--left,
+.el-table__header-wrapper tr th.el-table-fixed-column--right,
+.el-table__fixed .el-table__body td.el-table__cell,
+.el-table__fixed-right .el-table__body td.el-table__cell {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+}
+
+.el-table--striped .el-table__body-wrapper tr.el-table__row--striped td.el-table-fixed-column--left,
+.el-table--striped .el-table__body-wrapper tr.el-table__row--striped td.el-table-fixed-column--right,
+.el-table--striped .el-table__fixed .el-table__body tr.el-table__row--striped td.el-table__cell,
+.el-table--striped .el-table__fixed-right .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #fafbfc !important;
+  background-color: #fafbfc !important;
+}
+
+.el-table--striped .el-table__body-wrapper tr:not(.el-table__row--striped) td.el-table-fixed-column--left,
+.el-table--striped .el-table__body-wrapper tr:not(.el-table__row--striped) td.el-table-fixed-column--right {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+}
+
+.el-table__body-wrapper tr:hover td.el-table-fixed-column--left,
+.el-table__body-wrapper tr:hover td.el-table-fixed-column--right,
+.el-table__body-wrapper tr.hover-row td.el-table-fixed-column--left,
+.el-table__body-wrapper tr.hover-row td.el-table-fixed-column--right,
+.el-table__fixed .el-table__body tr:hover > td.el-table__cell,
+.el-table__fixed-right .el-table__body tr:hover > td.el-table__cell {
+  background: #f0f7ff !important;
+  background-color: #f0f7ff !important;
+}
+
+.el-table__body-wrapper tr.current-row td.el-table-fixed-column--left,
+.el-table__body-wrapper tr.current-row td.el-table-fixed-column--right,
+.el-table__body-wrapper tr.is-selected td.el-table-fixed-column--left,
+.el-table__body-wrapper tr.is-selected td.el-table-fixed-column--right,
+.el-table__fixed .el-table__body tr.current-row > td.el-table__cell,
+.el-table__fixed-right .el-table__body tr.current-row > td.el-table__cell,
+.el-table__fixed .el-table__body tr.is-selected > td.el-table__cell,
+.el-table__fixed-right .el-table__body tr.is-selected > td.el-table__cell {
+  background: #e8f2ff !important;
+  background-color: #e8f2ff !important;
+}
+
+.el-table__body-wrapper tr.current-row:hover td.el-table-fixed-column--left,
+.el-table__body-wrapper tr.current-row:hover td.el-table-fixed-column--right,
+.el-table__body-wrapper tr.is-selected:hover td.el-table-fixed-column--left,
+.el-table__body-wrapper tr.is-selected:hover td.el-table-fixed-column--right,
+.el-table__body-wrapper tr.hover-row.current-row td.el-table-fixed-column--left,
+.el-table__body-wrapper tr.hover-row.current-row td.el-table-fixed-column--right,
+.el-table__fixed .el-table__body tr.current-row:hover > td.el-table__cell,
+.el-table__fixed-right .el-table__body tr.current-row:hover > td.el-table__cell,
+.el-table__fixed .el-table__body tr.is-selected:hover > td.el-table__cell,
+.el-table__fixed-right .el-table__body tr.is-selected:hover > td.el-table__cell {
+  background: #e8f2ff !important;
+  background-color: #e8f2ff !important;
+}
+
+.el-table__header-wrapper th.el-table-fixed-column--left,
+.el-table__header-wrapper th.el-table-fixed-column--right,
+.el-table__fixed .el-table__header th.el-table__cell,
+.el-table__fixed-right .el-table__header th.el-table__cell {
+  background: #f5f7fa !important;
+  background-color: #f5f7fa !important;
+}
+
+.el-table td.el-table__fixed-right-patch,
+.el-table th.el-table__fixed-right-patch,
+.el-table__fixed-right-patch {
+  background: #ffffff !important;
+  background-color: #ffffff !important;
+}
+
+[data-theme='dark'] .el-table__body-wrapper tr td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table__body-wrapper tr td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table__fixed .el-table__body td.el-table__cell,
+[data-theme='dark'] .el-table__fixed-right .el-table__body td.el-table__cell {
+  background: #1f1f1f !important;
+  background-color: #1f1f1f !important;
+}
+
+[data-theme='dark'] .el-table--striped .el-table__body-wrapper tr.el-table__row--striped td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table--striped .el-table__body-wrapper tr.el-table__row--striped td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table--striped .el-table__fixed .el-table__body tr.el-table__row--striped td.el-table__cell,
+[data-theme='dark'] .el-table--striped .el-table__fixed-right .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background: #262626 !important;
+  background-color: #262626 !important;
+}
+
+[data-theme='dark'] .el-table--striped .el-table__body-wrapper tr:not(.el-table__row--striped) td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table--striped .el-table__body-wrapper tr:not(.el-table__row--striped) td.el-table-fixed-column--right {
+  background: #1f1f1f !important;
+  background-color: #1f1f1f !important;
+}
+
+[data-theme='dark'] .el-table__body-wrapper tr:hover td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table__body-wrapper tr:hover td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table__body-wrapper tr.hover-row td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table__body-wrapper tr.hover-row td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table__fixed .el-table__body tr:hover > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed-right .el-table__body tr:hover > td.el-table__cell {
+  background: #1a2a3a !important;
+  background-color: #1a2a3a !important;
+}
+
+[data-theme='dark'] .el-table__body-wrapper tr.current-row td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table__body-wrapper tr.current-row td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table__body-wrapper tr.is-selected td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table__body-wrapper tr.is-selected td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table__body-wrapper tr.current-row:hover td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table__body-wrapper tr.current-row:hover td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table__body-wrapper tr.is-selected:hover td.el-table-fixed-column--left,
+[data-theme='dark'] .el-table__body-wrapper tr.is-selected:hover td.el-table-fixed-column--right,
+[data-theme='dark'] .el-table__fixed .el-table__body tr.current-row > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed-right .el-table__body tr.current-row > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed .el-table__body tr.is-selected > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed-right .el-table__body tr.is-selected > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed .el-table__body tr.current-row:hover > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed-right .el-table__body tr.current-row:hover > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed .el-table__body tr.is-selected:hover > td.el-table__cell,
+[data-theme='dark'] .el-table__fixed-right .el-table__body tr.is-selected:hover > td.el-table__cell {
+  background: #1e3a5f !important;
+  background-color: #1e3a5f !important;
+}
+
+[data-theme='dark'] .el-table td.el-table__fixed-right-patch,
+[data-theme='dark'] .el-table th.el-table__fixed-right-patch,
+[data-theme='dark'] .el-table__fixed-right-patch {
+  background: #1f1f1f !important;
+  background-color: #1f1f1f !important;
 }
 
 /* 金额列 */
@@ -338,9 +477,12 @@
   overflow: hidden !important;
   box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.15), 0 10px 30px -5px rgba(0, 0, 0, 0.1) !important;
   border: 1px solid rgba(0, 0, 0, 0.05) !important;
-  background: rgba(255, 255, 255, 0.95) !important;
-  backdrop-filter: blur(20px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(20px) saturate(150%) !important;
+  background: #fff !important;
+}
+
+.el-dialog.is-draggable .el-dialog__header {
+  cursor: move;
+  user-select: none;
 }
 
 .el-dialog__header {
@@ -397,9 +539,14 @@
 }
 
 .el-overlay {
-  background-color: rgba(0, 0, 0, 0.4) !important;
-  backdrop-filter: blur(8px) !important;
-  -webkit-backdrop-filter: blur(8px) !important;
+  background-color: rgba(0, 0, 0, 0.18) !important;
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+.el-message-box.is-draggable .el-message-box__header {
+  cursor: move;
+  user-select: none;
 }
 
 [data-theme='dark'] .el-dialog {
@@ -471,10 +618,10 @@
   border-radius: var(--radius-xl) !important;
   border: 1px solid rgba(0, 0, 0, 0.05) !important;
   box-shadow: 0 20px 60px -10px rgba(0, 0, 0, 0.15), 0 10px 30px -5px rgba(0, 0, 0, 0.1) !important;
-  background: rgba(255, 255, 255, 0.95) !important;
-  backdrop-filter: blur(20px) saturate(150%) !important;
-  -webkit-backdrop-filter: blur(20px) saturate(150%) !important;
+  background: #fff !important;
   padding-bottom: 16px !important;
+  width: min(720px, 92vw) !important;
+  max-width: 92vw !important;
 }
 
 .el-message-box__header {
@@ -518,6 +665,12 @@
   font-size: 14px !important;
 }
 
+.el-message-box__message {
+  word-break: break-word;
+  white-space: normal;
+  line-height: 1.55;
+}
+
 .el-message-box__btns {
   padding: 0 24px !important;
 }
@@ -552,7 +705,6 @@
 .el-message .el-message__content {
   color: var(--text-primary) !important;
   font-weight: 500 !important;
-  line-height: 1.5 !important;
 }
 
 .el-message--success {
@@ -882,9 +1034,15 @@
 /* ========== 页面通用样式 ========== */
 .page {
   padding: 20px;
-  min-height: calc(100vh - 56px);
   background: var(--gray-100);
   font-family: var(--font-body) !important;
+}
+
+/* 主内容区内由 flex 定高，禁止 min-height 撑破布局导致表格无法滚动 */
+.main .page,
+.main .print-template-page {
+  min-height: 0;
+  height: 100%;
 }
 
 .page-header {
@@ -933,8 +1091,8 @@
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 12px;
-  padding: 16px 0;
+  gap: 6px;
+  padding: 0;
 }
 
 /* ========== 动画 ========== */

@@ -2,8 +2,7 @@
   <div class="login-container">
     <div class="login-box">
       <div class="login-header">
-        <h2>行政事业单位财务记账系统</h2>
-        <p>Government Finance Accounting System</p>
+        <h2>{{ brandingStore.title }}{{ brandingStore.subtitle ? ' · ' + brandingStore.subtitle : '' }}</h2>
       </div>
 
       <el-form
@@ -83,6 +82,11 @@
           <el-icon style="margin-right: 4px"><Upload /></el-icon>导入账套
         </el-button>
       </div>
+
+      <p class="login-version" :class="{ 'is-mismatch': buildVersionMismatch }">
+        {{ buildVersionLabel }}
+        <span v-if="buildVersionMismatch" class="login-version__warn">前后端版本不一致</span>
+      </p>
     </div>
 
     <!-- 新增账套弹窗 -->
@@ -109,8 +113,8 @@
         </el-form-item>
         <el-form-item label="选择模版">
           <el-radio-group v-model="createForm.use_template" class="template-radio-group">
-            <el-radio :label="true">标准模版</el-radio>
-            <el-radio :label="false">空账套</el-radio>
+            <el-radio :value="true">标准模版</el-radio>
+            <el-radio :value="false">空账套</el-radio>
           </el-radio-group>
           <el-select
             v-if="createForm.use_template"
@@ -183,6 +187,7 @@
       title="导入账套"
       width="520px"
       :close-on-click-modal="false"
+      @closed="resetImportForm"
     >
       <el-alert
         type="info"
@@ -190,7 +195,7 @@
         style="margin-bottom: 16px"
       >
         <template #title>
-          支持导入 SQLite 数据库备份（.db）或润衡财务软件备份（.acd）
+          支持导入单账套 SQLite 备份（.db，由系统内「单账套备份」导出）或润衡财务软件备份（.acd）。完整库备份请登录后在「数据安全 → 备份恢复」导入。
         </template>
       </el-alert>
 
@@ -328,16 +333,23 @@
 <script setup lang="ts">
 import { computed, ref, reactive, onMounted, watch } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
+import { getDefaultLandingPath } from '@/config/navigation'
 import { useUserStore } from '@/stores/user'
+import { useSystemParamsStore } from '@/stores/systemParams'
+import { useBrandingStore } from '@/stores/branding'
 import { getAccountSets, getUsersByAccountSet, backupImport, acdImport, type AccountSetItem, type UserItem } from '@/api/auth'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { UploadFilled, Upload, CircleCheck, CircleClose, Plus } from '@element-plus/icons-vue'
 import request from '@/api/request'
 import { getAccountSetDefaultStartDate } from '@/utils/format'
+import { useAppBuildInfo } from '@/composables/useAppBuildInfo'
 
 const router = useRouter()
+const { label: buildVersionLabel, mismatch: buildVersionMismatch } = useAppBuildInfo()
 const route = useRoute()
 const userStore = useUserStore()
+const brandingStore = useBrandingStore()
+const systemParamsStore = useSystemParamsStore()
 const formRef = ref<FormInstance>()
 const importFormRef = ref<FormInstance>()
 const createFormRef = ref<FormInstance>()
@@ -534,6 +546,7 @@ async function handleLogin() {
       username: form.username,
       password: form.password,
       targetAccountSetId: form.accountSetId,
+      rememberMe: rememberMe.value,
     })
 
     await afterLoginSuccess(res)
@@ -560,6 +573,7 @@ async function handleLogin() {
       password: form.password,
       targetAccountSetId: form.accountSetId,
       forceLogin: true,
+      rememberMe: rememberMe.value,
     })
     await afterLoginSuccess(res, true)
   } finally {
@@ -601,7 +615,8 @@ async function afterLoginSuccess(res: any, forcedLogin = false) {
   }
 
   queueLastLoginNotice(res.lastLoginTime, res.lastLoginIp)
-  await router.push('/dashboard')
+  await systemParamsStore.load()
+  await router.push(getDefaultLandingPath(userStore.permissions, systemParamsStore.enableCashFlow))
 }
 
 function formatLoginIp(ip?: string | null) {
@@ -631,6 +646,8 @@ function queueLastLoginNotice(lastLoginTime?: string | null, lastLoginIp?: strin
 function onFileInputChange(e: Event) {
   const input = e.target as HTMLInputElement
   importForm.file = input.files?.[0] || null
+  // 清空 input 以便再次选择同一文件
+  input.value = ''
   importFormRef.value?.validateField('file')
 
   // 智能解析文件名为账套名称
@@ -640,6 +657,12 @@ function onFileInputChange(e: Event) {
       importForm.name = parsedName
     }
   }
+}
+
+function resetImportForm() {
+  importFormRef.value?.resetFields()
+  importForm.file = null
+  if (fileInputRef.value) fileInputRef.value.value = ''
 }
 
 // 从文件名中智能提取账套名称
@@ -694,9 +717,12 @@ async function handleCreate() {
     if (fromStandardTemplate) {
       result = await request.post('/auth/account-sets/create-from-standard-template', payload, {
         timeout: 120000,
+        skipErrorToast: true,
       })
     } else {
-      result = await request.post('/auth/account-sets/create', payload)
+      result = await request.post('/auth/account-sets/create', payload, {
+        skipErrorToast: true,
+      })
     }
 
     if (result?.code !== 0) {
@@ -797,7 +823,9 @@ async function handleImport() {
       const data = result.data
       const stats = []
       if (data.imported.accounts) stats.push({ name: '科目', count: `${data.imported.accounts} 个` })
+      if (data.imported.initBalances) stats.push({ name: '期初余额', count: `${data.imported.initBalances} 条` })
       if (data.imported.vouchers) stats.push({ name: '凭证', count: `${data.imported.vouchers} 张 (${data.imported.entries} 条分录)` })
+      if (data.imported.users) stats.push({ name: '用户', count: `${data.imported.users} 个` })
 
       // 显示导入结果对话框
       importResult.success = true
@@ -809,9 +837,7 @@ async function handleImport() {
 
     // 关闭导入弹窗
     showImportDialog.value = false
-    importFormRef.value?.resetFields()
-    importForm.file = null
-    if (fileInputRef.value) fileInputRef.value.value = ''
+    resetImportForm()
 
     const imported = result?.data
     const importedAccountSetId = imported?.id
@@ -846,6 +872,9 @@ async function handleImport() {
 function handleImportResultClose() {
   showImportResultDialog.value = false
   resetImportResult()
+  if (!importResult.success) {
+    resetImportForm()
+  }
 }
 
 function handleImportDetailOpen() {
@@ -867,6 +896,7 @@ function resetImportResult() {
 }
 
 onMounted(async () => {
+  void brandingStore.load()
   // 优先级：URL targetAccountSetId > localStorage.lastAccountSetId > 不预选
   const queryTargetId = route.query.targetAccountSetId as string | undefined
   const rememberedAccountSetId = localStorage.getItem('lastAccountSetId') || undefined

@@ -7,10 +7,14 @@ import type { Database } from 'better-sqlite3'
 export function up(db: Database): void {
   console.log('[Migration] 添加 account_sets.import_source 字段')
 
-  // 添加 import_source 字段
-  db.exec(`
-    ALTER TABLE account_sets ADD COLUMN import_source TEXT DEFAULT 'manual';
-  `)
+  const columns = db.prepare('PRAGMA table_info(account_sets)').all() as Array<{ name: string }>
+  const hasImportSource = columns.some(column => column.name === 'import_source')
+
+  if (!hasImportSource) {
+    db.exec(`
+      ALTER TABLE account_sets ADD COLUMN import_source TEXT DEFAULT 'manual';
+    `)
+  }
 
   // 自动识别已导入的 ACD 账套（通过检查是否有 MANAGER 用户）
   db.exec(`

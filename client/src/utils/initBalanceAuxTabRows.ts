@@ -16,7 +16,7 @@ export function isLineSelectionComplete(line: AuxGridRow, activeCategoryId: stri
   return !!line.selection[activeCategoryId]
 }
 
-/** 当前标签页：预设该类目全部项目行 */
+/** 当前标签页：仅展示已录入/已保存的项目行（不为全量项目预生成空行） */
 export function buildTabGridRows(params: {
   activeCategoryId: string
   itemsByCategory: Record<string, AuxGridItem[]>
@@ -29,31 +29,14 @@ export function buildTabGridRows(params: {
   for (const line of combinationStore.values()) {
     const activeItemId = line.selection[activeCategoryId]
     if (!activeItemId) continue
-    if (!activeItems.some(i => i.id === activeItemId)) continue
     rows.push({ ...line, selection: { [activeCategoryId]: activeItemId } })
   }
 
-  for (const item of activeItems) {
-    const hasRow = rows.some(r => r.selection[activeCategoryId] === item.id)
-    if (hasRow) continue
-    rows.push({
-      key: `draft:${activeCategoryId}:${item.id}`,
-      selection: { [activeCategoryId]: item.id },
-      opening_debit: 0,
-      opening_credit: 0,
-      pre_book_debit: 0,
-      pre_book_credit: 0,
-    })
-  }
-
+  const codeMap = new Map(activeItems.map(i => [i.id, i.code || '']))
   rows.sort((a, b) => {
-    const codeA =
-      itemsByCategory[activeCategoryId]?.find(i => i.id === a.selection[activeCategoryId])?.code ||
-      ''
-    const codeB =
-      itemsByCategory[activeCategoryId]?.find(i => i.id === b.selection[activeCategoryId])?.code ||
-      ''
-    return codeA.localeCompare(codeB, undefined, { numeric: true })
+    const codeA = codeMap.get(a.selection[activeCategoryId]) || ''
+    const codeB = codeMap.get(b.selection[activeCategoryId]) || ''
+    return codeA > codeB ? 1 : codeA < codeB ? -1 : 0
   })
 
   return rows

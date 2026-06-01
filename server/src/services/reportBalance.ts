@@ -1,4 +1,8 @@
 import type { Database } from 'better-sqlite3'
+import {
+  filterAccountIdsByScope,
+  type AccountScopeContext,
+} from './accountAuthorization.js'
 
 export interface BalanceQueryDb {
   prepare: (sql: string) => {
@@ -31,14 +35,109 @@ const INIT_BALANCE_BY_ACCOUNT_SQL = `
   GROUP BY account_id
 `
 
+function accountHasSummaryInit(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  accountId: string,
+  year: number
+): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM init_balances
+       WHERE account_set_id = ? AND account_id = ? AND year = ?
+         AND COALESCE(aux_item_id, '') = ''
+         AND ABS(init_balance) > 0.005
+       LIMIT 1`
+    )
+    .get(accountSetId, accountId, year)
+  return Boolean(row)
+}
+
+function accountHasPeriodActivity(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  accountId: string,
+  year: number
+): boolean {
+  const row = db
+    .prepare(
+      `SELECT 1 FROM account_balances
+       WHERE account_set_id = ? AND account_id = ? AND year = ?
+         AND (ABS(current_debit) > 0.005 OR ABS(current_credit) > 0.005)
+       LIMIT 1`
+    )
+    .get(accountSetId, accountId, year)
+  return Boolean(row)
+}
+
+function hasTable(db: BalanceQueryDb | Database, tableName: string): boolean {
+  try {
+    const row = db
+      .prepare(
+        `SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? LIMIT 1`
+      )
+      .get(tableName) as { name?: string } | undefined
+    return Boolean(row?.name)
+  } catch {
+    return false
+  }
+}
+
+function accountHasVoucherActivity(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  accountId: string,
+  year: number
+): boolean {
+  if (!hasTable(db, 'voucher_entries') || !hasTable(db, 'vouchers')) {
+    return false
+  }
+  try {
+    const row = db
+      .prepare(
+        `SELECT 1 FROM voucher_entries ve
+         JOIN vouchers v ON v.id = ve.voucher_id
+         WHERE v.account_set_id = ? AND ve.account_id = ? AND v.year = ?
+           AND v.status IN ('draft', 'audited', 'posted')
+         LIMIT 1`
+      )
+      .get(accountSetId, accountId, year)
+    return Boolean(row)
+  } catch {
+    return false
+  }
+}
+
+function subtreeHasFinancialData(
+  db: BalanceQueryDb | Database,
+  accountSetId: string,
+  accountIds: string[],
+  year: number
+): boolean {
+  if (accountIds.length === 0) return false
+  for (const id of accountIds) {
+    if (
+      accountHasSummaryInit(db, accountSetId, id, year) ||
+      accountHasPeriodActivity(db, accountSetId, id, year) ||
+      accountHasVoucherActivity(db, accountSetId, id, year)
+    ) {
+      return true
+    }
+  }
+  return false
+}
+
 /**
- * 把每个 top_code 展开为其子树叶子科目集合（含 top_code 自身若它本身就是叶子）。
- * 用于报表查询：避免 IN(code) 漏掉子科目数据，也避免父+子期初重复累加。
+ * 把每个 top_code 解析为应参与汇总的 account_id 集合。
+ * - 默认取子树叶子科目，避免父子期初重复累加；
+ * - 若叶子无任何期初/发生额/凭证，但 top_code 自身有科目汇总行期初或发生额，则回退取 top_code 自身
+ *   （常见于期初只录入在 1001 等父科目、未拆到 100101/100102 的场景）。
  */
 function expandTopCodesToLeafIds(
   db: BalanceQueryDb | Database,
   accountSetId: string,
-  topCodes: string[]
+  topCodes: string[],
+  year: number
 ): Map<string, { ids: string[]; direction: string }> {
   const meta = new Map<string, { ids: string[]; direction: string }>()
   if (topCodes.length === 0) return meta
@@ -55,20 +154,43 @@ function expandTopCodesToLeafIds(
            AND c.is_enabled = 1
        )`
   )
+  const topAccountStmt = db.prepare(
+    'SELECT id, direction FROM accounts WHERE account_set_id = ? AND code = ? LIMIT 1'
+  )
   const topDirectionStmt = db.prepare(
     'SELECT direction FROM accounts WHERE account_set_id = ? AND code = ? LIMIT 1'
   )
 
   for (const code of topCodes) {
+    const topAccount = topAccountStmt.get(accountSetId, code) as
+      | { id: string; direction: string }
+      | undefined
     const leaves = expandStmt.all(accountSetId, code, `${code}%`) as Array<{
       id: string
       code: string
       direction: string
     }>
-    if (leaves.length === 0) continue
     const topDirRow = topDirectionStmt.get(accountSetId, code) as { direction: string } | undefined
-    const direction = topDirRow?.direction || leaves[0].direction || 'debit'
-    meta.set(code, { ids: leaves.map(l => l.id), direction })
+    const direction = topDirRow?.direction || leaves[0]?.direction || topAccount?.direction || 'debit'
+
+    if (leaves.length === 0) {
+      if (topAccount) {
+        meta.set(code, { ids: [topAccount.id], direction })
+      }
+      continue
+    }
+
+    const leafIds = leaves.map(l => l.id)
+    const leavesHaveData = subtreeHasFinancialData(db, accountSetId, leafIds, year)
+    const parentHasData =
+      topAccount != null &&
+      subtreeHasFinancialData(db, accountSetId, [topAccount.id], year)
+
+    if (!leavesHaveData && parentHasData) {
+      meta.set(code, { ids: [topAccount!.id], direction })
+    } else {
+      meta.set(code, { ids: leafIds, direction })
+    }
   }
   return meta
 }
@@ -78,10 +200,15 @@ export function getBalance(
   accountSetId: string,
   accountCode: string,
   year: number,
-  period: number
+  period: number,
+  accountScope?: AccountScopeContext
 ): number {
   try {
-    return getBatchBalances(db, accountSetId, [accountCode], year, period).get(accountCode) ?? 0
+    return (
+      getBatchBalances(db, accountSetId, [accountCode], year, period, accountScope).get(
+        accountCode
+      ) ?? 0
+    )
   } catch {
     return 0
   }
@@ -92,14 +219,21 @@ export function getPeriodSum(
   accountSetId: string,
   accountCode: string,
   year: number,
-  period: number
+  period: number,
+  accountScope?: AccountScopeContext
 ): { debit: number; credit: number } {
   try {
     const safePeriod = Math.min(12, Math.max(0, Math.trunc(period)))
     return (
-      getBatchPeriodRangeSums(db, accountSetId, [accountCode], year, safePeriod, safePeriod).get(
-        accountCode
-      ) || { debit: 0, credit: 0 }
+      getBatchPeriodRangeSums(
+        db,
+        accountSetId,
+        [accountCode],
+        year,
+        safePeriod,
+        safePeriod,
+        accountScope
+      ).get(accountCode) || { debit: 0, credit: 0 }
     )
   } catch {
     return { debit: 0, credit: 0 }
@@ -112,13 +246,16 @@ export function getPeriodRangeSum(
   accountCode: string,
   year: number,
   fromPeriod: number,
-  toPeriod: number
+  toPeriod: number,
+  accountScope?: AccountScopeContext
 ): { debit: number; credit: number } {
   try {
     const from = Math.min(12, Math.max(1, Math.trunc(fromPeriod)))
     const to = Math.min(12, Math.max(from, Math.trunc(toPeriod)))
     return (
-      getBatchPeriodRangeSums(db, accountSetId, [accountCode], year, from, to).get(accountCode) || {
+      getBatchPeriodRangeSums(db, accountSetId, [accountCode], year, from, to, accountScope).get(
+        accountCode
+      ) || {
         debit: 0,
         credit: 0,
       }
@@ -145,7 +282,8 @@ export function getBatchBalances(
   accountSetId: string,
   accountCodes: string[],
   year: number,
-  period: number
+  period: number,
+  accountScope?: AccountScopeContext
 ): Map<string, number> {
   const result = new Map<string, number>()
 
@@ -153,9 +291,11 @@ export function getBatchBalances(
 
   try {
     // 1) 展开每个 top_code 的叶子科目集合（含 top_code 自身若为叶子）
-    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, accountCodes)
-    const allIds: string[] = []
-    for (const info of codeMeta.values()) allIds.push(...info.ids)
+    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, accountCodes, year)
+    const allIds = filterAccountIdsByScope(
+      accountScope,
+      Array.from(new Set(Array.from(codeMeta.values()).flatMap(info => info.ids)))
+    )
 
     if (allIds.length === 0) {
       for (const code of accountCodes) {
@@ -239,13 +379,17 @@ export function getPeriodRangeSumExcludeTransfer(
   accountCode: string,
   year: number,
   fromPeriod: number,
-  toPeriod: number
+  toPeriod: number,
+  accountScope?: AccountScopeContext
 ): { debit: number; credit: number } {
   try {
     const from = Math.min(12, Math.max(1, Math.trunc(fromPeriod)))
     const to = Math.min(12, Math.max(from, Math.trunc(toPeriod)))
-    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, [accountCode])
-    const leafIds = codeMeta.get(accountCode)?.ids ?? []
+    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, [accountCode], year)
+    const leafIds = filterAccountIdsByScope(
+      accountScope,
+      codeMeta.get(accountCode)?.ids ?? []
+    )
     if (leafIds.length === 0) {
       return { debit: 0, credit: 0 }
     }
@@ -295,7 +439,8 @@ export function getBatchPeriodRangeSums(
   accountCodes: string[],
   year: number,
   fromPeriod: number,
-  toPeriod: number
+  toPeriod: number,
+  accountScope?: AccountScopeContext
 ): Map<string, { debit: number; credit: number }> {
   const result = new Map<string, { debit: number; credit: number }>()
 
@@ -303,9 +448,11 @@ export function getBatchPeriodRangeSums(
 
   try {
     // 与 getBatchBalances 一致：把 top_code 展开为子树叶子，再聚合发生额
-    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, accountCodes)
-    const allIds: string[] = []
-    for (const info of codeMeta.values()) allIds.push(...info.ids)
+    const codeMeta = expandTopCodesToLeafIds(db, accountSetId, accountCodes, year)
+    const allIds = filterAccountIdsByScope(
+      accountScope,
+      Array.from(new Set(Array.from(codeMeta.values()).flatMap(info => info.ids)))
+    )
 
     if (allIds.length === 0) {
       for (const code of accountCodes) {
@@ -369,7 +516,8 @@ export function getBatchPeriodSums(
   accountSetId: string,
   accountCodes: string[],
   year: number,
-  period: number
+  period: number,
+  accountScope?: AccountScopeContext
 ): Map<string, { debit: number; credit: number }> {
-  return getBatchPeriodRangeSums(db, accountSetId, accountCodes, year, 1, period)
+  return getBatchPeriodRangeSums(db, accountSetId, accountCodes, year, 1, period, accountScope)
 }

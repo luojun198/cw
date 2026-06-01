@@ -53,6 +53,7 @@
 import { ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
+import { BATCH_REQUEST_OPTIONS } from '@/api/batchRequest'
 
 interface Props {
   modelValue: boolean
@@ -159,7 +160,7 @@ async function handleDelete() {
       voucher_type_ids: form.value.voucher_type_ids,
       start_no: form.value.start_no,
       end_no: form.value.end_no,
-    })
+    }, BATCH_REQUEST_OPTIONS)
     ElMessage.success(res.message || '批量删除成功')
     handleClose()
     emit('success')

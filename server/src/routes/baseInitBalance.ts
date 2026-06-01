@@ -14,6 +14,27 @@ import {
   saveInitBalanceAuxDetails,
   upsertInitBalanceAuxLine,
 } from '../services/initBalanceAux.js'
+import {
+  checkInitBalanceEditable,
+  checkInitBalanceAuxEditable,
+  clearAuxInitBalances,
+  clearDirectInitBalances,
+  countAuxInitClearTargets,
+  countInitBalanceClearTargets,
+} from '../services/initBalanceClear.js'
+import {
+  batchAuxInitClearAsync,
+  batchInitBalanceAuxSaveAsync,
+  batchInitBalanceClearAsync,
+  batchInitBalanceImportAsync,
+} from '../services/baseBatchAsync.js'
+import {
+  appendAccountScopeCondition,
+  assertAccountIdInScope,
+  assertAccountIdsInScope,
+  assertAuxAllAccountsClearAllowed,
+  resolveScopedAccountIdsForClear,
+} from '../services/accountAuthorization.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -45,7 +66,16 @@ function getInitBalanceTotals(db: any, accountSetId: string, year: number | stri
   }
 }
 
-function assertAccountEditableForDirectInit(db: any, accountSetId: string, accountId: string) {
+function assertAccountEditableForDirectInit(
+  db: any,
+  accountSetId: string,
+  accountId: string,
+  accountScope?: import('../services/accountAuthorization.js').AccountScopeContext
+) {
+  const scopeErr = assertAccountIdInScope(accountScope, accountId)
+  if (scopeErr) {
+    throw new Error(scopeErr)
+  }
   const account = db
     .prepare(`SELECT is_aux, aux_types FROM accounts WHERE id=? AND account_set_id=?`)
     .get(accountId, accountSetId) as { is_aux?: number; aux_types?: string } | undefined
@@ -90,6 +120,14 @@ router.get('/init-balances', (req: AuthRequest, res) => {
     params.push(kw, kw)
   }
 
+  const scopeConditions: string[] = []
+  const scopeParams: string[] = []
+  appendAccountScopeCondition(req.accountScope, 'a.id', scopeConditions, scopeParams)
+  if (scopeConditions.length > 0) {
+    sql += ` AND ${scopeConditions.join(' AND ')}`
+    params.push(...scopeParams)
+  }
+
   sql += ` ORDER BY a.code`
 
   const list = (db.prepare(sql).all(...params) as any[]).map(row => ({
@@ -117,10 +155,22 @@ router.get('/init-balances/aux-details', (req: AuthRequest, res) => {
   if (!account_id || typeof account_id !== 'string') {
     return res.status(400).json({ code: 1, message: '缺少 account_id' })
   }
+  const scopeErr = assertAccountIdInScope(req.accountScope, account_id)
+  if (scopeErr) {
+    return res.status(403).json({ code: 403, message: scopeErr })
+  }
   const y = Number(year) || new Date().getFullYear()
   const p = Number(period) || 1
   try {
-    const data = getInitBalanceAuxDetails(db, req.accountSetId || '', account_id, y, p)
+    const linesMode =
+      req.query.lines === 'none' ? 'none' : req.query.lines === 'page' ? 'page' : 'all'
+    const offset = Number(req.query.offset) || 0
+    const limit = Number(req.query.limit) || undefined
+    const data = getInitBalanceAuxDetails(db, req.accountSetId || '', account_id, y, p, {
+      linesMode,
+      offset,
+      limit,
+    })
     res.json({ code: 0, data })
   } catch (error: any) {
     res.status(400).json({ code: 1, message: error.message })
@@ -134,6 +184,10 @@ router.post(
     const { year, account_id, period, line } = req.body
     if (!account_id) {
       return res.status(400).json({ code: 1, message: '缺少 account_id' })
+    }
+    const scopeErrLine = assertAccountIdInScope(req.accountScope, account_id)
+    if (scopeErrLine) {
+      return res.status(403).json({ code: 403, message: scopeErrLine })
     }
     if (!line || typeof line !== 'object') {
       return res.status(400).json({ code: 1, message: '缺少 line' })
@@ -164,6 +218,10 @@ router.post(
     const { year, account_id, period, lines } = req.body
     if (!account_id) {
       return res.status(400).json({ code: 1, message: '缺少 account_id' })
+    }
+    const scopeErrAux = assertAccountIdInScope(req.accountScope, account_id)
+    if (scopeErrAux) {
+      return res.status(403).json({ code: 403, message: scopeErrAux })
     }
     if (!Array.isArray(lines)) {
       return res.status(400).json({ code: 1, message: 'lines 必须为数组' })
@@ -215,7 +273,12 @@ router.post('/init-balances', operationLog('录入期初余额', '基础设置')
 
   try {
     if (auxItemId === '') {
-      assertAccountEditableForDirectInit(db, req.accountSetId || '', account_id)
+      assertAccountEditableForDirectInit(db, req.accountSetId || '', account_id, req.accountScope)
+    } else {
+      const scopeErr = assertAccountIdInScope(req.accountScope, account_id)
+      if (scopeErr) {
+        return res.status(403).json({ code: 403, message: scopeErr })
+      }
     }
   } catch (error: any) {
     return res.status(400).json({ code: 1, message: error.message })
@@ -330,7 +393,17 @@ router.post(
         for (const item of items) {
           const auxItemId = normalizeAuxItemId(item.aux_item_id)
           if (auxItemId === '') {
-            assertAccountEditableForDirectInit(db, req.accountSetId || '', item.account_id)
+            assertAccountEditableForDirectInit(
+              db,
+              req.accountSetId || '',
+              item.account_id,
+              req.accountScope
+            )
+          } else {
+            const scopeErrItem = assertAccountIdInScope(req.accountScope, item.account_id)
+            if (scopeErrItem) {
+              throw new Error(scopeErrItem)
+            }
           }
 
           assertOpeningDebitCreditExclusive(item.opening_debit || 0, item.opening_credit || 0)
@@ -403,22 +476,194 @@ router.get('/init-balances/can-edit', (req: AuthRequest, res) => {
   const db = getDb()
   const y = Number(year) || new Date().getFullYear()
 
-  const result = db
-    .prepare(
-      `SELECT COUNT(*) as cnt FROM vouchers
-       WHERE account_set_id = ? AND strftime('%Y', voucher_date) = ?
-       AND status IN ('audited', 'posted')`
-    )
-    .get(req.accountSetId, String(y)) as any
-
-  const count = result?.cnt || 0
-  const canEdit = count === 0
+  const { canEdit, reason } = checkInitBalanceEditable(db, req.accountSetId || '', y)
   res.json({
     code: 0,
     canEdit,
-    reason: canEdit ? null : `${y}年已有 ${count} 张已审核/已记账凭证，期初余额不允许修改`,
+    reason,
   })
 })
+
+router.get('/init-balances/aux-can-edit', (req: AuthRequest, res) => {
+  const { year } = req.query
+  const db = getDb()
+  const y = Number(year) || new Date().getFullYear()
+
+  const { canEdit, reason } = checkInitBalanceAuxEditable(db, req.accountSetId || '', y)
+  res.json({
+    code: 0,
+    canEdit,
+    reason,
+  })
+})
+
+router.get('/init-balances/clear-preview', (req: AuthRequest, res) => {
+  const { year, mode, account_ids } = req.query
+  const db = getDb()
+  const y = Number(year) || new Date().getFullYear()
+  const clearMode = mode === 'aux' ? 'aux' : 'direct'
+  let accountIds: string[] | undefined
+  if (typeof account_ids === 'string' && account_ids.trim()) {
+    accountIds = account_ids.split(',').map(id => id.trim()).filter(Boolean)
+  }
+  const scopeErrIds = assertAccountIdsInScope(req.accountScope, accountIds)
+  if (scopeErrIds) {
+    return res.status(403).json({ code: 403, message: scopeErrIds })
+  }
+  if (clearMode === 'aux') {
+    const auxAllErr = assertAuxAllAccountsClearAllowed(req.accountScope)
+    if (auxAllErr) {
+      return res.status(403).json({ code: 403, message: auxAllErr })
+    }
+  }
+  accountIds = resolveScopedAccountIdsForClear(req.accountScope, accountIds)
+
+  try {
+    const count = countInitBalanceClearTargets(db, req.accountSetId || '', y, clearMode, {
+      accountIds,
+    })
+    res.json({ code: 0, data: { count, mode: clearMode } })
+  } catch (error: any) {
+    res.status(400).json({ code: 1, message: error.message })
+  }
+})
+
+router.post(
+  '/init-balances/batch-clear',
+  operationLog('批量清理期初余额', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { year, mode, account_ids } = req.body
+    const db = getDb()
+    const y = year || new Date().getFullYear()
+    const clearMode = mode === 'aux' ? 'aux' : 'direct'
+    let accountIds = Array.isArray(account_ids)
+      ? account_ids.map(String).filter(Boolean)
+      : undefined
+    const scopeErrBatch = assertAccountIdsInScope(req.accountScope, accountIds)
+    if (scopeErrBatch) {
+      return res.status(403).json({ code: 403, message: scopeErrBatch })
+    }
+    if (clearMode === 'aux') {
+      const auxAllErr = assertAuxAllAccountsClearAllowed(req.accountScope)
+      if (auxAllErr) {
+        return res.status(403).json({ code: 403, message: auxAllErr })
+      }
+    }
+    accountIds = resolveScopedAccountIdsForClear(req.accountScope, accountIds)
+
+    try {
+      if (clearMode === 'aux') {
+        const result = clearAuxInitBalances(db, req.accountSetId || '', y, 'all_accounts')
+        const totals = getInitBalanceTotals(db, req.accountSetId || '', y)
+        return res.json({
+          code: 0,
+          message: `已清理 ${result.deletedCount} 条辅助期初明细，涉及 ${result.affectedAccounts} 个科目`,
+          data: { ...result, ...totals },
+        })
+      }
+
+      const result = clearDirectInitBalances(db, req.accountSetId || '', y, { accountIds })
+      const totals = getInitBalanceTotals(db, req.accountSetId || '', y)
+      res.json({
+        code: 0,
+        message: `已清理 ${result.deletedCount} 条科目期初记录`,
+        data: { ...result, ...totals },
+      })
+    } catch (error: any) {
+      res.status(400).json({ code: 1, message: error.message })
+    }
+  }
+)
+
+router.get('/init-balances/aux-details/clear-preview', (req: AuthRequest, res) => {
+  const { year, account_id, scope, category_id } = req.query
+  const db = getDb()
+  const y = Number(year) || new Date().getFullYear()
+  const clearScope = scope === 'category' ? 'category' : 'account'
+
+  if (!account_id || typeof account_id !== 'string') {
+    return res.status(400).json({ code: 1, message: '缺少 account_id' })
+  }
+  const scopeErrPreview = assertAccountIdInScope(req.accountScope, account_id)
+  if (scopeErrPreview) {
+    return res.status(403).json({ code: 403, message: scopeErrPreview })
+  }
+
+  let categoryCode: string | undefined
+  if (clearScope === 'category') {
+    if (!category_id || typeof category_id !== 'string') {
+      return res.status(400).json({ code: 1, message: '缺少 category_id' })
+    }
+    const category = db
+      .prepare('SELECT code FROM aux_categories WHERE id=? AND account_set_id=?')
+      .get(category_id, req.accountSetId) as { code: string } | undefined
+    if (!category) {
+      return res.status(400).json({ code: 1, message: '辅助类目不存在' })
+    }
+    categoryCode = category.code
+  }
+
+  try {
+    const count = countAuxInitClearTargets(db, req.accountSetId || '', y, clearScope, {
+      accountId: account_id,
+      categoryCode,
+    })
+    res.json({ code: 0, data: { count, scope: clearScope } })
+  } catch (error: any) {
+    res.status(400).json({ code: 1, message: error.message })
+  }
+})
+
+router.post(
+  '/init-balances/aux-details/batch-clear',
+  operationLog('批量清理辅助期初', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { year, account_id, scope, category_id } = req.body
+    const db = getDb()
+    const y = year || new Date().getFullYear()
+    const clearScope = scope === 'category' ? 'category' : 'account'
+
+    if (!account_id) {
+      return res.status(400).json({ code: 1, message: '缺少 account_id' })
+    }
+    const scopeErrClear = assertAccountIdInScope(req.accountScope, account_id)
+    if (scopeErrClear) {
+      return res.status(403).json({ code: 403, message: scopeErrClear })
+    }
+
+    let categoryCode: string | undefined
+    if (clearScope === 'category') {
+      if (!category_id) {
+        return res.status(400).json({ code: 1, message: '缺少 category_id' })
+      }
+      const category = db
+        .prepare('SELECT code FROM aux_categories WHERE id=? AND account_set_id=?')
+        .get(category_id, req.accountSetId) as { code: string } | undefined
+      if (!category) {
+        return res.status(400).json({ code: 1, message: '辅助类目不存在' })
+      }
+      categoryCode = category.code
+    }
+
+    try {
+      const result = clearAuxInitBalances(db, req.accountSetId || '', y, clearScope, {
+        accountId: account_id,
+        categoryCode,
+      })
+      const totals = getInitBalanceTotals(db, req.accountSetId || '', y)
+      res.json({
+        code: 0,
+        message:
+          clearScope === 'category'
+            ? `已清理当前类目 ${result.deletedCount} 条辅助期初明细`
+            : `已清理当前科目 ${result.deletedCount} 条辅助期初明细`,
+        data: { ...result, ...totals },
+      })
+    } catch (error: any) {
+      res.status(400).json({ code: 1, message: error.message })
+    }
+  }
+)
 
 router.get('/init-balances/check', (req: AuthRequest, res) => {
   const { year } = req.query
@@ -437,5 +682,146 @@ router.get('/init-balances/check', (req: AuthRequest, res) => {
     auxCategoryMismatches: auxCategoryCheck.mismatches,
   })
 })
+
+router.post(
+  '/init-balances/batch-async',
+  operationLog('异步批量保存期初余额', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { year, items } = req.body
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ code: 1, message: '数据不能为空' })
+    }
+    const db = getDb()
+    const y = year || new Date().getFullYear()
+    for (const item of items) {
+      const scopeErrImport = assertAccountIdInScope(req.accountScope, item?.account_id)
+      if (scopeErrImport) {
+        return res.status(403).json({ code: 403, message: scopeErrImport })
+      }
+    }
+    try {
+      const taskId = batchInitBalanceImportAsync(db, req.accountSetId || '', y, items)
+      res.json({ code: 0, message: '批量导入任务已创建', data: { taskId } })
+    } catch (error: any) {
+      res.status(400).json({ code: 1, message: error.message })
+    }
+  }
+)
+
+router.post(
+  '/init-balances/batch-clear-async',
+  operationLog('异步批量清理期初余额', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { year, mode, account_ids } = req.body
+    const db = getDb()
+    const y = year || new Date().getFullYear()
+    const clearMode = mode === 'aux' ? 'aux' : 'direct'
+    let accountIds = Array.isArray(account_ids)
+      ? account_ids.map(String).filter(Boolean)
+      : undefined
+    const scopeErrAsync = assertAccountIdsInScope(req.accountScope, accountIds)
+    if (scopeErrAsync) {
+      return res.status(403).json({ code: 403, message: scopeErrAsync })
+    }
+    if (clearMode === 'aux') {
+      const auxAllErr = assertAuxAllAccountsClearAllowed(req.accountScope)
+      if (auxAllErr) {
+        return res.status(403).json({ code: 403, message: auxAllErr })
+      }
+    }
+    accountIds = resolveScopedAccountIdsForClear(req.accountScope, accountIds)
+    try {
+      const taskId = batchInitBalanceClearAsync(
+        db,
+        req.accountSetId || '',
+        y,
+        clearMode,
+        accountIds
+      )
+      res.json({ code: 0, message: '批量清理任务已创建', data: { taskId } })
+    } catch (error: any) {
+      res.status(400).json({ code: 1, message: error.message })
+    }
+  }
+)
+
+router.post(
+  '/init-balances/aux-details/batch-clear-async',
+  operationLog('异步批量清理辅助期初', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { year, account_id, scope, category_id } = req.body
+    const db = getDb()
+    const y = year || new Date().getFullYear()
+    const clearScope = scope === 'category' ? 'category' : 'account'
+
+    if (!account_id) {
+      return res.status(400).json({ code: 1, message: '缺少 account_id' })
+    }
+    const scopeErrAuxAsync = assertAccountIdInScope(req.accountScope, account_id)
+    if (scopeErrAuxAsync) {
+      return res.status(403).json({ code: 403, message: scopeErrAuxAsync })
+    }
+
+    let categoryCode: string | undefined
+    if (clearScope === 'category') {
+      if (!category_id) {
+        return res.status(400).json({ code: 1, message: '缺少 category_id' })
+      }
+      const category = db
+        .prepare('SELECT code FROM aux_categories WHERE id=? AND account_set_id=?')
+        .get(category_id, req.accountSetId) as { code: string } | undefined
+      if (!category) {
+        return res.status(400).json({ code: 1, message: '辅助类目不存在' })
+      }
+      categoryCode = category.code
+    }
+
+    try {
+      const taskId = batchAuxInitClearAsync(db, req.accountSetId || '', y, clearScope, {
+        accountId: account_id,
+        categoryCode,
+      })
+      res.json({ code: 0, message: '批量清理任务已创建', data: { taskId } })
+    } catch (error: any) {
+      res.status(400).json({ code: 1, message: error.message })
+    }
+  }
+)
+
+router.post(
+  '/init-balances/aux-details/batch-save-async',
+  operationLog('异步批量保存辅助期初', '基础设置'),
+  (req: AuthRequest, res) => {
+    const { year, account_id, period, lines } = req.body
+    if (!account_id) {
+      return res.status(400).json({ code: 1, message: '缺少 account_id' })
+    }
+    const scopeErr = assertAccountIdInScope(req.accountScope, account_id)
+    if (scopeErr) {
+      return res.status(403).json({ code: 403, message: scopeErr })
+    }
+    if (!Array.isArray(lines) || lines.length === 0) {
+      return res.status(400).json({ code: 1, message: 'lines 不能为空' })
+    }
+
+    const db = getDb()
+    const y = year || new Date().getFullYear()
+    const p = period || 1
+
+    try {
+      const taskId = batchInitBalanceAuxSaveAsync(
+        db,
+        req.accountSetId || '',
+        account_id,
+        y,
+        lines,
+        p
+      )
+      res.json({ code: 0, message: '批量保存任务已创建', data: { taskId } })
+    } catch (error: any) {
+      res.status(400).json({ code: 1, message: error.message })
+    }
+  }
+)
 
 export default router

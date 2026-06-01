@@ -1,4 +1,4 @@
-import { ref, onMounted, onActivated, watch, nextTick, type Ref } from 'vue'
+import { ref, onMounted, onActivated, watch, nextTick, computed, type Ref, type ComputedRef } from 'vue'
 
 export interface SizeMemory {
   [key: string]: number
@@ -204,26 +204,147 @@ export function sumColWidths(
   return defs.reduce((sum, d) => sum + colWidth(d.key, d.fallback), base)
 }
 
+function readTableBlockWidth(el: HTMLElement | null): number {
+  if (!el) return 0
+  return Math.max(el.scrollWidth, el.offsetWidth, el.getBoundingClientRect().width)
+}
+
+/** 按表头/表体/合计 table 实测宽度取最大值，避免 scrollWidth 偏小滚不到最右 */
+export function measureAuxTableLayoutWidth(root: HTMLElement): number {
+  let max = 0
+  max = Math.max(
+    max,
+    readTableBlockWidth(root.querySelector('.el-table__header-wrapper table') as HTMLElement | null),
+    readTableBlockWidth(root.querySelector('.el-table__body-wrapper table.el-table__body') as HTMLElement | null),
+    readTableBlockWidth(root.querySelector('.el-table__footer-wrapper table') as HTMLElement | null)
+  )
+
+  const header = root.querySelector('.el-table__header-wrapper')
+  if (header) {
+    const cells = header.querySelectorAll('thead th.el-table__cell')
+    let sum = 0
+    cells.forEach(th => {
+      sum += (th as HTMLElement).offsetWidth
+    })
+    max = Math.max(max, sum)
+  }
+  return Math.ceil(max)
+}
+
+function applyAuxTableInnerWidth(root: HTMLElement, widthPx: number) {
+  const w = `${widthPx}px`
+  root.style.width = w
+  root.style.minWidth = ''
+  root.style.maxWidth = 'none'
+  root.style.flexShrink = '0'
+  for (const sel of [
+    '.el-table__header-wrapper table',
+    '.el-table__body-wrapper table.el-table__body',
+    '.el-table__footer-wrapper table',
+  ]) {
+    const el = root.querySelector(sel) as HTMLElement | null
+    if (el) {
+      el.style.width = w
+      el.style.minWidth = ''
+      el.style.tableLayout = 'fixed'
+    }
+  }
+}
+
+/** 宽表横向滚动已改由外层 .table-summary-scroll--wide 承担，此处保留空实现供调用方兼容 */
+export function bindAuxTableHorizontalScrollSync(_root: HTMLElement) {
+  void _root
+}
+
 /** 同步宽表表头/表体/合计行 table 宽度，避免右侧与外框留缝 */
 export function syncAuxTableBodyWidth(
   tableRef: Ref<{ $el?: HTMLElement } | undefined>,
   widthPx: number
 ) {
+  if (!Number.isFinite(widthPx) || widthPx <= 0) return
   const w = `${widthPx}px`
   nextTick(() => {
     requestAnimationFrame(() => {
       const root = tableRef.value?.$el as HTMLElement | undefined
       if (!root) return
+      root.style.setProperty('width', w, 'important')
+      root.style.flexShrink = '0'
       for (const sel of [
         '.el-table__header-wrapper table',
         '.el-table__body-wrapper table.el-table__body',
         '.el-table__footer-wrapper table',
       ]) {
         const el = root.querySelector(sel) as HTMLElement | null
-        if (el) el.style.width = w
+        if (el) {
+          el.style.width = w
+          el.style.tableLayout = 'fixed'
+        }
       }
     })
   })
+}
+
+/** 辅助账簿宽表：列宽合计定宽 + 根节点锁定，避免空数据 doLayout 循环拉宽 */
+export function useAuxWideTable(
+  tableKey: string,
+  columnDefs: ComputedRef<Array<{ key: string; fallback: number }>>,
+  options?: {
+    columnKey?: ComputedRef<string>
+    afterLayout?: () => void | Promise<void>
+  }
+) {
+  const { tableRef, onDragEnd: onColDragEnd, colWidth } = useAuxColumnWidth(tableKey)
+
+  const tableWidth = computed(() =>
+    sumColWidths(colWidth, columnDefs.value, { includeGutter: false })
+  )
+
+  function syncTableWidth() {
+    syncAuxTableBodyWidth(tableRef, tableWidth.value)
+  }
+
+  watch(tableWidth, syncTableWidth, { flush: 'post' })
+
+  if (options?.columnKey) {
+    watch(
+      options.columnKey,
+      () => {
+        syncTableWidth()
+      },
+      { flush: 'post' }
+    )
+  }
+
+  watch(
+    tableRef,
+    el => {
+      if (el) syncTableWidth()
+    },
+    { flush: 'post' }
+  )
+
+  function onDragEnd(newWidth: number, oldWidth: number, column: any) {
+    onColDragEnd(newWidth, oldWidth, column)
+    syncTableWidth()
+  }
+
+  async function afterTableLayout() {
+    syncTableWidth()
+    await nextTick()
+    syncTableWidth()
+    if (options?.afterLayout) {
+      await options.afterLayout()
+    }
+  }
+
+  return {
+    tableRef,
+    colWidth,
+    tableWidth,
+    onDragEnd,
+    syncTableWidth,
+    afterTableLayout,
+  }
 }
 
 /** 辅助账簿列表列宽记忆：不绑定 doLayout，避免与固定表格宽度互相触发 */

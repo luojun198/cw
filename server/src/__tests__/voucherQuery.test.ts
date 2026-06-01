@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildVoucherListQuery } from '../services/voucherQuery.js'
+import { buildVoucherListQuery, VOUCHER_TYPE_ORDER_BY_SQL } from '../services/voucherQuery.js'
 
 describe('voucherQuery', () => {
   // 模拟数据库
@@ -99,7 +99,7 @@ describe('voucherQuery', () => {
       expect(result.listSql).toMatch(/v\.voucher_date\s*</)
     })
 
-    it('pageSize 为 -1 时不应该有 LIMIT', () => {
+    it('pageSize 为 -1 时 capped 为 MAX_PAGE_SIZE', () => {
       const filters = {
         accountSetId: 'test-set',
         page: 1,
@@ -107,8 +107,8 @@ describe('voucherQuery', () => {
       }
       const result = buildVoucherListQuery(filters, mockDb)
 
-      expect(result.listSql).not.toContain('LIMIT')
-      expect(result.listSql).not.toContain('OFFSET')
+      expect(result.listSql).toContain('LIMIT')
+      expect(result.listParams[result.listParams.length - 2]).toBe(1000)
     })
 
     it('应该支持多种排序字段', () => {
@@ -142,6 +142,32 @@ describe('voucherQuery', () => {
       // 非法字段应该被忽略，使用默认排序
       expect(result.listSql).not.toContain('DROP TABLE')
       expect(result.listSql).toContain('v.voucher_date') // 默认排序字段
+    })
+
+    it('ORDER BY 应优先按凭证类型编码排序，再按用户字段', () => {
+      const filters = {
+        accountSetId: 'test-set',
+        page: 1,
+        pageSize: 50,
+        sortField: 'voucher_date',
+        sortOrder: 'desc',
+      }
+      const result = buildVoucherListQuery(filters, mockDb)
+
+      expect(result.listSql).toContain('CAST(vt.code AS INTEGER)')
+      expect(result.listSql).toContain('COALESCE(vt.code')
+      expect(result.listSql).toContain('COALESCE(vt.sort_order')
+
+      const orderByIndex = result.listSql.indexOf('ORDER BY')
+      const typeCodeIndex = result.listSql.indexOf('vt.code', orderByIndex)
+      const voucherDateIndex = result.listSql.indexOf('v.voucher_date', orderByIndex)
+      expect(typeCodeIndex).toBeGreaterThan(orderByIndex)
+      expect(voucherDateIndex).toBeGreaterThan(typeCodeIndex)
+    })
+
+    it('VOUCHER_TYPE_ORDER_BY_SQL 应包含数值编码排序规则', () => {
+      expect(VOUCHER_TYPE_ORDER_BY_SQL).toContain("NOT GLOB '*[^0-9]*'")
+      expect(VOUCHER_TYPE_ORDER_BY_SQL).toContain('CAST(vt.code AS INTEGER)')
     })
   })
 

@@ -1,5 +1,6 @@
 import { ref, computed, onMounted, onUnmounted } from 'vue'
 import type { Ref, ComputedRef } from 'vue'
+import { withAccountTreeSelectLabel } from '@/utils/accountSelectDisplay'
 
 export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
   const expandedSet = ref<Set<string>>(new Set())
@@ -25,7 +26,7 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
     }))
   }
 
-  // 简单树形转换（按编码前缀，去重）
+  // 简单树形转换（按 parent_id；缺失时按编码最长前缀兜底）
   const treeData: ComputedRef<any[]> = computed(() => {
     const map: Record<string, any> = {}
     const roots: any[] = []
@@ -35,13 +36,37 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
       seen.add(item.id)
       map[item.id] = { ...item, children: [] }
     }
+
+    function resolveParentId(item: any): string | null {
+      if (item.parent_id && map[item.parent_id]) return item.parent_id
+      const code = String(item.code || '')
+      if (!code) return null
+      let bestId: string | null = null
+      let bestLen = 0
+      for (const candidate of Object.values(map)) {
+        if (candidate.id === item.id) continue
+        const parentCode = String(candidate.code || '')
+        if (
+          parentCode.length > 0 &&
+          parentCode.length < code.length &&
+          code.startsWith(parentCode) &&
+          parentCode.length > bestLen
+        ) {
+          bestId = candidate.id
+          bestLen = parentCode.length
+        }
+      }
+      return bestId
+    }
+
     const pushed = new Set<string>()
     for (const item of list.value) {
       if (!item.id || pushed.has(item.id)) continue
       if (!map[item.id]) continue
       pushed.add(item.id)
-      if (item.parent_id && map[item.parent_id]) {
-        map[item.parent_id].children.push(map[item.id])
+      const parentId = resolveParentId(item)
+      if (parentId && map[parentId]) {
+        map[parentId].children.push(map[item.id])
       } else {
         roots.push(map[item.id])
       }
@@ -54,10 +79,12 @@ export function useAccountTree(list: Ref<any[]>, tableRef: Ref<any>) {
 
   // tree-select 数据（禁用已选中的节点，避免循环引用）
   function getTreeSelectData(formId?: string): any[] {
-    return treeData.value.map((r: any) => ({
-      ...r,
+    const mapNode = (r: any): any => ({
+      ...withAccountTreeSelectLabel(r),
       disabled: formId ? r.id === formId : false,
-    }))
+      children: (r.children || []).map(mapNode),
+    })
+    return treeData.value.map(mapNode)
   }
 
   function handleCurrentChange(row: any) {

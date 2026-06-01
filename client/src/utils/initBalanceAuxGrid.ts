@@ -18,6 +18,8 @@ export interface AuxGridRow {
   opening_credit: number
   pre_book_debit: number
   pre_book_credit: number
+  display_code?: string
+  display_name?: string
 }
 
 export interface AuxCategoryFieldMeta {
@@ -55,26 +57,75 @@ export function countAuxCombinations(
   return categoryIds.reduce((n, id) => n * (itemsByCategory[id]?.length || 0), 1)
 }
 
+const itemLookupCache = new WeakMap<Record<string, AuxGridItem[]>, Map<string, AuxGridItem>>()
+
 function rowSearchText(
   row: AuxGridRow,
   categoryIds: string[],
   itemsByCategory: Record<string, AuxGridItem[]>,
-  categoryFields: Record<string, AuxCategoryFieldMeta[]>
+  categoryFields: Record<string, AuxCategoryFieldMeta[]>,
+  itemSearchCache?: Map<string, string>
 ): string {
   const parts: string[] = []
+
+  let itemMap = itemLookupCache.get(itemsByCategory)
+  if (!itemMap) {
+    itemMap = new Map()
+    for (const items of Object.values(itemsByCategory)) {
+      for (const item of items) {
+        itemMap.set(item.id, item)
+      }
+    }
+    itemLookupCache.set(itemsByCategory, itemMap)
+  }
+
   for (const catId of categoryIds) {
     const itemId = row.selection[catId]
-    const item = itemsByCategory[catId]?.find(i => i.id === itemId)
+    if (!itemId) continue
+    if (itemSearchCache) {
+      const cached = itemSearchCache.get(itemId)
+      if (cached !== undefined) {
+        parts.push(cached)
+        continue
+      }
+    }
+    const item = itemMap.get(itemId)
     if (!item) continue
-    parts.push(item.code, item.name)
-    if (item.remark) parts.push(item.remark)
+    const itemParts = [item.code, item.name]
+    if (item.remark) itemParts.push(item.remark)
     const fv = item.field_values || {}
     for (const f of categoryFields[catId] || []) {
       const v = fv[f.field_key]
-      if (v) parts.push(f.field_name, v)
+      if (v) itemParts.push(f.field_name, v)
     }
+    const text = itemParts.join(' ')
+    if (itemSearchCache) itemSearchCache.set(itemId, text)
+    parts.push(text)
   }
   return parts.join(' ').toLowerCase()
+}
+
+/** 预构建辅助项目搜索文本缓存 */
+export function buildItemSearchCache(
+  itemsByCategory: Record<string, AuxGridItem[]>,
+  categoryFields: Record<string, AuxCategoryFieldMeta[]>
+): Map<string, string> {
+  const cache = new Map<string, string>()
+  for (const [, items] of Object.entries(itemsByCategory)) {
+    for (const item of items) {
+      const parts = [item.code, item.name]
+      if (item.remark) parts.push(item.remark)
+      for (const [, catFields] of Object.entries(categoryFields)) {
+        const fv = item.field_values || {}
+        for (const f of catFields) {
+          const v = fv[f.field_key]
+          if (v) parts.push(f.field_name, v)
+        }
+      }
+      cache.set(item.id, parts.join(' ').toLowerCase())
+    }
+  }
+  return cache
 }
 
 function rowFromSelection(
@@ -250,6 +301,7 @@ export function filterAuxGridRows(params: {
   combinationCount: number
   truncated: boolean
   savedByKey: Map<string, AuxGridRow>
+  itemSearchCache?: Map<string, string>
 }): AuxGridRow[] {
   const kw = params.keyword.trim().toLowerCase()
 
@@ -269,6 +321,12 @@ export function filterAuxGridRows(params: {
   }
 
   return params.rows.filter(r =>
-    rowSearchText(r, params.categoryIds, params.itemsByCategory, params.categoryFields).includes(kw)
+    rowSearchText(
+      r,
+      params.categoryIds,
+      params.itemsByCategory,
+      params.categoryFields,
+      params.itemSearchCache
+    ).includes(kw)
   )
 }

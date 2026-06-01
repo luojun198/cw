@@ -3,15 +3,20 @@
     <!-- 侧边栏 - 苹果风格 -->
     <el-aside :width="isCollapsed ? '72px' : '240px'" class="aside">
       <!-- Logo -->
-      <div class="logo" :title="'回到首页'" @click="goToHome">
-        <div class="logo-icon">
-          <svg viewBox="0 0 24 24" fill="currentColor">
-            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.51c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.43z"/>
-          </svg>
-        </div>
-        <div v-show="!isCollapsed" class="logo-text-wrap">
-          <span class="logo-text">RCsoft</span>
-          <span class="logo-sub">行政事业专版</span>
+      <div
+        class="logo"
+        :class="{ 'logo--collapsed': isCollapsed }"
+        title="回到首页"
+        @click="goToHome"
+      >
+        <div class="logo-brand">
+          <div class="logo-icon">
+            <img :src="brandingStore.logoSrc" :alt="brandingStore.title" class="logo-img" />
+          </div>
+          <div v-show="!isCollapsed" class="logo-text-wrap">
+            <span class="logo-text">{{ brandingStore.title }}</span>
+            <span class="logo-sub">{{ brandingStore.subtitle }}</span>
+          </div>
         </div>
       </div>
 
@@ -23,27 +28,47 @@
         background-color="transparent"
         text-color="rgba(255, 255, 255, 0.7)"
         active-text-color="#ffd700"
+        popper-class="apple-menu-popper"
+        popper-effect="dark"
         router
+        unique-opened
         class="apple-menu"
         @open="onGroupOpen"
         @close="onGroupClose"
       >
-        <el-sub-menu v-for="group in menuGroups" :key="group.title" :index="group.title" :popper-class="'apple-menu-popper'">
+        <el-sub-menu
+          v-for="group in menuGroups"
+          :key="group.title === '报表管理' ? `report-${reportMenuRevision}` : group.title"
+          :index="group.title"
+        >
           <template #title>
-            <div class="menu-icon-wrap">
-              <component :is="group.icon" />
+            <div class="menu-title-inner">
+              <div class="menu-icon-wrap">
+                <component :is="group.icon" />
+              </div>
+              <span class="menu-title-label">{{ group.title }}</span>
             </div>
-            <span>{{ group.title }}</span>
           </template>
-          <el-menu-item v-for="item in group.children" :key="item.path" :index="item.path">
-            {{ item.title }}
-          </el-menu-item>
+          <el-menu-item-group class="menu-popup-group">
+            <template #title>
+              <span class="menu-popup-group-title">{{ group.title }}</span>
+            </template>
+            <el-menu-item v-for="item in group.children" :key="item.path" :index="item.path">
+              <span class="menu-item-content">
+                <span class="menu-item-label">{{ item.title }}</span>
+              </span>
+            </el-menu-item>
+          </el-menu-item-group>
         </el-sub-menu>
       </el-menu>
 
       <!-- 底部折叠按钮 -->
       <div class="aside-footer">
-        <button class="collapse-btn" @click="isCollapsed = !isCollapsed">
+        <button
+          class="collapse-btn"
+          :title="isCollapsed ? '展开菜单' : '收起菜单'"
+          @click="isCollapsed = !isCollapsed"
+        >
           <svg v-if="isCollapsed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <path d="M9 18l6-6-6-6"/>
           </svg>
@@ -64,13 +89,89 @@
           </el-breadcrumb>
         </div>
         <div class="header-right">
-          <div class="account-badge">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-              <polyline points="9 22 9 12 15 12 15 22"/>
-            </svg>
-            <span>{{ userStore.accountSetName || '未选账套' }}</span>
+          <div class="info-chip info-chip--account">
+            <span class="info-chip__label">当前账套：</span>
+            <span class="info-chip__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                <polyline points="9 22 9 12 15 12 15 22"/>
+              </svg>
+            </span>
+            <span class="info-chip__text">{{ userStore.accountSetName || '未选账套' }}</span>
           </div>
+          <div class="info-chip info-chip--user">
+            <span class="info-chip__label">当前用户：</span>
+            <span class="info-chip__icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
+                <circle cx="12" cy="7" r="4"/>
+              </svg>
+            </span>
+            <span class="info-chip__text">{{ userStore.userInfo?.nickname || userStore.userInfo?.username }}</span>
+          </div>
+
+          <div class="header-actions header-actions--switch">
+            <button class="header-action-btn header-action-btn--operator" title="切换操作员" @click="openSwitchOperatorDialog">
+              <span class="header-action-btn__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+                  <circle cx="8.5" cy="7" r="4"/>
+                  <line x1="20" y1="8" x2="20" y2="14"/>
+                  <line x1="23" y1="11" x2="17" y2="11"/>
+                </svg>
+              </span>
+              <span class="header-action-btn__label">切换操作员</span>
+            </button>
+            <button class="header-action-btn header-action-btn--account" title="切换账套" @click="handleChangeAccount">
+              <span class="header-action-btn__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="3" y="3" width="7" height="7"/>
+                  <rect x="14" y="3" width="7" height="7"/>
+                  <rect x="14" y="14" width="7" height="7"/>
+                  <rect x="3" y="14" width="7" height="7"/>
+                </svg>
+              </span>
+              <span class="header-action-btn__label">切换账套</span>
+            </button>
+          </div>
+
+          <div class="header-actions header-actions--right">
+            <button class="header-action-btn header-action-btn--home" title="回到首页" @click="goToHome">
+              <span class="header-action-btn__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
+                  <polyline points="9 22 9 12 15 12 15 22"/>
+                </svg>
+              </span>
+              <span class="header-action-btn__label">首页</span>
+            </button>
+            <button
+              class="header-action-btn header-action-btn--back"
+              title="返回上一页"
+              :disabled="!canGoBack"
+              @click="goBack"
+            >
+              <span class="header-action-btn__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <line x1="19" y1="12" x2="5" y2="12"/>
+                  <polyline points="12 19 5 12 12 5"/>
+                </svg>
+              </span>
+              <span class="header-action-btn__label">返回</span>
+            </button>
+            <button class="header-action-btn header-action-btn--logout" title="退出登录" @click="handleLogout">
+              <span class="header-action-btn__icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                  <polyline points="16 17 21 12 16 7"/>
+                  <line x1="21" y1="12" x2="9" y2="12"/>
+                </svg>
+              </span>
+              <span class="header-action-btn__label">退出</span>
+            </button>
+          </div>
+
+          <!-- 主题切换（已停用）
           <button class="theme-btn" @click="toggleTheme" :title="currentTheme === 'light' ? '切换到暗色模式' : '切换到浅色模式'">
             <svg v-if="currentTheme === 'light'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
@@ -87,57 +188,19 @@
               <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
             </svg>
           </button>
-          <el-dropdown @command="handleCommand" trigger="click" popper-class="apple-dropdown">
-            <button class="user-btn">
-              <div class="user-avatar">
-                <svg viewBox="0 0 24 24" fill="currentColor">
-                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z"/>
-                </svg>
-              </div>
-              <span class="user-name">{{ userStore.userInfo?.nickname || userStore.userInfo?.username }}</span>
-              <svg class="user-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M6 9l6 6 6-6"/>
-              </svg>
-            </button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item command="switchOperator" divided>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                    <circle cx="8.5" cy="7" r="4"/>
-                    <line x1="20" y1="8" x2="20" y2="14"/>
-                    <line x1="23" y1="11" x2="17" y2="11"/>
-                  </svg>
-                  切换操作员
-                </el-dropdown-item>
-                <el-dropdown-item command="changeAccount">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>
-                    <polyline points="9 22 9 12 15 12 15 22"/>
-                  </svg>
-                  切换账套
-                </el-dropdown-item>
-                <el-dropdown-item command="closeBrowser" divided>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                    <polyline points="16 17 21 12 16 7"/>
-                    <line x1="21" y1="12" x2="9" y2="12"/>
-                  </svg>
-                  退出
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          -->
         </div>
       </el-header>
 
       <!-- 主内容 -->
       <el-main class="main">
-        <router-view v-slot="{ Component, route: viewRoute }">
-          <keep-alive :key="viewCacheKey">
-            <component :is="Component" :key="getViewKey(viewRoute.fullPath)" />
-          </keep-alive>
-        </router-view>
+        <div class="main-view">
+          <router-view v-slot="{ Component, route: viewRoute }">
+            <keep-alive :key="viewCacheKey">
+              <component :is="Component" :key="getViewKey(viewRoute.fullPath)" />
+            </keep-alive>
+          </router-view>
+        </div>
       </el-main>
     </el-container>
 
@@ -197,7 +260,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { getUsersByAccountSet, logout, switchOperator } from '@/api/auth'
@@ -206,38 +269,75 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 import request from '@/api/request'
 import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
-import { useTheme } from '@/composables/useTheme'
+// import { useTheme } from '@/composables/useTheme'
+import { useGlobalPageTableHeight } from '@/composables/useGlobalPageTableHeight'
 import { useSystemParamsStore } from '@/stores/systemParams'
+import { useNavigationReturnStore } from '@/stores/navigationReturn'
+import { useVoucherModalReturnStore } from '@/stores/voucherModalReturn'
+import { buildMenuGroups, canAccessRoute, getDefaultLandingPath } from '@/config/navigation'
+import { useBrandingStore } from '@/stores/branding'
 
-const { currentTheme, toggleTheme, initTheme } = useTheme()
+// const { currentTheme, toggleTheme, initTheme } = useTheme()
 
 const systemParamsStore = useSystemParamsStore()
+const brandingStore = useBrandingStore()
+useGlobalPageTableHeight()
+
+const route = useRoute()
+const router = useRouter()
+const userStore = useUserStore()
+const navigationReturnStore = useNavigationReturnStore()
+const voucherModalReturnStore = useVoucherModalReturnStore()
 
 onMounted(() => {
-  initTheme()
+  // initTheme()
   void systemParamsStore.load()
+  void brandingStore.load()
 })
 
 const dynamicReportMenuItems = ref<{ path: string; title: string }[]>([])
+const reportMenuRevision = ref(0)
+
+function isReportEnabledFlag(value: unknown) {
+  return value === true || value === 1 || value === '1'
+}
 
 async function fetchReportTemplates() {
+  if (!userStore.token || !userStore.accountSetId) return
   try {
     const res = await request.get<any[]>('/report/templates')
     if (res.data && Array.isArray(res.data)) {
       dynamicReportMenuItems.value = res.data
-        .filter((t: any) => t.is_enabled)
+        .filter((t: any) => isReportEnabledFlag(t.is_enabled))
+        .sort(
+          (a: any, b: any) =>
+            Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) ||
+            String(a.code).localeCompare(String(b.code))
+        )
         .map((t: any) => ({
           path: `/report/dynamic/${t.code}?view=1`,
           title: t.name,
         }))
+      reportMenuRevision.value += 1
     }
   } catch (error) {
     console.error('获取报表模板列表失败:', error)
     dynamicReportMenuItems.value = []
+    reportMenuRevision.value += 1
   }
 }
 
-fetchReportTemplates()
+watch(
+  () => [userStore.token, userStore.accountSetId] as const,
+  ([token, accountSetId]) => {
+    if (token && accountSetId) {
+      void fetchReportTemplates()
+    } else {
+      dynamicReportMenuItems.value = []
+    }
+  },
+  { immediate: true }
+)
 
 // 报表模板增删改后，由 DynamicReport 触发该事件 → 刷新导航栏
 function handleReportTemplatesChanged() {
@@ -248,9 +348,6 @@ onBeforeUnmount(() => {
   window.removeEventListener('report-templates-changed', handleReportTemplatesChanged)
 })
 
-const route = useRoute()
-const router = useRouter()
-const userStore = useUserStore()
 const isCollapsed = ref(false)
 const switchOperatorVisible = ref(false)
 const switchOperatorLoading = ref(false)
@@ -270,6 +367,23 @@ const openGroups = ref<string[]>([])
 
 useKeyboardShortcuts([
   {
+    key: 'l',
+    ctrl: true,
+    shift: true,
+    handler: () => {
+      if (route.path === '/system/param') {
+        const open = route.query.openBrandSettings === '1'
+        router.replace({
+          path: '/system/param',
+          query: open ? {} : { openBrandSettings: '1' },
+        })
+        return
+      }
+      router.push({ path: '/system/param', query: { openBrandSettings: '1' } })
+    },
+    description: 'Ctrl+Shift+L 打开品牌设置',
+  },
+  {
     key: 'F12',
     shift: true,
     handler: () => {
@@ -280,14 +394,79 @@ useKeyboardShortcuts([
 ])
 
 function goToHome() {
-  router.push('/dashboard')
+  router.push(getDefaultLandingPath(userStore.permissions, systemParamsStore.enableCashFlow))
+}
+
+const landingPath = computed(() =>
+  getDefaultLandingPath(userStore.permissions, systemParamsStore.enableCashFlow)
+)
+
+const canGoBack = computed(() => {
+  if (route.query.from === 'drill' && navigationReturnStore.peek()) return true
+  if (route.query.from === 'voucher' && voucherModalReturnStore.peek()) return true
+  return route.path !== landingPath.value
+})
+
+function goBack() {
+  if (route.query.from === 'voucher') {
+    const state = voucherModalReturnStore.peek()
+    if (state?.sourcePath && state.voucherId) {
+      router.push({
+        path: state.sourcePath,
+        query: { openVoucherId: state.voucherId },
+      })
+      return
+    }
+  }
+
+  const drillState = navigationReturnStore.peek()
+  if (route.query.from === 'drill' && drillState?.path) {
+    router.push({
+      path: drillState.path,
+      query: drillState.query || {},
+    })
+    return
+  }
+
+  if (window.history.length > 1) {
+    router.back()
+    return
+  }
+  goToHome()
+}
+
+async function handleLogout() {
+  try {
+    await logout()
+  } catch (error) {
+    console.error('退出登录失败:', error)
+  }
+  userStore.logout()
+  await router.push('/login')
+}
+
+async function handleChangeAccount() {
+  try {
+    await logout()
+  } catch (error) {
+    console.error('退出登录失败:', error)
+  }
+  userStore.logout()
+  await router.push('/login')
 }
 
 function onGroupOpen(index: string | number) {
   const key = String(index)
-  if (!openGroups.value.includes(key)) {
-    openGroups.value.push(key)
+  if (openGroups.value.length === 1 && openGroups.value[0] === key) return
+  // 先收起其它分组，下一帧再展开，避免两个 collapse 动画叠加产生重影
+  if (openGroups.value.length > 0) {
+    openGroups.value = []
+    requestAnimationFrame(() => {
+      openGroups.value = [key]
+    })
+    return
   }
+  openGroups.value = [key]
 }
 
 function onGroupClose(index: string | number) {
@@ -297,88 +476,28 @@ function onGroupClose(index: string | number) {
 
 const openeds = computed(() => openGroups.value)
 
-const menuGroups = computed(() => {
-  const baseSettingChildren: { path: string; title: string }[] = [
-    { path: '/base/account', title: '会计科目' },
-    { path: '/base/init-balance', title: '期初余额' },
-    { path: '/base/voucher-type', title: '凭证类型' },
-    { path: '/voucher/template', title: '凭证模版' },
-    { path: '/base/transfer-type', title: '结转维护' },
-    { path: '/report/dynamic', title: '报表维护' },
-    { path: '/base/print-template', title: '打印模版' },
-  ]
-  if (systemParamsStore.enableCashFlow) {
-    baseSettingChildren.push(
-      { path: '/base/cash-flow-items', title: '现金流量项目' },
-      { path: '/base/fund-source', title: '资金来源' }
-    )
-  }
-
-  const groups = [
-    {
-      title: '基础设置',
-      icon: 'Coin',
-      children: baseSettingChildren,
-    },
-    {
-      title: '凭证管理',
-      icon: 'EditPen',
-      children: [
-        { path: '/voucher/entry', title: '凭证录入' },
-        { path: '/voucher/audit', title: '凭证管理' },
-        { path: '/voucher/auto-transfer', title: '凭证结转' },
-        { path: '/voucher/query', title: '凭证查询' },
-        { path: '/voucher/period-close', title: '期间结账' },
-      ],
-    },
-    {
-      title: '账簿管理',
-      icon: 'List',
-      children: [
-        { path: '/ledger/general', title: '科目余额表' },
-        { path: '/ledger/detail', title: '明细账' },
-        { path: '/ledger/balance', title: '总分类账' },
-        { path: '/ledger/cash-journal', title: '日记账' },
-        { path: '/ledger/chronological', title: '序时账' },
-      ],
-    },
-    {
-      title: '辅助核算',
-      icon: 'FolderOpened',
-      children: [
-        { path: '/base/project', title: '核算项目' },
-        { path: '/ledger/aux-balance', title: '辅助项目余额表' },
-        { path: '/ledger/aux-detail', title: '辅助项目明细账' },
-      ],
-    },
-    {
-      title: '报表管理',
-      icon: 'TrendCharts',
-      children: dynamicReportMenuItems.value,
-    },
-    {
-      title: '系统管理',
-      icon: 'Setting',
-      children: [
-        { path: '/system/account-set', title: '账套管理' },
-        { path: '/system/user', title: '用户管理' },
-        { path: '/system/role', title: '角色管理' },
-        { path: '/system/param', title: '系统参数' },
-        { path: '/system/log', title: '操作日志' },
-      ],
-    },
-    {
-      title: '数据安全',
-      icon: 'Box',
-      children: [{ path: '/security/backup', title: '备份恢复' }],
-    },
-  ]
-
-  return groups.filter(group => group.children && group.children.length > 0)
-})
+const menuGroups = computed(() =>
+  buildMenuGroups(
+    userStore.permissions,
+    systemParamsStore.enableCashFlow,
+    dynamicReportMenuItems.value.map(t => ({
+      path: t.path,
+      title: t.title,
+      permission: 'report:view',
+    }))
+  )
+)
 
 const activeMenu = computed(() => route.path)
-const viewCacheKey = computed(() => userStore.accountSetId || 'no-account-set')
+/** 仅在成功登录/切换账套后更新，logout 清空 accountSetId 时不变化，避免 keep-alive 重挂载当前页触发无效请求 */
+const viewCacheKey = ref(userStore.accountSetId || 'no-account-set')
+
+watch(
+  () => userStore.accountSetId,
+  id => {
+    if (id) viewCacheKey.value = id
+  }
+)
 
 function getViewKey(fullPath: string) {
   // 仅用 path 作为缓存键，避免 query 变化（如 editVoucherId）导致 keep-alive 组件整页重挂载
@@ -396,27 +515,13 @@ const currentParent = computed(() => {
   return group?.title || ''
 })
 
-async function handleCommand(cmd: string) {
-  if (cmd === 'closeBrowser') {
-    try {
-      await logout()
-    } catch (error) {
-      console.error('退出登录失败:', error)
-    }
-    userStore.logout()
-    router.push('/login')
-  } else if (cmd === 'switchOperator') {
-    await openSwitchOperatorDialog()
-  } else if (cmd === 'changeAccount') {
-    try {
-      await logout()
-    } catch (error) {
-      console.error('退出登录失败:', error)
-    }
-    userStore.logout()
-    router.push('/login')
-  }
-}
+watch(
+  () => currentParent.value,
+  title => {
+    openGroups.value = title ? [title] : []
+  },
+  { immediate: true }
+)
 
 async function openSwitchOperatorDialog() {
   if (!userStore.accountSetId) {
@@ -497,15 +602,14 @@ async function confirmSwitchOperator() {
 }
 
 async function reloadCurrentView() {
+  await systemParamsStore.load()
   await fetchReportTemplates()
-  const currentPath = route.fullPath
-  await router.replace('/dashboard')
-  if (currentPath !== '/dashboard') {
-    await router.replace(currentPath)
-  }
+  const home = getDefaultLandingPath(userStore.permissions, systemParamsStore.enableCashFlow)
+  const target = canAccessRoute(route.path, userStore.permissions) ? route.fullPath : home
+  await router.replace(target)
 }
 </script>
 
-<style scoped>
+<style>
 @import './Layout.styles.css';
 </style>

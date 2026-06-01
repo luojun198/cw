@@ -1,3 +1,12 @@
+/**
+ * ⚠️ 已废弃 — 请勿在 index.ts 重新挂载
+ *
+ * 静态资产负债表已被动态报表（DynamicReport + report_definitions）取代。
+ * 静态实现存在已知 BUG：
+ *   - 余额表 / account_balances.end_balance 跨期累计错误（见代码评审 P0-2/P0-3）
+ *   - getBatchBalances 在期末余额计算上无法处理结转期间
+ * 仅保留源代码用于历史参考，未在 index.ts 中注册路由。
+ */
 import { Router } from 'express'
 import { authMiddleware, AuthRequest } from '../middleware/index.js'
 import { getDb } from '../db/index.js'

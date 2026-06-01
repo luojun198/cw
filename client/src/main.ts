@@ -2,7 +2,6 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import ElementPlus from 'element-plus'
 import 'element-plus/dist/index.css'
-import zhCn from 'element-plus/es/locale/lang/zh-cn'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
@@ -10,17 +9,30 @@ import './assets/styles.css'
 import './styles/common.css'
 import './styles/apple-element-override.css'
 import { permission } from './directives/permission'
+import { setupMessageBoxDefaults } from './plugins/messageBoxDefaults'
+import { useUserStore } from './stores/user'
+import { useLicenseStore } from './stores/license'
 
-const app = createApp(App)
-const pinia = createPinia()
+async function bootstrap() {
+  const app = createApp(App)
+  const pinia = createPinia()
 
-for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
-  app.component(key, component)
+  for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
+    app.component(key, component)
+  }
+
+  app.directive('permission', permission)
+  app.use(pinia)
+
+  await useLicenseStore().loadStatus(true)
+  if (useLicenseStore().isValid) {
+    await useUserStore().bootstrapAuth()
+  }
+
+  app.use(router)
+  app.use(ElementPlus)
+  setupMessageBoxDefaults()
+  app.mount('#app')
 }
 
-app.directive('permission', permission)
-
-app.use(pinia)
-app.use(router)
-app.use(ElementPlus, { locale: zhCn })
-app.mount('#app')
+void bootstrap()

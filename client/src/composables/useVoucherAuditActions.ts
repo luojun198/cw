@@ -1,8 +1,29 @@
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import request from '@/api/request'
 import { useConfirm, useBatchConfirm } from './useConfirm'
-import { showSuccess, showError, showOperationSuccess } from './useMessage'
+import {
+  showSuccess,
+  showError,
+  showBatchOperationResultDialog,
+  showInitBalanceUnbalancedAlert,
+  extractErrorMessage,
+  isInitBalanceUnbalancedError,
+  isInitBalanceBlockedResponse,
+  type BatchOperationResultDetail,
+} from './useMessage'
 import { useOperationHistory } from './useOperationHistory'
+
+function collectSelectedVoucherIds(selected: any[]) {
+  const voucherNoMap = new Map<string, string>()
+  const voucherIds: string[] = []
+  for (const row of selected) {
+    const id = row._voucherId || row.id
+    if (!id || voucherNoMap.has(id)) continue
+    voucherNoMap.set(id, row.voucher_no || id)
+    voucherIds.push(id)
+  }
+  return { voucherIds, voucherNoMap }
+}
 
 export function useVoucherAuditActions(fetchData: () => Promise<void>) {
   const detail = ref<any>(null)
@@ -47,13 +68,23 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
 
   async function post(row: any, options?: { silent?: boolean; skipRefresh?: boolean }) {
     const voucherId = row._voucherId || row.id
-    await request.post(`/voucher/vouchers/${voucherId}/post`)
-    if (!options?.silent) {
-      showSuccess('记账成功')
-    }
-    addRecord('update', '凭证记账', `记账凭证 ${row.voucher_no || voucherId}`)
-    if (!options?.skipRefresh) {
-      await fetchData()
+    try {
+      await request.post(`/voucher/vouchers/${voucherId}/post`, undefined, { skipErrorToast: true })
+      if (!options?.silent) {
+        showSuccess('记账成功')
+      }
+      addRecord('update', '凭证记账', `记账凭证 ${row.voucher_no || voucherId}`)
+      if (!options?.skipRefresh) {
+        await fetchData()
+      }
+    } catch (error: any) {
+      const msg = extractErrorMessage(error, '记账失败')
+      if (isInitBalanceBlockedResponse(error) || isInitBalanceUnbalancedError(msg)) {
+        await showInitBalanceUnbalancedAlert()
+      } else if (!options?.silent) {
+        showError(msg)
+      }
+      throw error
     }
   }
 
@@ -74,112 +105,138 @@ export function useVoucherAuditActions(fetchData: () => Promise<void>) {
     await fetchData()
   }
 
-  async function batchAudit(selected: any[]) {
-    const auditableVouchers = selected.filter(r => r.status === 'draft')
+  async function executeBatchVoucherOperation(options: {
+    selected: any[]
+    endpoint: string
+    operation: string
+    logModule: string
+    loadingRef: Ref<boolean>
+    emptyMessage: string
+  }) {
+    const { selected, endpoint, operation, logModule, loadingRef, emptyMessage } = options
 
-    if (!auditableVouchers.length) {
-      showError('当前所选凭证中没有可审核的凭证')
+    if (!selected.length) {
+      showError(emptyMessage)
       return
     }
 
-    batchAuditing.value = true
+    const { voucherIds, voucherNoMap } = collectSelectedVoucherIds(selected)
+    if (!voucherIds.length) {
+      showError(emptyMessage)
+      return
+    }
+
+    loadingRef.value = true
     try {
-      // 注意：表格按分录展平时 row.id 会被 entry.id 覆盖；必须先取 _voucherId
-      // 同时按 voucher 去重，多条分录展平不要重复提交同一张凭证
-      const voucherIds = Array.from(
-        new Set(
-          auditableVouchers
-            .map(r => r._voucherId || r.id)
-            .filter(Boolean)
-        )
-      )
       const res = await request.post<{
         total?: number
         success?: number
         fail?: number
-        details?: Array<{ id: string; success: boolean; error?: string }>
-      }>('/voucher/vouchers/batch-audit', { voucherIds })
+        details?: BatchOperationResultDetail[]
+      }>(endpoint, { voucherIds }, { skipErrorToast: true })
       const data = res.data
-      const successCount = data?.success ?? voucherIds.length
+      const successCount = data?.success ?? 0
       const failCount = data?.fail ?? 0
-      if (failCount > 0 && successCount === 0) {
-        const firstError = data?.details?.find(d => !d.success)?.error
-        showError(`批量审核失败：${firstError || `${failCount} 张全部失败`}`)
-      } else if (failCount > 0) {
-        showError(`批量审核完成：成功 ${successCount} 张，失败 ${failCount} 张`)
-      } else {
-        showOperationSuccess('批量审核', res.message || `共审核 ${successCount} 张凭证`)
+      const details = data?.details ?? []
+
+      if (details.length > 0) {
+        await showBatchOperationResultDialog({
+          operation,
+          success: successCount,
+          fail: failCount,
+          details,
+          voucherNoMap,
+        })
       }
-      await fetchData()
+
+      if (successCount > 0) {
+        addRecord('update', logModule, `批量${operation}成功 ${successCount} 张凭证`)
+      }
+    } catch (error: any) {
+      const data = error.response?.data?.data
+      const details: BatchOperationResultDetail[] = data?.details ?? []
+      const msg = extractErrorMessage(error, `批量${operation}失败`)
+      if (isInitBalanceBlockedResponse(error) || isInitBalanceUnbalancedError(msg)) {
+        await showInitBalanceUnbalancedAlert({ count: data?.fail ?? voucherIds.length })
+      } else if (details.length > 0) {
+        await showBatchOperationResultDialog({
+          operation,
+          success: data?.success ?? 0,
+          fail: data?.fail ?? details.length,
+          details,
+          voucherNoMap,
+        })
+      } else {
+        showError(msg)
+      }
     } finally {
-      batchAuditing.value = false
+      loadingRef.value = false
+      await fetchData()
     }
+  }
+
+  async function batchAudit(selected: any[]) {
+    await executeBatchVoucherOperation({
+      selected,
+      endpoint: '/voucher/vouchers/batch-audit',
+      operation: '审核',
+      logModule: '凭证审核',
+      loadingRef: batchAuditing,
+      emptyMessage: '请先选择要审核的凭证',
+    })
   }
 
   async function batchUnAudit(selected: any[]) {
-    const unauditableVouchers = selected.filter(r => r.status === 'audited')
-
-    if (!unauditableVouchers.length) {
-      showError('当前所选凭证中没有可反审核的凭证')
+    if (!selected.length) {
+      showError('请先选择要反审核的凭证')
       return
     }
 
-    const voucherNos = unauditableVouchers.map(v => v.voucher_no || '未知凭证号')
+    const { voucherIds, voucherNoMap } = collectSelectedVoucherIds(selected)
+    const voucherNos = voucherIds.map(id => voucherNoMap.get(id) || id)
     const confirmed = await useBatchConfirm('反审核', voucherNos, '此操作将取消凭证的审核状态')
     if (!confirmed) return
 
-    batchUnauditing.value = true
-    try {
-      for (const r of unauditableVouchers) {
-        await unAudit(r, { silent: true, skipConfirm: true })
-      }
-      showOperationSuccess('批量反审核', `共反审核 ${unauditableVouchers.length} 张凭证`)
-    } finally {
-      batchUnauditing.value = false
-    }
+    await executeBatchVoucherOperation({
+      selected,
+      endpoint: '/voucher/vouchers/batch-unaudit',
+      operation: '反审核',
+      logModule: '凭证审核',
+      loadingRef: batchUnauditing,
+      emptyMessage: '请先选择要反审核的凭证',
+    })
   }
 
   async function batchPost(selected: any[]) {
-    const postableVouchers = selected.filter(r => r.status !== 'posted')
-
-    if (!postableVouchers.length) {
-      showError('当前所选凭证中没有可记账的凭证')
-      return
-    }
-
-    batchPosting.value = true
-    try {
-      for (const r of postableVouchers) {
-        await post(r, { silent: true, skipRefresh: true })
-      }
-      await fetchData()
-      showOperationSuccess('批量记账', `共记账 ${postableVouchers.length} 张凭证`)
-    } finally {
-      batchPosting.value = false
-    }
+    await executeBatchVoucherOperation({
+      selected,
+      endpoint: '/voucher/vouchers/batch-post',
+      operation: '记账',
+      logModule: '凭证记账',
+      loadingRef: batchPosting,
+      emptyMessage: '请先选择要记账的凭证',
+    })
   }
 
   async function batchUnpost(selected: any[]) {
-    const unpostableVouchers = selected.filter(r => r.status === 'posted')
-
-    if (!unpostableVouchers.length) {
-      showError('当前所选凭证中没有可反记账的凭证')
+    if (!selected.length) {
+      showError('请先选择要反记账的凭证')
       return
     }
 
-    const voucherNos = unpostableVouchers.map(v => v.voucher_no || '未知凭证号')
+    const { voucherIds, voucherNoMap } = collectSelectedVoucherIds(selected)
+    const voucherNos = voucherIds.map(id => voucherNoMap.get(id) || id)
     const confirmed = await useBatchConfirm('反记账', voucherNos, '此操作将取消凭证的记账状态')
     if (!confirmed) return
 
-    batchUnposting.value = true
-    try {
-      for (const r of unpostableVouchers) {
-        await unPost(r, { silent: true, skipConfirm: true })
-      }
-      showOperationSuccess('批量反记账', `共反记账 ${unpostableVouchers.length} 张凭证`)
-    } finally {
-      batchUnposting.value = false
-    }
+    await executeBatchVoucherOperation({
+      selected,
+      endpoint: '/voucher/vouchers/batch-unpost',
+      operation: '反记账',
+      logModule: '凭证记账',
+      loadingRef: batchUnposting,
+      emptyMessage: '请先选择要反记账的凭证',
+    })
   }
 
   return {

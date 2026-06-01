@@ -1,396 +1,62 @@
 <template>
   <div class="page report-page">
-    <div class="page-header report-header">
-      <div class="filter-row">
-        <el-select
-          v-if="!isDirectReportMode"
-          v-model="selectedCode"
-          placeholder="请选择报表模板"
-          style="width: 220px"
-          @change="handleTemplateChange"
-        >
-          <el-option
-            v-for="item in templates"
-            :key="item.code"
-            :label="`${item.name} (${item.code})`"
-            :value="item.code"
-          />
-        </el-select>
-        <el-select v-model="filters.year" style="width: 110px">
-          <el-option v-for="year in years" :key="year" :label="`${year}年`" :value="year" />
-        </el-select>
-        <el-select v-model="filters.period" style="width: 90px">
-          <el-option v-for="period in 12" :key="period" :label="`${period}月`" :value="period" />
-        </el-select>
-        <el-switch
-          v-model="showExecutionResult"
-          inline-prompt
-          active-text="结果"
-          inactive-text="公式"
-        />
-        <el-switch
-          v-model="showZeroValue"
-          inline-prompt
-          active-text="显示0值"
-          inactive-text="隐藏0值"
-        />
-        <el-button :loading="loading" @click="fetchTemplateDetail">刷新</el-button>
-        <el-button v-if="!isDirectReportMode" type="primary" :loading="saving" @click="saveTemplateChanges"
-          >保存模板</el-button
-        >
-        <el-button type="success" :loading="executing" @click="() => promptAndExecuteTemplate()">生成报表</el-button>
-        <el-button v-if="isDirectReportMode" @click="handlePrint">打印</el-button>
-        <el-button v-if="selectedCode" @click="handleExport">导出 Excel</el-button>
-        <el-switch
-          v-if="!isDirectReportMode && selectedCode"
-          v-model="isEnabledModel"
-          inline-prompt
-          active-text="启用"
-          inactive-text="停用"
-          :loading="enabledSwitching"
-          @change="handleEnabledChange"
-        />
-        <el-button v-if="!isDirectReportMode" type="warning" @click="triggerImport">导入 Excel</el-button>
-        <el-button v-if="!isDirectReportMode" type="primary" plain @click="openCreateReportDialog">
-          新增报表
-        </el-button>
-        <el-button v-if="!isDirectReportMode && selectedCode" plain @click="openEditMetaDialog">修改编码</el-button>
-        <el-button v-if="!isDirectReportMode && selectedCode" type="danger" plain @click="handleDeleteTemplate">删除模板</el-button>
-        <input
-          v-if="!isDirectReportMode"
-          ref="fileInputRef"
-          type="file"
-          accept=".xls,.xlsx"
-          style="display: none"
-          @change="handleFileImport"
-        />
-      </div>
-      <el-alert
-        v-if="isCashFlowTemplate && isDirectReportMode"
-        type="info"
-        :closable="false"
-        show-icon
-        class="cash-flow-hint"
-        title="正式报送以本表为准；可用「科目估算」页核对静态口径与分录差异"
-      >
-        <template #default>
-          <el-button
-            type="primary"
-            link
-            @click="
-              router.push({
-                path: '/report/cash-flow',
-                query: {
-                  year: String(filters.year),
-                  period: String(filters.period),
-                  scope: 'month',
-                },
-              })
-            "
-          >
-            打开现金流量表(估算)对比
-          </el-button>
-        </template>
-      </el-alert>
-      <div v-if="!isDirectReportMode" class="formula-edit-row">
-        <span class="formula-label">单元格 {{ selectedPositionLabel || '-' }}</span>
-        <el-input
-          v-model="topEditorValue"
-          type="textarea"
-          :rows="1"
-          resize="none"
-          :autosize="{ minRows: 1, maxRows: 3 }"
-          class="formula-editor-input"
-          :placeholder="selectedPosition ? '请输入公式或文本' : '请先选择单元格'"
-          :disabled="!selectedPosition"
-          @keydown.enter.exact.prevent="applyTopEditorEdit"
-        />
-        <el-button type="primary" size="small" :disabled="!selectedPosition" @click="applyTopEditorEdit">应用</el-button>
-      </div>
-      <div v-if="!isDirectReportMode" class="toolbar-row">
-        <div class="toolbar-group">
-          <span class="toolbar-group-label">对齐</span>
-          <el-button-group size="small">
-            <el-button @click="applyAlignmentToSelection('left')">左</el-button>
-            <el-button @click="applyAlignmentToSelection('center')">中</el-button>
-            <el-button @click="applyAlignmentToSelection('right')">右</el-button>
-            <el-button @click="applyVerticalAlignToSelection('top')">上</el-button>
-            <el-button @click="applyVerticalAlignToSelection('middle')">中</el-button>
-            <el-button @click="applyVerticalAlignToSelection('bottom')">下</el-button>
-          </el-button-group>
-        </div>
-        <div class="toolbar-group">
-          <span class="toolbar-group-label">字体</span>
-          <el-button-group size="small">
-            <el-dropdown trigger="click" @command="(cmd: string) => applyFontFamilyToSelection(cmd)">
-              <el-button>字体<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="">默认</el-dropdown-item>
-                  <el-dropdown-item command="SimSun">宋体</el-dropdown-item>
-                  <el-dropdown-item command="KaiTi">楷体</el-dropdown-item>
-                  <el-dropdown-item command="SimHei">黑体</el-dropdown-item>
-                  <el-dropdown-item command="FangSong">仿宋</el-dropdown-item>
-                  <el-dropdown-item command="Microsoft YaHei">微软雅黑</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-dropdown trigger="click" @command="(cmd: number) => applyFontSizeToSelection(cmd)">
-              <el-button>字号<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item :command="12">12</el-dropdown-item>
-                  <el-dropdown-item :command="13">13 (默认)</el-dropdown-item>
-                  <el-dropdown-item :command="14">14</el-dropdown-item>
-                  <el-dropdown-item :command="16">16</el-dropdown-item>
-                  <el-dropdown-item :command="18">18</el-dropdown-item>
-                  <el-dropdown-item :command="22">22</el-dropdown-item>
-                  <el-dropdown-item :command="28">28</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-button @click="adjustFontSizeToSelection(-1)">A-</el-button>
-            <el-button @click="adjustFontSizeToSelection(1)">A+</el-button>
-            <el-button @click="toggleBoldToSelection"><strong>B</strong></el-button>
-            <el-button @click="toggleUnderlineToSelection"><u>U</u></el-button>
-          </el-button-group>
-        </div>
-        <div class="toolbar-group">
-          <span class="toolbar-group-label">边框</span>
-          <el-button-group size="small">
-            <el-dropdown trigger="click" @command="(cmd: string) => applyBorderToSelection(cmd)">
-              <el-button :disabled="!hasStyleSelection">边框<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="all">全边框</el-dropdown-item>
-                  <el-dropdown-item command="outer">外边框</el-dropdown-item>
-                  <el-dropdown-item command="none">无边框</el-dropdown-item>
-                  <el-dropdown-item command="bottom">下边框</el-dropdown-item>
-                  <el-dropdown-item command="top">上边框</el-dropdown-item>
-                  <el-dropdown-item command="left">左边框</el-dropdown-item>
-                  <el-dropdown-item command="right">右边框</el-dropdown-item>
-                  <el-dropdown-item command="header">标题线</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-dropdown trigger="click" @command="(cmd: string) => applyBorderColorToSelection(cmd)">
-              <el-button>颜色<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="">默认</el-dropdown-item>
-                  <el-dropdown-item command="303030">黑色</el-dropdown-item>
-                  <el-dropdown-item command="909399">灰色</el-dropdown-item>
-                  <el-dropdown-item command="409eff">蓝色</el-dropdown-item>
-                  <el-dropdown-item command="67c23a">绿色</el-dropdown-item>
-                  <el-dropdown-item command="e6a23c">橙色</el-dropdown-item>
-                  <el-dropdown-item command="f56c6c">红色</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-            <el-dropdown trigger="click" @command="(cmd: string) => applyBorderWidthToSelection(cmd)">
-              <el-button>粗细<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="">默认(1px)</el-dropdown-item>
-                  <el-dropdown-item command="2">2px</el-dropdown-item>
-                  <el-dropdown-item command="3">3px</el-dropdown-item>
-                  <el-dropdown-item command="4">4px</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </el-button-group>
-        </div>
-        <div class="toolbar-group">
-          <span class="toolbar-group-label">格式</span>
-          <el-button-group size="small">
-            <el-dropdown trigger="click" @command="(cmd: string) => applyFormatToSelection(cmd)">
-              <el-button>数字格式<el-icon class="el-icon--right"><ArrowDown /></el-icon></el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item command="">默认</el-dropdown-item>
-                  <el-dropdown-item command="integer">整数</el-dropdown-item>
-                  <el-dropdown-item command="2decimal">两位小数</el-dropdown-item>
-                  <el-dropdown-item command="4decimal">四位小数</el-dropdown-item>
-                  <el-dropdown-item command="percent">百分比</el-dropdown-item>
-                  <el-dropdown-item command="thousands">千分位</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
-          </el-button-group>
-        </div>
-        <div class="toolbar-group">
-          <span class="toolbar-group-label">行列</span>
-          <el-button-group size="small">
-            <el-button @click="insertRow" :disabled="!selectedPosition">插行</el-button>
-            <el-button @click="deleteRow" :disabled="!selectedPosition">删行</el-button>
-            <el-button @click="insertCol" :disabled="!selectedPosition">插列</el-button>
-            <el-button @click="deleteCol" :disabled="!selectedPosition">删列</el-button>
-          </el-button-group>
-        </div>
-        <div class="toolbar-group">
-          <span class="toolbar-group-label">合并</span>
-          <el-button-group size="small">
-            <el-button @click="mergeSelection" :disabled="!canMergeSelection">合并</el-button>
-            <el-button @click="unmergeSelection" :disabled="!canUnmergeSelection">取消</el-button>
-          </el-button-group>
-        </div>
-      </div>
+    <div class="report-header">
+      <ReportViewToolbar
+        v-if="isDirectReportMode"
+        v-model:year="filters.year"
+        v-model:period="filters.period"
+        v-model:show-execution-result="showExecutionResult"
+        v-model:show-zero-value="showZeroValue"
+        :page-title="pageTitle"
+        :subtitle="periodSubtitle"
+        :years="years"
+        :executing="executing"
+        :can-export="Boolean(selectedCode && templateData)"
+        :show-cash-flow-hint="isCashFlowTemplate"
+        @generate="handleGenerateReport"
+        @print="handlePrint"
+        @export="handleExport"
+        @open-cash-flow-compare="openCashFlowCompare"
+      />
+      <ReportDesignToolbar
+        v-else
+        v-model:selected-code="selectedCode"
+        v-model:year="filters.year"
+        v-model:period="filters.period"
+        v-model:is-enabled="isEnabledModel"
+        v-model:show-execution-result="showExecutionResult"
+        v-model:show-zero-value="showZeroValue"
+        v-model:top-editor-value="topEditorValue"
+        :templates="templates"
+        :years="years"
+        :loading="loading"
+        :saving="saving"
+        :executing="executing"
+        :enabled-switching="enabledSwitching"
+        :selected-position-label="selectedPositionLabel"
+        :selected-position="selectedPosition"
+        :has-style-selection="hasStyleSelection"
+        :can-merge-selection="canMergeSelection"
+        :can-unmerge-selection="canUnmergeSelection"
+        :actions="designActions"
+        @template-command="handleDesignTemplateCommand"
+      />
+      <input
+        v-if="!isDirectReportMode"
+        ref="fileInputRef"
+        type="file"
+        accept=".xls,.xlsx"
+        style="display: none"
+        @change="handleFileImport"
+      />
     </div>
 
-    <el-card v-loading="loading">
-      <template v-if="templateData">
-        <div class="editor-layout">
-          <div class="grid-panel">
-            <el-tabs
-              v-model="activeSheetName"
-              class="sheet-tabs sheet-tabs-no-header"
-              @tab-change="handleSheetChange"
-              @edit="handleSheetEdit"
-            >
-              <el-tab-pane
-                v-for="sheet in templateData.sheets"
-                :key="sheet.id"
-                :label="sheet.sheet_name"
-                :name="sheet.id"
-                :closable="templateData.sheets.length > 1"
-              >
-                <div class="sheet-grid-wrap" @paste="handleGridPaste">
-                  <div
-                    :class="['sheet-grid', { 'sheet-grid-balance': isBalanceTemplate }]"
-                    :style="{ width: `${getSheetGridWidth(sheet.id, sheet.metrics.colCount)}px` }"
-                  >
-                    <div
-                      class="sheet-grid-header-row"
-                      :style="{
-                        gridTemplateColumns: getGridTemplateColumns(
-                          sheet.id,
-                          sheet.metrics.colCount
-                        ),
-                      }"
-                    >
-                      <button
-                        type="button"
-                        class="row-index row-index-header select-all-corner"
-                        :class="{ active: bulkSelectionMode === 'all' }"
-                        aria-label="全选后批量调整列宽或行高"
-                        @click="toggleSelectAll"
-                      >
-                        <span class="select-all-corner-mark"></span>
-                      </button>
-                      <div
-                        v-for="colIndex in Math.max(sheet.metrics.colCount, 1)"
-                        :key="`header-${sheet.id}-${colIndex - 1}`"
-                        class="column-header-cell"
-                        :class="{
-                          active:
-                            bulkSelectionMode === 'column' && selectedColIndex === colIndex - 1,
-                        }"
-                        @click="selectColumn(colIndex - 1)"
-                      >
-                        <div class="column-header-content">
-                          <span>{{ toColumnName(colIndex - 1) }}</span>
-                          <button
-                            type="button"
-                            class="column-resize-handle"
-                            :aria-label="`调整第 ${colIndex} 列宽度`"
-                            @dblclick.stop="autoFitColumn(sheet.id, colIndex - 1)"
-                            @mousedown.prevent="startColumnResize(sheet.id, colIndex - 1, $event)"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                    <div
-                      v-for="row in buildSheetRows(sheet)"
-                      :key="row.rowIndex"
-                      class="sheet-grid-row"
-                      :style="{
-                        gridTemplateColumns: getGridTemplateColumns(
-                          sheet.id,
-                          sheet.metrics.colCount
-                        ),
-                        minHeight: `${row.rowHeight}px`,
-                      }"
-                    >
-                      <div
-                        class="row-index"
-                        :class="{
-                          active: bulkSelectionMode === 'row' && selectedRowIndex === row.rowIndex,
-                        }"
-                        :style="{
-                          minHeight: `${row.rowHeight}px`,
-                        }"
-                        @click="selectRow(row.rowIndex)"
-                      >
-                        <div class="row-index-content">
-                          <span>{{ row.rowIndex + 1 }}</span>
-                          <button
-                            type="button"
-                            class="row-resize-handle"
-                            :aria-label="`调整第 ${row.rowIndex + 1} 行高度`"
-                            @dblclick.stop="autoFitRow(sheet.id, row.rowIndex)"
-                            @mousedown.prevent="startRowResize(sheet.id, row.rowIndex, $event)"
-                          />
-                        </div>
-                      </div>
-                      <template v-for="cell in row.cells" :key="`${row.rowIndex}-${cell.colIndex}`">
-                        <div
-                          :style="{
-                            height: `${row.rowHeight}px`,
-                            minHeight: `${row.rowHeight}px`,
-                            textAlign: cell.textAlign as 'left' | 'center' | 'right',
-                            verticalAlign: cell.verticalAlign !== 'top' ? (cell.verticalAlign as 'middle' | 'bottom') : undefined,
-                            gridColumn: `${cell.colIndex + 2} / span ${cell.colSpan}`,
-                            gridRow: cell.rowSpan > 1 ? `span ${cell.rowSpan}` : undefined,
-                            fontSize: cell.fontSize !== 13 ? `${cell.fontSize}px` : undefined,
-                            fontWeight: cell.bold ? 700 : undefined,
-                            textDecoration: cell.underline ? 'underline' : undefined,
-                            fontFamily: cell.fontFamily || undefined,
-                            borderColor: cell.borderColor ? `#${cell.borderColor}` : undefined,
-                            borderWidth: cell.borderWidth ? `${cell.borderWidth}px` : undefined,
-                          }"
-                          :class="[
-                            'cell',
-                            `cell-${cell.cell_type}`,
-                            `cell-border-${cell.borderStyle}`,
-                            {
-                              empty: !cell.displayValue,
-                              selected: cell.isSelected,
-                              editing: cell.isEditing,
-                              error: cell.executionStatus === 'error',
-                              'bulk-selected': isCellStructureSelected(cell.rowIndex, cell.colIndex),
-                              merged: cell.colSpan > 1 || cell.rowSpan > 1,
-                            },
-                          ]"
-                          :title="cell.tooltip"
-                          @click="selectGridCell(cell, $event)"
-                          @mousedown.prevent="startDragSelection(cell, $event)"
-                        >
-                          <template v-if="cell.isEditing">
-                            <textarea
-                              ref="setActiveEditorRef"
-                              :value="cell.editorValue"
-                              class="cell-editor-input"
-                              @click.stop
-                              @input="handleInlineInput(cell, $event)"
-                              @keydown.enter.exact.prevent="applyInlineEdit(cell)"
-                              @keydown.esc.stop.prevent="cancelInlineEdit()"
-                              @blur="applyInlineEdit(cell)"
-                            />
-                          </template>
-                          <div v-else class="cell-content">{{ cell.displayValue || ' ' }}</div>
-                        </div>
-                      </template>
-                    </div>
-                  </div>
-                </div>
-              </el-tab-pane>
-            </el-tabs>
-          </div>
-        </div>
-      </template>
+    <AccountScopeAlert />
 
+    <div v-loading="loading" class="report-body">
+      <ReportSheetGrid v-if="templateData" />
       <EmptyState v-else-if="!loading" type="data" description="请选择一个已导入的报表模板" />
-    </el-card>
+    </div>
 
     <el-dialog
       v-model="createDialogVisible"
@@ -420,6 +86,7 @@
         </el-form-item>
         <el-form-item label="模板文件" required>
           <el-upload
+            ref="createUploadRef"
             class="create-report-upload"
             drag
             :auto-upload="false"
@@ -447,6 +114,32 @@
     </el-dialog>
 
     <el-dialog
+      v-model="editNameDialogVisible"
+      title="修改报表名称"
+      width="480px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <el-form label-width="96px" @submit.prevent>
+        <el-form-item label="报表名称" required>
+          <el-input
+            v-model="editNameForm.name"
+            placeholder="请输入报表名称"
+            maxlength="100"
+            clearable
+            @keyup.enter="submitEditName"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editNameDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="editNameSubmitting" @click="submitEditName">
+          确定
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
       v-model="editMetaDialogVisible"
       title="修改报表编码"
       width="480px"
@@ -462,17 +155,9 @@
             clearable
           />
           <div class="form-tip">
-            导航栏按编码升序排列，修改编码即可改变报表的显示顺序。<br />
+            导航顺序请在「导航顺序」中调整；编码仅用于唯一标识与路由。<br />
             若新编码已被其他报表使用，两者编码将自动互换。
           </div>
-        </el-form-item>
-        <el-form-item label="报表名称">
-          <el-input
-            v-model="editMetaForm.name"
-            placeholder="留空则不修改名称"
-            maxlength="100"
-            clearable
-          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -482,16 +167,104 @@
         </el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="sortOrderDialogVisible"
+      title="导航顺序"
+      width="680px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <p class="sort-order-tip">
+        调整报表在侧栏「报表管理」中的显示顺序；点击<strong>导航</strong>列开关可切换是否启用。仅已启用的报表会出现在导航中。
+      </p>
+      <el-alert
+        v-if="sortDraftNavMismatchHint"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="sort-order-alert"
+        :title="sortDraftNavMismatchHint"
+      />
+      <p v-if="sortDraftNavPreview.length > 0" class="sort-order-preview">
+        侧栏将显示：{{ sortDraftNavPreview.join(' → ') }}
+      </p>
+      <el-table
+        :data="sortDraft"
+        stripe
+        border
+        size="small"
+        max-height="420"
+        empty-text="暂无报表模板"
+        class="sort-order-table"
+      >
+        <el-table-column label="序号" width="56" align="center">
+          <template #default="{ $index }">{{ $index + 1 }}</template>
+        </el-table-column>
+        <el-table-column prop="code" label="编码" width="88" show-overflow-tooltip />
+        <el-table-column prop="name" label="名称" min-width="200" show-overflow-tooltip />
+        <el-table-column label="导航" width="80" align="center">
+          <template #default="{ row, $index }">
+            <el-switch
+              :model-value="isReportNavVisible(row)"
+              size="small"
+              :title="isReportNavVisible(row) ? '点击停用导航显示' : '点击启用导航显示'"
+              @change="(value: boolean) => setSortDraftEnabled($index, value)"
+            />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="156" align="center" fixed="right">
+          <template #default="{ $index }">
+            <div class="sort-order-actions">
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :disabled="$index === 0"
+                @click="pinSortDraftItem($index)"
+              >
+                置顶
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :disabled="$index === 0"
+                @click="moveSortDraftItem($index, -1)"
+              >
+                上移
+              </el-button>
+              <el-button
+                link
+                type="primary"
+                size="small"
+                :disabled="$index === sortDraft.length - 1"
+                @click="moveSortDraftItem($index, 1)"
+              >
+                下移
+              </el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="sortOrderDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="sortOrderSubmitting" @click="submitSortOrder">
+          保存
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, provide, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import request from '@/api/request'
 import {
   getTemplateDetail,
+  saveSheetLayout,
   saveTemplateCells,
   REPORT_LONG_REQUEST_TIMEOUT,
   REPORT_EXECUTE_REQUEST_TIMEOUT,
@@ -499,11 +272,18 @@ import {
   type UpdateReportCellPayload,
 } from '@/api/reportTemplate'
 import EmptyState from '@/components/EmptyState.vue'
+import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
+import ReportViewToolbar from '@/components/report/ReportViewToolbar.vue'
+import ReportDesignToolbar from '@/components/report/ReportDesignToolbar.vue'
+import ReportSheetGrid from '@/components/report/ReportSheetGrid.vue'
+import { REPORT_GRID_KEY } from '@/components/report/reportGridContext'
 import { useDynamicReportEditor } from '@/composables/useDynamicReportEditor'
-import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
+import { useDebounceFn } from '@/composables/useDebounceThrottle'
 import { showOperationError, showSuccess, showError } from '@/composables/useMessage'
-import { ArrowDown, UploadFilled } from '@element-plus/icons-vue'
+import { useUserStore } from '@/stores/user'
+import { UploadFilled } from '@element-plus/icons-vue'
 import type { UploadFile, UploadUserFile } from 'element-plus'
+import './report.styles.css'
 
 type TemplateListItem = {
   id: string
@@ -622,6 +402,7 @@ type YearPeriodForm = {
 
 const route = useRoute()
 const router = useRouter()
+const userStore = useUserStore()
 const loading = ref(false)
 const saving = ref(false)
 const executing = ref(false)
@@ -636,7 +417,7 @@ const yearPeriodForm = ref<YearPeriodForm>({
   period: new Date().getMonth() + 1,
 })
 const filters = ref({ year: new Date().getFullYear(), period: new Date().getMonth() + 1 })
-const years = Array.from({ length: 10 }, (_, index) => new Date().getFullYear() - index)
+const years = Array.from({ length: new Date().getFullYear() - 2000 + 1 }, (_, index) => new Date().getFullYear() - index)
 const inlineEditingPosition = ref<{ rowIndex: number; colIndex: number } | null>(null)
 const inlineEditorValue = ref('')
 const topEditorValue = ref('')
@@ -666,12 +447,8 @@ const resizingRow = ref<{
   applyToAll: boolean
   initialHeights: number[]
 } | null>(null)
-const {
-  getColumnWidth: getStoredColumnWidth,
-  saveColumnWidth,
-  getRowHeight: getStoredRowHeight,
-  saveRowHeight,
-} = useColumnWidthMemory('dynamic-report-grid')
+
+const layoutSaveErrorShown = ref(false)
 
 const {
   selectedCellId,
@@ -730,20 +507,33 @@ const selectedPositionLabel = computed(() => {
 })
 
 const directReportMeta = computed(() => {
-  // 来自侧边栏报表管理的 ?view=1 快速查看模式
-  if (route.query.view === '1' && route.params.code) {
-    const template = templates.value.find(t => t.code === route.params.code)
-    return { title: template?.name || '报表查看', code: String(route.params.code), autoRun: true }
+  // ?view=1：查看模式，模板加载后按页头期间自动取数
+  const routeCode = String(route.params.code || '').trim()
+  const isExplicitEdit = route.query.edit === '1'
+  if (routeCode && !isExplicitEdit && route.query.view === '1') {
+    const template = templates.value.find(t => t.code === routeCode)
+    return {
+      title: template?.name || '报表查看',
+      code: routeCode,
+      autoRun: true,
+    }
   }
   const meta = route.meta || {}
   const title = typeof meta.title === 'string' ? meta.title : ''
   const code = typeof meta.dynamicReportCode === 'string' ? meta.dynamicReportCode : ''
   const autoRun = meta.autoRun === true
-  return title && code && autoRun ? { title, code } : null
+  return title && code && autoRun ? { title, code, autoRun: true } : null
 })
 
 const isDirectReportMode = computed(() => Boolean(directReportMeta.value))
 const pageTitle = computed(() => directReportMeta.value?.title || templateData.value?.definition.name || '动态报表设计器')
+const periodSubtitle = computed(() => {
+  const parts: string[] = []
+  if (userStore.accountSetName) parts.push(userStore.accountSetName)
+  parts.push(`${filters.value.year}年${filters.value.period}月`)
+  return parts.join(' · ')
+})
+const showGridHeaders = computed(() => !isDirectReportMode.value)
 const hasPromptedDirectExecution = ref(false)
 const hasTriggeredAutoRunForPath = ref('')
 const reportGeneratePromptVisible = ref(false)
@@ -757,7 +547,10 @@ const summaryText = computed(() => {
   return `当前已加载 ${templateData.value.sheets.length} 个工作表，共 ${totalCells} 个单元格。支持像 Excel 一样点击单元格直接编辑，并可拖动调整列宽、行高且保存记忆；结果模式下优先显示执行结果。`
 })
 
-const isBalanceTemplate = computed(() => selectedCode.value === '1')
+const isBalanceTemplate = computed(() => {
+  const name = templateData.value?.definition.name || ''
+  return selectedCode.value === '1' || name.includes('资产负债表')
+})
 const isCashFlowTemplate = computed(() => selectedCode.value === '3')
 
 const canMergeSelection = computed(() => {
@@ -1170,12 +963,120 @@ function getDraftKey(sheetId: string, rowIndex: number, colIndex: number) {
   return `${sheetId}:${rowIndex}:${colIndex}`
 }
 
-function getColumnStorageKey(sheetId: string, colIndex: number) {
-  return `column:${selectedCode.value || 'default'}:${sheetId}:${colIndex}`
+function parseSheetSizeArray(raw: string | null | undefined, index: number): number | null {
+  if (!raw) return null
+  try {
+    const values = JSON.parse(raw) as number[]
+    const value = values[index]
+    if (value != null && value > 0) return value
+  } catch {
+    /* ignore invalid JSON */
+  }
+  return null
 }
 
-function getRowStorageKey(sheetId: string, rowIndex: number) {
-  return `row:${selectedCode.value || 'default'}:${sheetId}:${rowIndex}`
+function getSheetColCount(sheet: TemplateSheet) {
+  return Math.max(sheet.metrics.colCount, 1)
+}
+
+function getSheetRowCount(sheet: TemplateSheet) {
+  return Math.max(sheet.metrics.rowCount, 1)
+}
+
+function readSheetColWidths(sheet: TemplateSheet): number[] {
+  const colCount = getSheetColCount(sheet)
+  const widths = new Array<number>(colCount)
+  for (let colIndex = 0; colIndex < colCount; colIndex += 1) {
+    widths[colIndex] = resolveColumnWidth(sheet, colIndex)
+  }
+  return widths
+}
+
+function readSheetRowHeights(sheet: TemplateSheet): number[] {
+  const rowCount = getSheetRowCount(sheet)
+  const heights = new Array<number>(rowCount)
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    heights[rowIndex] = resolveRowHeight(sheet, rowIndex)
+  }
+  return heights
+}
+
+function writeSheetColWidths(sheet: TemplateSheet, widths: number[]) {
+  sheet.col_widths = JSON.stringify(widths.slice(0, getSheetColCount(sheet)))
+}
+
+function writeSheetRowHeights(sheet: TemplateSheet, heights: number[]) {
+  sheet.row_heights = JSON.stringify(heights.slice(0, getSheetRowCount(sheet)))
+}
+
+const flushSheetLayoutSave = useDebounceFn(async (sheetId: string) => {
+  const code = selectedCode.value
+  const sheet = templateData.value?.sheets.find(item => item.id === sheetId)
+  if (!code || !sheet) return
+  try {
+    await saveSheetLayout(code, sheetId, {
+      col_widths: readSheetColWidths(sheet),
+      row_heights: readSheetRowHeights(sheet),
+    })
+    layoutSaveErrorShown.value = false
+  } catch (error) {
+    if (!layoutSaveErrorShown.value) {
+      layoutSaveErrorShown.value = true
+      showOperationError('保存报表列宽/行高', error)
+    }
+  }
+}, 400)
+
+function scheduleSheetLayoutSave(sheetId: string) {
+  flushSheetLayoutSave(sheetId)
+}
+
+function resolveColumnWidth(sheet: TemplateSheet, colIndex: number) {
+  const cellColWidth = sheet.cells.find(
+    c => c.col_index === colIndex && c.col_width != null && c.col_width > 0
+  )?.col_width
+  if (cellColWidth != null) {
+    return cellColWidth
+  }
+
+  const fromSheet = parseSheetSizeArray(sheet.col_widths, colIndex)
+  if (fromSheet != null) {
+    return fromSheet
+  }
+
+  if (sheet.default_col_width != null && sheet.default_col_width > 0) {
+    return sheet.default_col_width
+  }
+
+  const contentWidth = contentColumnWidths.value.get(sheet.id)?.[colIndex]
+  if (contentWidth != null && contentWidth > 0) return contentWidth
+  return getDefaultColumnWidth(colIndex)
+}
+
+function resolveRowHeight(sheet: TemplateSheet, rowIndex: number) {
+  const cellRowHeight = sheet.cells.find(
+    c => c.row_index === rowIndex && c.row_height != null && c.row_height > 0
+  )?.row_height
+  if (cellRowHeight != null) {
+    return cellRowHeight
+  }
+
+  const fromSheet = parseSheetSizeArray(sheet.row_heights, rowIndex)
+  if (fromSheet != null) {
+    return fromSheet
+  }
+
+  if (sheet.default_row_height != null && sheet.default_row_height > 0) {
+    return sheet.default_row_height
+  }
+
+  return getDefaultRowHeight(rowIndex)
+}
+
+function getColumnWidth(sheetId: string, colIndex: number) {
+  const sheet = templateData.value?.sheets.find(s => s.id === sheetId)
+  if (!sheet) return getDefaultColumnWidth(colIndex)
+  return resolveColumnWidth(sheet, colIndex)
 }
 
 function getDefaultColumnWidth(colIndex: number) {
@@ -1187,53 +1088,66 @@ function getDefaultColumnWidth(colIndex: number) {
   return 160
 }
 
-function getColumnWidth(sheetId: string, colIndex: number) {
-  const sheet = templateData.value?.sheets.find(s => s.id === sheetId)
-  const stored = getStoredColumnWidth(getColumnStorageKey(sheetId, colIndex))
-
-  if (stored != null) {
-    return stored
+// 仅用于列宽测算的取值：与显示值一致，但忽略未保存的草稿，
+// 避免编辑过程中列宽随每次输入跳动。
+function getMeasureCellValue(cell: TemplateCell, _sheetId: string): string {
+  const executionCell = cell.id ? executionCells.value[cell.id] : undefined
+  const formatType = getCellFormatType({ format_text: cell.format_text })
+  if (showExecutionResult.value && executionCell?.display_value) {
+    const raw = executionCell.display_value
+    const formatted = formatType ? formatNumberValue(raw, formatType) : raw
+    if (!showZeroValue.value && isZeroValue(formatted)) return ''
+    return formatted
   }
-
-  // Priority 2: Cell-level col_width override
-  const cellColWidth = sheet?.cells.find(
-    c => c.col_index === colIndex && c.col_width != null && c.col_width > 0
-  )?.col_width
-  if (cellColWidth != null) {
-    return cellColWidth
-  }
-
-  // Priority 3: Database col_widths (JSON array)
-  if (sheet?.col_widths) {
-    try {
-      const widths = JSON.parse(sheet.col_widths) as number[]
-      if (widths[colIndex] != null && widths[colIndex] > 0) {
-        return widths[colIndex]
-      }
-    } catch {
-      // Invalid JSON, continue to next priority
-    }
-  }
-
-  // Priority 4: Database default_col_width
-  if (sheet?.default_col_width != null && sheet.default_col_width > 0) {
-    return sheet.default_col_width
-  }
-
-  // Priority 5: Default
-  return getDefaultColumnWidth(colIndex)
+  const rawValue = cell.text_value || cell.formula_text || ''
+  const formatted = formatType ? formatNumberValue(rawValue, formatType) : rawValue
+  if (!showZeroValue.value && isZeroValue(formatted)) return ''
+  return formatted
 }
+
+// 根据各列实际内容计算的默认列宽（每个 sheet 一份）。
+// 作为 getColumnWidth 的兜底优先级，使列宽贴合内容而非统一 160。
+const contentColumnWidths = computed(() => {
+  const result = new Map<string, number[]>()
+  const sheets = templateData.value?.sheets ?? []
+  for (const sheet of sheets) {
+    const colCount = Math.max(sheet.metrics.colCount, 1)
+    const widths = new Array<number>(colCount).fill(0)
+    for (const cell of sheet.cells) {
+      const colIndex = cell.col_index
+      if (colIndex < 0 || colIndex >= colCount) continue
+      // 跨列单元格宽度由多列分摊，不计入单列内容宽度
+      let colSpan = 1
+      if (cell.merge_info) {
+        try {
+          colSpan = (JSON.parse(cell.merge_info) as { colSpan?: number }).colSpan || 1
+        } catch {
+          colSpan = 1
+        }
+      }
+      if (colSpan > 1) continue
+      const text = getMeasureCellValue(cell, sheet.id)
+      if (!text) continue
+      const measured = estimateTextWidth(text) + 24
+      if (measured > widths[colIndex]) widths[colIndex] = measured
+    }
+    result.set(
+      sheet.id,
+      widths.map((measured, colIndex) =>
+        measured > 0 ? Math.min(320, Math.max(80, Math.round(measured))) : getDefaultColumnWidth(colIndex)
+      )
+    )
+  }
+  return result
+})
 
 function getGridTemplateColumns(sheetId: string, colCount: number) {
   const resolvedColCount = Math.max(colCount, 1)
-  return ['56px']
-    .concat(
-      Array.from(
-        { length: resolvedColCount },
-        (_, colIndex) => `${getColumnWidth(sheetId, colIndex)}px`
-      )
-    )
-    .join(' ')
+  const dataCols = Array.from(
+    { length: resolvedColCount },
+    (_, colIndex) => `${getColumnWidth(sheetId, colIndex)}px`
+  ).join(' ')
+  return showGridHeaders.value ? `56px ${dataCols}` : dataCols
 }
 
 function getSheetGridWidth(sheetId: string, colCount: number) {
@@ -1241,7 +1155,32 @@ function getSheetGridWidth(sheetId: string, colCount: number) {
   const contentWidth = Array.from({ length: resolvedColCount }, (_, colIndex) =>
     getColumnWidth(sheetId, colIndex)
   ).reduce((sum, width) => sum + width, 0)
-  return contentWidth + 56
+  return showGridHeaders.value ? contentWidth + 56 : contentWidth
+}
+
+function getCellGridColumn(cell: { colIndex: number; colSpan: number }) {
+  const base = showGridHeaders.value ? cell.colIndex + 2 : cell.colIndex + 1
+  return `${base} / span ${cell.colSpan}`
+}
+
+function getGridTemplateRows(sheetId: string, rowCount: number) {
+  const resolvedRowCount = Math.max(rowCount, 1)
+  const dataRowHeights = Array.from(
+    { length: resolvedRowCount },
+    (_, rowIndex) => `minmax(${getRowHeight(sheetId, rowIndex)}px, auto)`
+  ).join(' ')
+  return showGridHeaders.value ? `28px ${dataRowHeights}` : dataRowHeights
+}
+
+function getCellGridRow(rowIndex: number, rowSpan: number) {
+  const start = rowIndex + (showGridHeaders.value ? 2 : 1)
+  return rowSpan > 1 ? `${start} / span ${rowSpan}` : `${start}`
+}
+
+function buildSheetVisibleCells(sheet: TemplateSheet) {
+  return buildSheetRows(sheet).flatMap(row =>
+    row.cells.filter(cell => cell.cell_type !== 'merged')
+  )
 }
 
 function getDefaultRowHeight(rowIndex: number) {
@@ -1250,59 +1189,46 @@ function getDefaultRowHeight(rowIndex: number) {
 
 function getRowHeight(sheetId: string, rowIndex: number) {
   const sheet = templateData.value?.sheets.find(s => s.id === sheetId)
-  const stored = getStoredRowHeight(getRowStorageKey(sheetId, rowIndex))
-
-  if (stored != null) {
-    return stored
-  }
-
-  // Priority 2: Cell-level row_height override
-  const cellRowHeight = sheet?.cells.find(
-    c => c.row_index === rowIndex && c.row_height != null && c.row_height > 0
-  )?.row_height
-  if (cellRowHeight != null) {
-    return cellRowHeight
-  }
-
-  // Priority 3: Database row_heights (JSON array)
-  if (sheet?.row_heights) {
-    try {
-      const heights = JSON.parse(sheet.row_heights) as number[]
-      if (heights[rowIndex] != null && heights[rowIndex] > 0) {
-        return heights[rowIndex]
-      }
-    } catch {
-      // Invalid JSON, continue to next priority
-    }
-  }
-
-  // Priority 4: Database default_row_height
-  if (sheet?.default_row_height != null && sheet.default_row_height > 0) {
-    return sheet.default_row_height
-  }
-
-  // Priority 5: Default
-  return getDefaultRowHeight(rowIndex)
+  if (!sheet) return getDefaultRowHeight(rowIndex)
+  return resolveRowHeight(sheet, rowIndex)
 }
 
 function persistColumnWidth(sheetId: string, colIndex: number, width: number) {
-  saveColumnWidth(getColumnStorageKey(sheetId, colIndex), Math.max(72, Math.round(width)))
+  const sheet = templateData.value?.sheets.find(item => item.id === sheetId)
+  if (!sheet) return
+  const widths = readSheetColWidths(sheet)
+  widths[colIndex] = Math.max(72, Math.round(width))
+  writeSheetColWidths(sheet, widths)
+  scheduleSheetLayoutSave(sheetId)
 }
 
 function persistAllColumnWidths(sheetId: string, widths: number[]) {
-  widths.forEach((width, colIndex) => {
-    persistColumnWidth(sheetId, colIndex, width)
-  })
+  const sheet = templateData.value?.sheets.find(item => item.id === sheetId)
+  if (!sheet) return
+  writeSheetColWidths(
+    sheet,
+    widths.map((width, colIndex) => Math.max(72, Math.round(width || readSheetColWidths(sheet)[colIndex])))
+  )
+  scheduleSheetLayoutSave(sheetId)
 }
 
 function persistRowHeight(sheetId: string, rowIndex: number, height: number) {
-  saveRowHeight(getRowStorageKey(sheetId, rowIndex), Math.max(28, Math.round(height)))
+  const sheet = templateData.value?.sheets.find(item => item.id === sheetId)
+  if (!sheet) return
+  const heights = readSheetRowHeights(sheet)
+  heights[rowIndex] = Math.max(28, Math.round(height))
+  writeSheetRowHeights(sheet, heights)
+  scheduleSheetLayoutSave(sheetId)
 }
 
 function persistAllRowHeights(sheetId: string, heights: number[]) {
-  heights.forEach((height, rowIndex) => {
-    persistRowHeight(sheetId, rowIndex, height)
-  })
+  const sheet = templateData.value?.sheets.find(item => item.id === sheetId)
+  if (!sheet) return
+  writeSheetRowHeights(
+    sheet,
+    heights.map((height, rowIndex) => Math.max(28, Math.round(height || readSheetRowHeights(sheet)[rowIndex])))
+  )
+  scheduleSheetLayoutSave(sheetId)
 }
 
 function estimateTextWidth(value: string) {
@@ -2097,6 +2023,11 @@ async function executeTemplate() {
   }
 }
 
+/** 直接使用页头的年/月筛选生成报表，不再弹窗（页头已提供期间输入）。 */
+async function handleGenerateReport() {
+  await executeTemplate()
+}
+
 async function promptAndExecuteTemplate(forcePrompt = true) {
   if (!selectedCode.value) return false
   if (forcePrompt && reportGeneratePromptVisible.value) return false
@@ -2190,6 +2121,9 @@ async function promptAndExecuteTemplate(forcePrompt = true) {
 }
 
 async function requestDirectReportExecution() {
+  const meta = directReportMeta.value
+  if (!meta?.autoRun) return
+
   const currentPath = route.fullPath
   if (
     !isDirectReportMode.value ||
@@ -2205,7 +2139,7 @@ async function requestDirectReportExecution() {
 
   hasPromptedDirectExecution.value = true
   hasTriggeredAutoRunForPath.value = currentPath
-  await promptAndExecuteTemplate(true)
+  await executeTemplate()
 }
 
 async function insertRow() {
@@ -2445,6 +2379,7 @@ function resetCreateReportForm() {
   createFile.value = null
   createFileList.value = []
   createSubmitting.value = false
+  createUploadRef.value?.clearFiles()
 }
 
 function openCreateReportDialog() {
@@ -2526,24 +2461,144 @@ async function submitCreateReport() {
 
 const createDialogVisible = ref(false)
 const createSubmitting = ref(false)
+const createUploadRef = ref<any>(null)
 const createForm = ref({ code: '', name: '' })
 const createFile = ref<File | null>(null)
 const createFileList = ref<UploadUserFile[]>([])
 
 const editMetaDialogVisible = ref(false)
 const editMetaSubmitting = ref(false)
-const editMetaForm = ref<{ code: string; name: string }>({ code: '', name: '' })
+const editMetaForm = ref<{ code: string }>({ code: '' })
+
+const editNameDialogVisible = ref(false)
+const editNameSubmitting = ref(false)
+const editNameForm = ref<{ name: string }>({ name: '' })
+
+const sortOrderDialogVisible = ref(false)
+const sortOrderSubmitting = ref(false)
+const sortDraft = ref<TemplateListItem[]>([])
+
+function isReportNavVisible(row: Pick<TemplateListItem, 'is_enabled'>) {
+  return row.is_enabled === true || (row.is_enabled as unknown) === 1
+}
+
+const sortDraftNavPreview = computed(() =>
+  sortDraft.value.filter(isReportNavVisible).map(row => row.name)
+)
+
+const sortDraftNavMismatchHint = computed(() => {
+  if (sortDraft.value.length === 0) return ''
+  const firstEnabled = sortDraft.value.find(isReportNavVisible)
+  if (!firstEnabled) return '当前没有已启用的报表，侧栏「报表管理」下不会显示任何动态报表。'
+  const firstRow = sortDraft.value[0]
+  if (firstRow && !isReportNavVisible(firstRow) && firstEnabled.code !== firstRow.code) {
+    return `「${firstRow.name}」未启用，侧栏第一项将是「${firstEnabled.name}」。可点击「导航」列启用该报表。`
+  }
+  return ''
+})
+
+function buildSortDraftFromTemplates() {
+  return [...templates.value].sort(
+    (a, b) =>
+      Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) || a.code.localeCompare(b.code)
+  )
+}
+
+function openSortOrderDialog() {
+  if (templates.value.length === 0) {
+    showError('暂无报表模板')
+    return
+  }
+  sortDraft.value = buildSortDraftFromTemplates()
+  sortOrderDialogVisible.value = true
+}
+
+function applySortDraftOrder(draft: TemplateListItem[]) {
+  sortDraft.value = draft.map((row, rowIndex) => ({
+    ...row,
+    sort_order: rowIndex + 1,
+  }))
+}
+
+function moveSortDraftItem(index: number, delta: -1 | 1) {
+  const nextIndex = index + delta
+  if (nextIndex < 0 || nextIndex >= sortDraft.value.length) return
+  const draft = [...sortDraft.value]
+  const [item] = draft.splice(index, 1)
+  draft.splice(nextIndex, 0, item)
+  applySortDraftOrder(draft)
+}
+
+function pinSortDraftItem(index: number) {
+  if (index <= 0 || index >= sortDraft.value.length) return
+  const draft = [...sortDraft.value]
+  const [item] = draft.splice(index, 1)
+  draft.unshift(item)
+  applySortDraftOrder(draft)
+}
+
+function setSortDraftEnabled(index: number, enabled: boolean) {
+  const row = sortDraft.value[index]
+  if (!row || isReportNavVisible(row) === enabled) return
+  const draft = [...sortDraft.value]
+  draft[index] = { ...row, is_enabled: enabled }
+  sortDraft.value = draft
+}
+
+async function submitSortOrder() {
+  if (sortDraft.value.length === 0) return
+  sortOrderSubmitting.value = true
+  try {
+    const { updateReportTemplateSortOrder, updateReportTemplateMeta } = await import(
+      '@/api/reportTemplate'
+    )
+    const orders = sortDraft.value.map((item, index) => ({
+      code: item.code,
+      sort_order: index + 1,
+    }))
+    await updateReportTemplateSortOrder(orders)
+
+    const originalEnabledMap = new Map(
+      templates.value.map(item => [item.code, isReportNavVisible(item)])
+    )
+    const enabledChanges = sortDraft.value.filter(item => {
+      const original = originalEnabledMap.get(item.code)
+      return original !== undefined && original !== isReportNavVisible(item)
+    })
+    for (const item of enabledChanges) {
+      await updateReportTemplateMeta(item.code, { is_enabled: isReportNavVisible(item) })
+    }
+
+    await fetchTemplateList()
+
+    const currentDraft = sortDraft.value.find(item => item.code === selectedCode.value)
+    if (currentDraft && templateData.value) {
+      templateData.value.definition.is_enabled = isReportNavVisible(currentDraft)
+    }
+
+    const hint = sortDraftNavMismatchHint.value
+    if (hint && hint.includes('未启用')) {
+      showSuccess('已保存。未启用的报表不会出现在侧栏，可点击「导航」列启用。')
+    } else {
+      showSuccess(enabledChanges.length > 0 ? '导航顺序与启用状态已保存' : '导航顺序已保存')
+    }
+    sortOrderDialogVisible.value = false
+    window.dispatchEvent(new Event('report-templates-changed'))
+  } catch (error) {
+    showOperationError('保存导航顺序', error)
+  } finally {
+    sortOrderSubmitting.value = false
+  }
+}
 
 const enabledSwitching = ref(false)
 const isEnabledModel = computed<boolean>({
   get: () => {
     const def = templateData.value?.definition
     if (!def) return true
-    // 兼容后端可能返回 0/1 或 true/false
-    return def.is_enabled === false || (def.is_enabled as unknown) === 0 ? false : true
+    return def.is_enabled !== false && (def.is_enabled as unknown) !== 0
   },
   set: (value: boolean) => {
-    // 立即更新本地状态，让 UI 切换立即生效；@change 中调 API 失败时再回滚
     if (templateData.value?.definition) {
       templateData.value.definition.is_enabled = value
     }
@@ -2552,7 +2607,7 @@ const isEnabledModel = computed<boolean>({
 
 async function handleEnabledChange(value: boolean) {
   if (!selectedCode.value || !templateData.value) return
-  const previous = !value // setter 已经把当前值改成了 value，所以旧值是 !value
+  const previous = !value
   enabledSwitching.value = true
   try {
     const { updateReportTemplateMeta } = await import('@/api/reportTemplate')
@@ -2583,15 +2638,57 @@ function openEditMetaDialog() {
   }
   editMetaForm.value = {
     code: templateData.value.definition.code || selectedCode.value,
-    name: templateData.value.definition.name || '',
   }
   editMetaDialogVisible.value = true
+}
+
+function openEditNameDialog() {
+  if (!selectedCode.value || !templateData.value) {
+    showError('请先选择一个报表模板')
+    return
+  }
+  editNameForm.value = {
+    name: templateData.value.definition.name || '',
+  }
+  editNameDialogVisible.value = true
+}
+
+async function submitEditName() {
+  if (!selectedCode.value || !templateData.value) return
+  const nextName = (editNameForm.value.name || '').trim()
+  if (!nextName) {
+    showError('请输入报表名称')
+    return
+  }
+  if (nextName === templateData.value.definition.name) {
+    editNameDialogVisible.value = false
+    return
+  }
+
+  editNameSubmitting.value = true
+  try {
+    const { updateReportTemplateMeta } = await import('@/api/reportTemplate')
+    const { data, message } = await updateReportTemplateMeta(selectedCode.value, {
+      name: nextName,
+    })
+
+    templateData.value.definition.name = data.name
+    const item = templates.value.find(t => t.code === selectedCode.value)
+    if (item) item.name = data.name
+
+    showSuccess(message || '名称已更新')
+    editNameDialogVisible.value = false
+    window.dispatchEvent(new Event('report-templates-changed'))
+  } catch (error) {
+    showOperationError('修改报表名称', error)
+  } finally {
+    editNameSubmitting.value = false
+  }
 }
 
 async function submitEditMeta() {
   if (!selectedCode.value) return
   const nextCode = (editMetaForm.value.code || '').trim()
-  const nextName = (editMetaForm.value.name || '').trim()
   if (!nextCode) {
     showError('请输入报表编码')
     return
@@ -2600,13 +2697,16 @@ async function submitEditMeta() {
     showError('编码只能包含字母、数字、下划线')
     return
   }
+  if (nextCode === selectedCode.value) {
+    editMetaDialogVisible.value = false
+    return
+  }
 
   editMetaSubmitting.value = true
   try {
     const { updateReportTemplateMeta } = await import('@/api/reportTemplate')
     const { data, message } = await updateReportTemplateMeta(selectedCode.value, {
       code: nextCode,
-      name: nextName,
     })
 
     if (data.swapped && data.swapWith) {
@@ -2734,24 +2834,113 @@ async function deleteSheet(sheetId: string) {
 
 function handlePrint() {
   try {
-    // 关掉可能遮挡的弹窗
     document.querySelectorAll('.el-overlay').forEach(el => el.remove())
-    const card = document.querySelector('.el-card') as HTMLElement | null
+    const body = document.querySelector('.report-body') as HTMLElement | null
     const grid = document.querySelector('.sheet-grid') as HTMLElement | null
-    if (grid && card) {
-      const a4Width = 718 // A4 可用宽度 190mm ≈ 718px
+    if (grid && body) {
+      // A4 纵向去除 5mm 页边距后的可用区（96dpi 下的 CSS 像素），留少量余量
+      const a4Width = 718
+      const a4Height = 1040
       const gridWidth = grid.scrollWidth
-      if (gridWidth > a4Width) {
-        const scale = a4Width / gridWidth
-        card.style.zoom = String(scale)
+      const gridHeight = grid.scrollHeight
+      const widthScale = gridWidth > 0 ? a4Width / gridWidth : 1
+      const heightScale = gridHeight > 0 ? a4Height / gridHeight : 1
+      // 取较小缩放比，保证整张表完整落在一页 A4 上；内容偏小时不放大
+      const scale = Math.min(widthScale, heightScale, 1)
+      if (scale < 1) {
+        body.style.zoom = String(scale)
       }
     }
     window.print()
-  } catch (_) { /* 打印出错不影响 */ }
-  // 恢复
-  const card = document.querySelector('.el-card') as HTMLElement | null
-  if (card) card.style.zoom = ''
+  } catch (_) {
+    /* 打印出错不影响 */
+  }
+  const body = document.querySelector('.report-body') as HTMLElement | null
+  if (body) body.style.zoom = ''
 }
+
+function openCashFlowCompare() {
+  router.push({
+    path: '/report/cash-flow',
+    query: {
+      year: String(filters.value.year),
+      period: String(filters.value.period),
+      scope: 'month',
+    },
+  })
+}
+
+function handleDesignTemplateCommand(command: string) {
+  if (command === 'create') openCreateReportDialog()
+  else if (command === 'import') triggerImport()
+  else if (command === 'sort') openSortOrderDialog()
+  else if (command === 'edit-name') openEditNameDialog()
+  else if (command === 'edit-meta') openEditMetaDialog()
+  else if (command === 'delete') handleDeleteTemplate()
+}
+
+const designActions = {
+  handleTemplateChange,
+  handleEnabledChange,
+  fetchTemplateDetail,
+  saveTemplateChanges,
+  handleGenerateReport,
+  handleExport,
+  applyTopEditorEdit,
+  applyAlignmentToSelection,
+  applyVerticalAlignToSelection,
+  applyFontFamilyToSelection,
+  applyFontSizeToSelection,
+  adjustFontSizeToSelection,
+  toggleBoldToSelection,
+  toggleUnderlineToSelection,
+  applyBorderToSelection,
+  applyBorderColorToSelection,
+  applyBorderWidthToSelection,
+  applyFormatToSelection,
+  insertRow,
+  deleteRow,
+  insertCol,
+  deleteCol,
+  mergeSelection,
+  unmergeSelection,
+}
+
+provide(REPORT_GRID_KEY, {
+  templateData,
+  activeSheetName,
+  isBalanceTemplate,
+  isDirectReportMode,
+  showGridHeaders,
+  bulkSelectionMode,
+  selectedColIndex,
+  selectedRowIndex,
+  toColumnName,
+  buildSheetRows,
+  buildSheetVisibleCells,
+  getGridTemplateColumns,
+  getGridTemplateRows,
+  getSheetGridWidth,
+  toggleSelectAll,
+  selectColumn,
+  selectRow,
+  autoFitColumn,
+  autoFitRow,
+  startColumnResize,
+  startRowResize,
+  isCellStructureSelected,
+  selectGridCell,
+  startDragSelection,
+  setActiveEditorRef,
+  handleInlineInput,
+  applyInlineEdit,
+  cancelInlineEdit,
+  handleGridPaste,
+  handleSheetChange,
+  handleSheetEdit,
+  getCellGridColumn,
+  getCellGridRow,
+})
 
 async function handleExport() {
   if (!selectedCode.value || !templateData.value) return
@@ -2774,6 +2963,14 @@ async function handleExport() {
     showOperationError('导出报表', error)
   }
 }
+
+watch(
+  isDirectReportMode,
+  value => {
+    if (value) showExecutionResult.value = true
+  },
+  { immediate: true }
+)
 
 watch(
   () => route.fullPath,
@@ -2848,485 +3045,6 @@ onMounted(async () => {
   }
 })
 </script>
-
-<style scoped>
-.page {
-  padding: 16px;
-  background: #f5f7fb;
-}
-
-.page-header {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 16px;
-}
-
-.page-header h3 {
-  margin: 0;
-}
-
-.sub-title {
-  margin: 8px 0 0;
-  color: #606266;
-}
-
-.filter-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-  padding: 10px 12px;
-  background: #ffffff;
-  border: 1px solid #e4e8ed;
-  border-radius: 10px;
-  justify-content: flex-start;
-}
-
-.formula-edit-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 2px;
-  flex-wrap: wrap;
-  padding: 8px 12px;
-  background: #ffffff;
-  border: 1px solid #e4e8ed;
-  border-radius: 10px;
-}
-
-.formula-label {
-  color: #5d6678;
-  font-size: 13px;
-  min-width: 110px;
-  font-weight: 600;
-}
-
-.formula-editor-input {
-  width: min(980px, calc(100vw - 360px));
-  min-width: 460px;
-}
-
-.formula-edit-row :deep(.el-textarea__inner) {
-  border-radius: 8px;
-  line-height: 1.45;
-}
-
-.formula-edit-row :deep(.el-textarea.is-disabled .el-textarea__inner) {
-  color: #a0a8b8;
-  background: #f5f7fa;
-}
-
-.toolbar-row {
-  display: flex;
-  gap: 12px;
-  align-items: flex-end;
-  flex-wrap: wrap;
-  margin-top: 2px;
-  padding: 10px 12px;
-  background: #ffffff;
-  border: 1px solid #e4e8ed;
-  border-radius: 10px;
-  justify-content: flex-start;
-}
-
-.toolbar-group {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 6px 8px;
-  border: 1px solid #edf1f6;
-  border-radius: 8px;
-  background: #fafbfd;
-}
-
-.toolbar-group-label {
-  font-size: 11px;
-  color: #8b95a7;
-  font-weight: 600;
-  letter-spacing: 0.5px;
-  line-height: 1;
-}
-
-.toolbar-sep {
-  display: inline-block;
-  width: 1px;
-  height: 20px;
-  background: #dcdfe6;
-  margin: 0 4px;
-  vertical-align: middle;
-}
-
-.editor-layout {
-  display: block;
-}
-
-.report-page {
-  height: calc(100vh - 48px);
-  overflow-y: auto;
-}
-
-.report-header {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: #f0f2f5;
-  padding: 0 2px 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid #e4e8ed;
-  align-items: flex-start !important;
-}
-
-.grid-panel {
-  min-width: 0;
-  width: 100%;
-}
-
-.sheet-tabs :deep(.el-tabs__content) {
-  overflow: visible;
-}
-
-.sheet-tabs :deep(.el-tabs__item) {
-  font-size: 18px;
-  font-weight: 500;
-}
-
-.sheet-tabs :deep(.el-tabs__nav-wrap::after) {
-  height: 2px;
-}
-
-.sheet-tabs-no-header :deep(.el-tabs__header) {
-  display: none;
-}
-
-.report-title-lg {
-  font-size: 22px;
-  font-weight: 600;
-  color: #303030;
-  margin-bottom: 4px;
-}
-
-.report-subtitle {
-  font-size: 13px;
-  color: #909399;
-  margin-bottom: 8px;
-}
-
-.report-info-row {
-  display: flex;
-  gap: 32px;
-  font-size: 13px;
-  color: #606266;
-}
-
-.report-info-val {
-  color: #303030;
-}
-
-.report-footer {
-  display: flex;
-  justify-content: flex-end;
-  gap: 40px;
-  padding-top: 12px;
-  margin-top: 8px;
-  font-size: 13px;
-  color: #606266;
-  border-top: 1px solid #303030;
-}
-
-.report-footer-item {
-  min-width: 100px;
-}
-
-.sheet-grid-wrap {
-  overflow: auto;
-  border: 1px solid #dfe6ef;
-  border-radius: 10px;
-  background: #ffffff;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.8);
-}
-
-.sheet-grid {
-  display: flex;
-  flex-direction: column;
-  background: #fff;
-}
-
-.sheet-grid-header-row,
-.sheet-grid-row {
-  display: grid;
-}
-
-.sheet-grid-balance {
-}
-
-.sheet-grid-balance .cell,
-.sheet-grid-balance .column-header-cell,
-.sheet-grid-balance .row-index {
-  box-sizing: border-box;
-}
-
-.sheet-grid-balance .row-index {
-  min-width: 56px;
-  width: 56px;
-}
-
-.row-index {
-  background: #f5f7fa;
-  min-width: 56px;
-  width: 56px;
-  min-height: 28px;
-  border: 1px solid #ebeef5;
-  border-top: none;
-  border-right-color: #dcdfe6;
-  text-align: center;
-  color: #909399;
-  z-index: 2;
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  padding-top: 6px;
-  box-sizing: border-box;
-  overflow: visible;
-  position: relative;
-}
-
-.row-index-header {
-  top: 0;
-  z-index: 4;
-  border-top: 1px solid #ebeef5;
-}
-
-.select-all-corner {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  cursor: pointer;
-}
-
-.select-all-corner-mark {
-  width: 12px;
-  height: 12px;
-  border-top: 2px solid #c0c4cc;
-  border-left: 2px solid #c0c4cc;
-  transform: rotate(45deg);
-}
-
-.select-all-corner.active,
-.select-all-corner:hover {
-  background: #ecf5ff;
-}
-
-.select-all-corner.active .select-all-corner-mark,
-.select-all-corner:hover .select-all-corner-mark {
-  border-color: #409eff;
-}
-
-.column-header-cell {
-  position: sticky;
-  top: 0;
-  z-index: 3;
-  background: #f5f7fa;
-  color: #909399;
-  font-weight: 500;
-  text-align: center;
-  padding: 0;
-  border: 1px solid #ebeef5;
-  border-top: none;
-  border-left: none;
-  overflow: visible;
-}
-
-.column-header-content {
-  position: relative;
-  overflow: visible;
-}
-
-.column-header-cell.active,
-.row-index.active {
-  background: #ecf5ff;
-  color: #409eff;
-}
-
-.column-header-cell.active .column-header-content,
-.row-index.active .row-index-content {
-  font-weight: 600;
-}
-
-.row-index-content {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 100%;
-  overflow: visible;
-}
-
-.row-resize-handle {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: -4px;
-  height: 8px;
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: row-resize;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.row-index:hover .row-resize-handle,
-.row-index:focus-within .row-resize-handle {
-  opacity: 1;
-}
-
-.row-resize-handle::after {
-  content: '';
-  position: absolute;
-  left: 10px;
-  right: 10px;
-  top: 3px;
-  height: 2px;
-  border-radius: 999px;
-  background: rgba(64, 158, 255, 0.45);
-}
-
-.row-resize-handle:hover::after,
-.row-resize-handle:focus-visible::after {
-  background: #409eff;
-}
-
-.cell {
-  white-space: pre-wrap;
-  word-break: break-word;
-  font-size: 13px;
-  cursor: pointer;
-  border: 1px solid #ebeef5;
-  border-top: none;
-  border-left: none;
-  padding: 6px 8px;
-  vertical-align: top;
-  box-sizing: border-box;
-}
-
-.cell.merged {
-  display: flex;
-  align-items: center;
-}
-
-.cell.merged .cell-content {
-  flex: 1;
-  min-width: 0;
-}
-
-.cell-content {
-  min-height: 20px;
-}
-
-.cell-formula {
-  background: #fdf6ec;
-  color: #b88230;
-}
-
-.cell-merged {
-  display: none;
-}
-
-.cell-text,
-.cell-number {
-  background: #fff;
-}
-
-.cell.selected,
-.cell.bulk-selected {
-  outline: 2px solid #2f7df5;
-  outline-offset: -2px;
-}
-
-.cell.editing {
-  padding: 0;
-  background: #eef5ff;
-}
-
-.cell-editor-input {
-  width: 100%;
-  height: 100%;
-  min-height: 56px;
-  border: none;
-  outline: none;
-  resize: vertical;
-  padding: 8px;
-  box-sizing: border-box;
-  font: inherit;
-  line-height: 1.5;
-  background: #f7fbff;
-}
-
-.cell.error {
-  background: #fef0f0;
-  color: #c45656;
-}
-
-.cell.empty {
-  background: #fafafa;
-}
-
-.column-resize-handle {
-  position: absolute;
-  top: 0;
-  right: -6px;
-  width: 12px;
-  height: 100%;
-  padding: 0;
-  border: none;
-  background: transparent;
-  cursor: col-resize;
-  opacity: 0;
-  transition: opacity 0.15s ease;
-}
-
-.column-header-cell:hover .column-resize-handle,
-.column-header-cell:focus-within .column-resize-handle {
-  opacity: 1;
-}
-
-.column-resize-handle::after {
-  content: '';
-  position: absolute;
-  top: 6px;
-  bottom: 6px;
-  left: 5px;
-  width: 2px;
-  border-radius: 999px;
-  background: rgba(64, 158, 255, 0.5);
-}
-
-.column-resize-handle:hover::after,
-.column-resize-handle:focus-visible::after {
-  background: #409eff;
-}
-
-@media (max-width: 1200px) {
-  .formula-editor-input {
-    width: 100%;
-    min-width: 0;
-  }
-
-  .toolbar-row {
-    gap: 8px;
-  }
-
-  .toolbar-group {
-    flex: 1 1 260px;
-    min-width: 240px;
-  }
-
-  .sheet-grid-balance {
-  }
-}
-</style>
 
 <style>
 .report-generate-message-box {
@@ -3442,103 +3160,48 @@ onMounted(async () => {
   box-shadow: 0 0 0 3px rgba(64, 158, 255, 0.12);
 }
 
-.cell-border-all {
-  /* 默认边框，继承 .cell 的 border */
-}
-
-.cell-border-none {
-  border: none !important;
-}
-
-.cell-border-bottom {
-  border: none !important;
-  border-bottom: 1px solid #ebeef5 !important;
-}
-
-.cell-border-top {
-  border: none !important;
-  border-top: 1px solid #ebeef5 !important;
-}
-
-.cell-border-left {
-  border: none !important;
-  border-left: 1px solid #ebeef5 !important;
-}
-
-.cell-border-right {
-  border: none !important;
-  border-right: 1px solid #ebeef5 !important;
-}
-
-@media print {
-  @page {
-    margin: 5mm;
-    size: A4 portrait;
-  }
-  body {
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
-  }
-  :deep(.el-aside),
-  :deep(.el-header),
-  .page-header,
-  .el-card :deep(.el-card__header) {
-    display: none !important;
-  }
-  .page {
-    padding: 0 !important;
-    background: #fff !important;
-  }
-  .el-card {
-    box-shadow: none !important;
-    border: none !important;
-    background: transparent !important;
-  }
-  :deep(.el-tabs__nav-wrap) {
-    display: none !important;
-  }
-  .row-index,
-  .column-header-cell,
-  .select-all-corner {
-    display: none !important;
-  }
-  :deep(.el-tabs__content) {
-    overflow: visible !important;
-  }
-  :deep(.sheet-grid-wrap) {
-    overflow: visible !important;
-  }
-  :deep(.sheet-grid) {
-    width: 100% !important;
-  }
-  :deep(.cell) {
-    font-size: 7.5pt !important;
-    line-height: 1.3 !important;
-    padding: 1px 2px !important;
-    border-color: #000 !important;
-  }
-  :deep(.cell-content) {
-    white-space: nowrap !important;
-  }
-  :deep(.el-tab-pane) {
-    page-break-after: auto;
-  }
-}
-
-.cell-border-outer {
-  border: 1px solid #303030 !important;
-}
-
-.cell-border-header {
-  border: none !important;
-  border-bottom: 2px solid #303030 !important;
-}
-
 .create-report-form .form-tip {
   margin-top: 6px;
   font-size: 12px;
   color: #909399;
   line-height: 1.4;
+}
+
+.sort-order-tip {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: #606266;
+  line-height: 1.5;
+}
+
+.sort-order-alert {
+  margin-bottom: 12px;
+}
+
+.sort-order-preview {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  color: #303133;
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  line-height: 1.5;
+}
+
+.sort-order-table :deep(.el-table__cell) {
+  padding: 6px 0;
+}
+
+.sort-order-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  white-space: nowrap;
+}
+
+.sort-order-actions .el-button {
+  padding: 0 4px;
 }
 
 .create-report-upload {

@@ -3,15 +3,13 @@
     <div class="page-header">
       <div class="header-left">
         <h3>辅助项目明细账</h3>
-        <div class="filter-summary" @click="drawerVisible = true">
-          <el-icon><Filter /></el-icon>
-          <span v-if="hasActiveFilters" class="summary-text">
-            {{ filterSummaryText }}
-          </span>
-          <span v-else class="placeholder">点击设置筛选条件</span>
+        <div class="filter-hint">
+          <span class="filter-hint-label">当前筛选：</span>
+          <span class="filter-hint-text">{{ filterHintText }}</span>
         </div>
       </div>
       <div class="header-right">
+        <DrillDownReturnButton />
         <el-button type="primary" @click="drawerVisible = true">
           <el-icon><Filter /></el-icon>
           筛选
@@ -19,16 +17,44 @@
 
         <el-divider direction="vertical" />
 
+        <el-popover placement="bottom-start" :width="280" trigger="click">
+          <template #reference>
+            <el-button plain size="small">
+              <el-icon><Setting /></el-icon>
+              列设置
+            </el-button>
+          </template>
+          <div class="aux-detail-col-settings">
+            <div
+              v-for="group in columnSettingGroups"
+              :key="group.name"
+              class="col-settings-group"
+            >
+              <div class="col-settings-group-title">{{ group.name }}</div>
+              <div
+                v-for="col in group.cols"
+                :key="col.prop"
+                class="col-settings-item"
+              >
+                <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
+                <span>{{ col.label }}</span>
+              </div>
+            </div>
+          </div>
+        </el-popover>
+
         <el-button plain :loading="loadingAll" @click="handleLoadAll">
           全部加载
         </el-button>
 
-        <el-button plain @click="exportData">
+        <el-button plain :loading="exportProgress.visible" :disabled="exportProgress.visible" @click="exportData">
           <el-icon><Download /></el-icon>
           导出 Excel
         </el-button>
       </div>
     </div>
+
+    <AccountScopeAlert />
 
     <!-- 筛选抽屉 -->
     <el-drawer
@@ -62,7 +88,7 @@
         <div class="filter-item">
           <label>辅助项目</label>
           <el-input
-            v-if="auxItemsByCategory.length > 0"
+            v-if="hasAuxCategorySelected"
             v-model="auxItemSearchKeyword"
             placeholder="快速检索项目（编码/名称）"
             clearable
@@ -72,9 +98,21 @@
               <el-icon><Search /></el-icon>
             </template>
           </el-input>
-          <div class="checkbox-list" v-if="auxItemsByCategory.length > 0">
+          <div
+            v-if="hasAuxCategorySelected"
+            v-loading="auxItemsLoading || auxItemSearching"
+            class="checkbox-list"
+          >
             <template v-for="catGroup in filteredAuxItemsByCategory" :key="catGroup.categoryId">
-              <div class="category-group" v-if="catGroup.items.length > 0">
+              <div class="category-group" v-if="catGroup.needsSearch">
+                <div class="category-header">
+                  <div class="category-label">{{ catGroup.categoryName }}</div>
+                </div>
+                <div class="empty-hint">
+                  共 {{ catGroup.totalCount.toLocaleString() }} 个项目，请输入上方关键词检索后勾选
+                </div>
+              </div>
+              <div class="category-group" v-else-if="catGroup.items.length > 0">
                 <div class="category-header">
                   <div class="category-label">{{ catGroup.categoryName }}</div>
                   <div class="category-actions">
@@ -83,23 +121,29 @@
                     <el-button link size="small" @click="clearCategorySelection(catGroup.categoryId)">清空</el-button>
                   </div>
                 </div>
-                <div class="category-items">
+                <div class="category-items cw-grouped-checkbox-items cw-grouped-checkbox-items--stack">
                   <el-checkbox
                     v-for="item in catGroup.items"
                     :key="item.id"
-                    :label="item.id"
                     v-model="itemCheckMap[item.id]"
                     @change="onItemCheckChange"
                   >
                     {{ item.code }} {{ item.name }}
                   </el-checkbox>
                 </div>
+                <div v-if="catGroup.truncated" class="empty-hint">
+                  匹配结果较多，仅显示前 {{ AUX_FILTER_SEARCH_LIMIT }} 项，请输入更精确的关键词
+                </div>
+              </div>
+              <div class="category-group" v-else>
+                <div class="category-header">
+                  <div class="category-label">{{ catGroup.categoryName }}</div>
+                </div>
+                <div class="empty-hint">无匹配项目</div>
               </div>
             </template>
           </div>
-          <div v-else class="empty-hint">
-            {{ filters.aux_category_ids && filters.aux_category_ids.length > 0 ? '该类别下暂无项目' : '请先选择辅助类别' }}
-          </div>
+          <div v-else class="empty-hint">请先选择辅助类别</div>
         </div>
 
         <div class="filter-item">
@@ -195,31 +239,42 @@
       </template>
     </el-drawer>
 
-    <div v-loading="loading" class="table-summary-scroll table-summary-scroll--wide">
+    <div v-loading="loading" ref="tableContainerRef" class="table-summary-scroll table-summary-scroll--wide table-summary-scroll--flow">
     <el-table
       :key="auxTableColumnKey"
       ref="tableRef"
+      :height="tableHeight"
       :data="list"
       :style="{ width: `${auxTableWidth}px` }"
       :fit="false"
-      stripe
       border
       size="small"
       class="compact-data-table"
       highlight-current-row
       show-summary
       :summary-method="getSummaries"
+      :row-class-name="getRowClassName"
       @header-dragend="onDragEnd"
       @row-dblclick="handleLedgerRowDblClick"
     >
-      <el-table-column prop="category_name" label="辅助类别" :width="colWidth('category_name', 120)" />
-      <el-table-column prop="aux_name" label="辅助项目" :width="colWidth('aux_name', 140)" />
+      <el-table-column
+        v-if="getColVisible('category_name')"
+        prop="category_name"
+        label="辅助类别"
+        :width="colWidth('category_name', 120)"
+      />
+      <el-table-column
+        v-if="getColVisible('aux_name')"
+        prop="aux_name"
+        label="辅助项目"
+        :width="colWidth('aux_name', 140)"
+      />
       
       <!-- 动态辅助类别自定义字段列 -->
       <template v-for="cat in activeCategoryColumns" :key="cat.code">
         <el-table-column
-          v-for="field in cat.fields"
-          :key="field.field_key"
+          v-for="field in cat.fields.filter(f => getColVisible(`${cat.code}_${f.field_key}`))"
+          :key="`${cat.code}_${field.field_key}`"
           :column-key="`${cat.code}_${field.field_key}`"
           :label="field.field_name"
           :width="colWidth(`${cat.code}_${field.field_key}`, 120)"
@@ -230,31 +285,101 @@
         </el-table-column>
       </template>
       
-      <el-table-column prop="voucher_date" label="日期" :width="colWidth('voucher_date', 100)" />
-      <el-table-column prop="voucher_no" label="凭证号" :width="colWidth('voucher_no', 130)" />
-      <el-table-column prop="account_code" label="科目编码" :width="colWidth('account_code', 100)" />
-      <el-table-column prop="account_name" label="科目名称" :width="colWidth('account_name', 160)" />
-      <el-table-column prop="summary" label="摘要" :width="colWidth('summary', 180)" />
-      <el-table-column column-key="借方" label="借方" :width="colWidth('借方', 120)" align="right">
+      <el-table-column
+        v-if="getColVisible('voucher_date')"
+        prop="voucher_date"
+        label="日期"
+        :width="colWidth('voucher_date', 100)"
+      />
+      <el-table-column
+        v-if="getColVisible('voucher_no')"
+        prop="voucher_no"
+        label="凭证号"
+        :width="colWidth('voucher_no', 130)"
+      />
+      <el-table-column
+        v-if="getColVisible('account_code')"
+        prop="account_code"
+        label="科目编码"
+        :width="colWidth('account_code', 100)"
+      />
+      <el-table-column
+        v-if="getColVisible('account_name')"
+        prop="account_name"
+        label="科目名称"
+        :width="colWidth('account_name', 160)"
+      />
+      <el-table-column
+        v-if="getColVisible('summary')"
+        prop="summary"
+        label="摘要"
+        :width="colWidth('summary', 180)"
+      />
+      <el-table-column
+        v-if="getColVisible('借方')"
+        column-key="借方"
+        label="借方"
+        :width="colWidth('借方', 120)"
+        align="right"
+      >
         <template #default="{ row }">
-          <span v-if="!row.is_opening_balance && row.direction === 'debit'">{{ formatAmount(row.amount) }}</span>
+          <template v-if="row.is_monthly_subtotal">
+            {{ formatAmount(row.monthly_debit) }}
+          </template>
+          <template v-else-if="row.is_yearly_subtotal">
+            {{ formatAmount(row.yearly_debit) }}
+          </template>
+          <template v-else>
+            <span v-if="row.direction === 'debit'">{{ formatAmount(row.amount) }}</span>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column column-key="贷方" label="贷方" :width="colWidth('贷方', 120)" align="right">
+      <el-table-column
+        v-if="getColVisible('贷方')"
+        column-key="贷方"
+        label="贷方"
+        :width="colWidth('贷方', 120)"
+        align="right"
+      >
         <template #default="{ row }">
-          <span v-if="!row.is_opening_balance && row.direction === 'credit'">{{ formatAmount(row.amount) }}</span>
+          <template v-if="row.is_monthly_subtotal">
+            {{ formatAmount(row.monthly_credit) }}
+          </template>
+          <template v-else-if="row.is_yearly_subtotal">
+            {{ formatAmount(row.yearly_credit) }}
+          </template>
+          <template v-else>
+            <span v-if="row.direction === 'credit'">{{ formatAmount(row.amount) }}</span>
+          </template>
         </template>
       </el-table-column>
-      <el-table-column column-key="余额" label="余额" :width="colWidth('余额', 120)" align="right">
+      <el-table-column
+        v-if="getColVisible('方向')"
+        column-key="方向"
+        label="方向"
+        :width="colWidth('方向', 60)"
+        align="center"
+      >
         <template #default="{ row }">
-          {{ formatAmount(row.running_balance) }}
+          {{ formatRunningBalanceDirection(row) }}
+        </template>
+      </el-table-column>
+      <el-table-column
+        v-if="getColVisible('余额')"
+        column-key="余额"
+        label="余额"
+        :width="colWidth('余额', 120)"
+        align="right"
+      >
+        <template #default="{ row }">
+          {{ formatSignedBalanceDisplay(row.running_balance) }}
         </template>
       </el-table-column>
     </el-table>
     </div>
 
     <!-- 分页 -->
-    <div style="margin-top: 16px; display: flex; justify-content: flex-end">
+    <div class="pagination">
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
@@ -265,25 +390,119 @@
         @current-change="handlePageChange"
       />
     </div>
+
+    <VoucherEntryDialogHost ref="entryDialogHostRef" @saved="fetchData" />
+
+    <ExportProgressOverlay
+      :visible="exportProgress.visible"
+      :title="exportProgress.title"
+      :message="exportProgress.message"
+      :percent="exportProgress.percentDisplay"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, nextTick } from 'vue'
 import { useRoute } from 'vue-router'
-import { Filter, Search, Download } from '@element-plus/icons-vue'
+import { Filter, Search, Download, Setting } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import request from '@/api/request'
 import type { TableColumnCtx } from 'element-plus'
-import { useAuxColumnWidth, sumColWidths, syncAuxTableBodyWidth } from '@/composables/useColumnWidthMemory'
-import { useLedgerVoucherNavigate } from '@/composables/useLedgerVoucherNavigate'
+import DrillDownReturnButton from '@/components/common/DrillDownReturnButton.vue'
+import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
+import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
+import { useAuxWideTable } from '@/composables/useColumnWidthMemory'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import {
+  useLedgerVoucherNavigate,
+  resolveLedgerVoucherId,
+} from '@/composables/useLedgerVoucherNavigate'
+import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 import { formatAmount } from '@/utils/format'
 import { filterAuxCategoriesForAccount } from '@/utils/accountCashFlow'
-import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import { fetchAuxItemsPage } from '@/composables/useAuxItemsPage'
+import { useDebounce } from '@/composables/useDebounceThrottle'
+import { useConfirm } from '@/composables/useConfirm'
+import { useExportProgress } from '@/composables/useExportProgress'
+import ExportProgressOverlay from '@/components/export/ExportProgressOverlay.vue'
+import { exportStyledTableViaServer, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import { buildAuxDetailExportSummaryValues } from '@/utils/ledgerExportBuilders'
+import { yieldToMain } from '@/utils/asyncChunk'
+import {
+  applyEntryToSignedBalance,
+  formatEndBalanceDirection,
+  formatSignedBalanceAmount,
+  formatSignedBalanceDisplay,
+  splitBalanceToDebitCredit,
+} from '@/utils/exportLedgerHelpers'
+
+const exportProgress = useExportProgress('正在导出辅助项目明细账')
 
 const route = useRoute()
-const { handleLedgerRowDblClick } = useLedgerVoucherNavigate()
-const { tableRef, onDragEnd, colWidth } = useAuxColumnWidth('ledger_aux_detail')
+const VIS_COL_KEY = 'ledger-aux-detail-cols-visible'
+
+interface ColSetting {
+  prop: string
+  label: string
+  visible: boolean
+  dynamic?: boolean
+  group?: string
+}
+
+const baseVisibleCols: ColSetting[] = [
+  { prop: 'category_name', label: '辅助类别', visible: true },
+  { prop: 'aux_name', label: '辅助项目', visible: true },
+  { prop: 'voucher_date', label: '日期', visible: true },
+  { prop: 'voucher_no', label: '凭证号', visible: true },
+  { prop: 'account_code', label: '科目编码', visible: true },
+  { prop: 'account_name', label: '科目名称', visible: true },
+  { prop: 'summary', label: '摘要', visible: true },
+  { prop: '借方', label: '借方', visible: true },
+  { prop: '贷方', label: '贷方', visible: true },
+  { prop: '方向', label: '方向', visible: true },
+  { prop: '余额', label: '余额', visible: true },
+]
+
+const visibleCols = ref<ColSetting[]>(baseVisibleCols.map(c => ({ ...c })))
+
+function restoreVisibleCols() {
+  const saved = JSON.parse(localStorage.getItem(VIS_COL_KEY) || 'null')
+  if (!saved || !Array.isArray(saved)) return
+  for (const s of saved) {
+    const col = visibleCols.value.find(c => c.prop === s.prop)
+    if (col) col.visible = s.visible
+  }
+}
+
+function saveVisibleCols() {
+  localStorage.setItem(
+    VIS_COL_KEY,
+    JSON.stringify(visibleCols.value.map(c => ({ prop: c.prop, visible: c.visible })))
+  )
+}
+
+function getColVisible(prop: string) {
+  return visibleCols.value.find(c => c.prop === prop)?.visible ?? true
+}
+
+const columnSettingGroups = computed(() => {
+  const base = visibleCols.value.filter(c => !c.dynamic)
+  const dynamic = visibleCols.value.filter(c => c.dynamic)
+  const groups: { name: string; cols: ColSetting[] }[] = [{ name: '基础列', cols: base }]
+  const byCat = new Map<string, ColSetting[]>()
+  for (const col of dynamic) {
+    const groupName = col.group || '辅助自定义项'
+    if (!byCat.has(groupName)) byCat.set(groupName, [])
+    byCat.get(groupName)!.push(col)
+  }
+  for (const [name, cols] of byCat) {
+    groups.push({ name: `辅助项 · ${name}`, cols })
+  }
+  return groups
+})
+
+const { containerRef: tableContainerRef, tableHeight, relayoutAfterData } = useFillHeightTable({ flow: true })
 const list = ref<any[]>([])
 const auxCategories = ref<any[]>([])
 const auxItemsMap = ref<Record<string, any[]>>({})
@@ -292,6 +511,21 @@ const itemCheckMap = ref<Record<string, boolean>>({})
 const categoryFields = ref<Record<string, { fields: { field_key: string; field_name: string }[] }>>({})
 // 辅助项目搜索关键词
 const auxItemSearchKeyword = ref('')
+/** 大类别检索时最多渲染的匹配项数，避免一次性渲染海量复选框卡死 */
+const AUX_FILTER_SEARCH_LIMIT = 200
+/** 单类别加载到内存做客户端过滤的项目上限（超过则改用服务端检索） */
+const AUX_FILTER_CLIENT_LOAD_LIMIT = 500
+/** 每个类别的项目总数 */
+const auxItemTotals = ref<Record<string, number>>({})
+/** 大类别服务端检索结果（按关键词） */
+const auxItemSearchResults = ref<Record<string, any[]>>({})
+/** 检索结果是否被截断 */
+const auxItemSearchTruncated = ref<Record<string, boolean>>({})
+/** 项目加载/检索中标志 */
+const auxItemsLoading = ref(false)
+const auxItemSearching = ref(false)
+/** 防抖关键词：客户端过滤与服务端检索都基于它 */
+const debouncedAuxKeyword = useDebounce(auxItemSearchKeyword, 300)
 // 分页状态
 const total = ref(0)
 const currentPage = ref(1)
@@ -299,9 +533,10 @@ const pageSize = ref(50)
 // 加载状态
 const loading = ref(false)
 const loadingAll = ref(false)
+const queryAccountDirection = ref<'debit' | 'credit'>('debit')
 
 /** 明细账一次拉取上限（与导出一致） */
-const LOAD_ALL_PAGE_SIZE = 100000
+const LOAD_ALL_PAGE_SIZE = 1000
 
 const year = new Date().getFullYear()
 
@@ -319,92 +554,171 @@ const filters = ref<any>({
   include_unposted: true,
 })
 
-// 当前查询结果中实际出现的类别，按选择顺序排列，用于动态列
-// 是否有激活的筛选条件
-const hasActiveFilters = computed(() => {
-  return (
-    (filters.value.aux_category_ids && filters.value.aux_category_ids.length > 0) ||
-    (filters.value.aux_ids && filters.value.aux_ids.length > 0) ||
-    filters.value.account_code ||
-    filters.value.summary_keyword ||
-    filters.value.min_amount ||
-    filters.value.max_amount ||
-    filters.value.maker_name ||
-    filters.value.auditor_name
-  )
-})
+const entryDialogHostRef = ref<InstanceType<typeof VoucherEntryDialogHost> | null>(null)
+const { tryRestoreVoucherModal } = useVoucherModalRestore(entryDialogHostRef)
 
-// 筛选摘要文本
-const filterSummaryText = computed(() => {
-  const parts: string[] = []
-
-  // 类别和项目
-  if (filters.value.aux_category_ids && filters.value.aux_category_ids.length > 0) {
-    const catNames = filters.value.aux_category_ids
-      .map((id: string) => {
-        const cat = auxCategories.value.find(c => c.id === id)
-        return cat ? cat.name : ''
-      })
-      .filter(Boolean)
-
-    if (catNames.length > 0) {
-      parts.push(`${catNames.slice(0, 2).join('、')}${catNames.length > 2 ? ` +${catNames.length - 2}` : ''}`)
+const { handleLedgerRowDblClick } = useLedgerVoucherNavigate({
+  returnLabel: '辅助项目明细账',
+  getReturnQuery: () => ({
+    aux_category_ids: (filters.value.aux_category_ids || []).join(','),
+    aux_ids: (filters.value.aux_ids || []).join(','),
+    account_code: filters.value.account_code || '',
+    start_date: filters.value.start_date || '',
+    end_date: filters.value.end_date || '',
+  }),
+  openVoucherModal: row => {
+    // 忽略小计行和期初余额行
+    if (row.is_monthly_subtotal || row.is_yearly_subtotal || row.is_opening_balance) {
+      return
     }
-  }
-
-  if (filters.value.aux_ids && filters.value.aux_ids.length > 0) {
-    parts.push(`${filters.value.aux_ids.length} 个项目`)
-  }
-
-  // 日期范围
-  if (filters.value.start_date && filters.value.end_date) {
-    parts.push(`${filters.value.start_date} 至 ${filters.value.end_date}`)
-  }
-
-  return parts.join(' | ')
-})
-
-// 按类别分组的项目列表
-const auxItemsByCategory = computed(() => {
-  const result: { categoryId: string; categoryName: string; items: any[] }[] = []
-  for (const catId of filters.value.aux_category_ids) {
-    const cat = auxCategories.value.find(c => c.id === catId)
-    const items = auxItemsMap.value[catId] || []
-    if (cat && items.length > 0) {
-      result.push({
-        categoryId: catId,
-        categoryName: cat.name,
-        items: items
-      })
-    }
-  }
-  return result
-})
-
-// 根据搜索关键词过滤的项目列表
-const filteredAuxItemsByCategory = computed(() => {
-  const keyword = auxItemSearchKeyword.value.trim().toLowerCase()
-  if (!keyword) {
-    return auxItemsByCategory.value
-  }
-
-  return auxItemsByCategory.value.map(catGroup => ({
-    ...catGroup,
-    items: catGroup.items.filter((item: any) => {
-      const code = (item.code || '').toLowerCase()
-      const name = (item.name || '').toLowerCase()
-      return code.includes(keyword) || name.includes(keyword)
+    
+    const voucherId = resolveLedgerVoucherId(row)
+    if (!voucherId) return
+    entryDialogHostRef.value?.open({
+      _voucherId: voucherId,
+      id: voucherId,
+      status: row.voucher_status,
     })
-  }))
+  },
 })
 
-// 所有项目的扁平列表（用于全选/反选/清空）
-const allAuxItems = computed(() => {
-  const items: any[] = []
-  for (const catGroup of auxItemsByCategory.value) {
-    items.push(...catGroup.items)
+// 当前查询结果中实际出现的类别，按选择顺序排列，用于动态列
+// 筛选摘要（打印副标题等复用）
+const filterSummaryText = computed(() => buildAuxDetailFilterParts().join('；'))
+
+const filterHintText = computed(() => {
+  if (!filters.value.aux_category_ids?.length) {
+    return '未设置筛选条件，请点击右侧「筛选」'
   }
-  return items
+  return filterSummaryText.value
+})
+
+function buildAuxDetailFilterParts(): string[] {
+  const parts: string[] = []
+  const catIds = filters.value.aux_category_ids as string[] | undefined
+  if (catIds?.length) {
+    const catNames = catIds
+      .map(id => auxCategories.value.find(c => c.id === id)?.name)
+      .filter(Boolean) as string[]
+    if (catNames.length) {
+      const label =
+        catNames.length <= 3
+          ? catNames.join('、')
+          : `${catNames.slice(0, 3).join('、')} 等 ${catNames.length} 类`
+      parts.push(`类别：${label}`)
+    }
+  }
+  const auxIds = filters.value.aux_ids as string[] | undefined
+  if (auxIds?.length) {
+    parts.push(`项目：已选 ${auxIds.length} 个`)
+  } else if (catIds?.length) {
+    parts.push('项目：未选择')
+  }
+  if (filters.value.start_date || filters.value.end_date) {
+    parts.push(`日期：${filters.value.start_date || '…'} 至 ${filters.value.end_date || '…'}`)
+  }
+  if (filters.value.account_code) {
+    parts.push(`科目：${filters.value.account_code}`)
+  }
+  if (filters.value.summary_keyword) {
+    parts.push(`摘要：${filters.value.summary_keyword}`)
+  }
+  if (filters.value.min_amount || filters.value.max_amount) {
+    parts.push(
+      `金额：${filters.value.min_amount || '不限'} 至 ${filters.value.max_amount || '不限'}`
+    )
+  }
+  if (filters.value.maker_name) {
+    parts.push(`制单人：${filters.value.maker_name}`)
+  }
+  if (filters.value.auditor_name) {
+    parts.push(`审核人：${filters.value.auditor_name}`)
+  }
+  parts.push(filters.value.include_unposted ? '含未记账凭证' : '仅已记账凭证')
+  return parts
+}
+
+// 是否已选辅助类别（控制筛选输入框/列表显示）
+const hasAuxCategorySelected = computed(
+  () => (filters.value.aux_category_ids?.length || 0) > 0
+)
+
+// 按类别分组的项目列表（含检索）：
+// 小类别（≤ AUX_FILTER_CLIENT_LOAD_LIMIT）内存过滤；大类别未输入关键词时提示「请检索」，
+// 输入后用服务端检索结果（已截断到 AUX_FILTER_SEARCH_LIMIT）。
+const filteredAuxItemsByCategory = computed(() => {
+  const keyword = debouncedAuxKeyword.value.trim().toLowerCase()
+  const catIds: string[] = filters.value.aux_category_ids || []
+  return catIds.map((catId: string) => {
+    const cat = auxCategories.value.find(c => c.id === catId)
+    const categoryName = cat ? cat.name : catId
+    const totalCount =
+      auxItemTotals.value[catId] ?? (auxItemsMap.value[catId]?.length || 0)
+    const isLarge = totalCount > AUX_FILTER_CLIENT_LOAD_LIMIT
+
+    if (isLarge) {
+      if (!keyword) {
+        return { categoryId: catId, categoryName, items: [] as any[], totalCount, needsSearch: true, truncated: false }
+      }
+      return {
+        categoryId: catId,
+        categoryName,
+        items: auxItemSearchResults.value[catId] || [],
+        totalCount,
+        needsSearch: false,
+        truncated: !!auxItemSearchTruncated.value[catId],
+      }
+    }
+
+    const loaded = auxItemsMap.value[catId] || []
+    const items = keyword
+      ? loaded.filter((item: any) => {
+          const code = (item.code || '').toLowerCase()
+          const name = (item.name || '').toLowerCase()
+          return code.includes(keyword) || name.includes(keyword)
+        })
+      : loaded
+    return { categoryId: catId, categoryName, items, totalCount, needsSearch: false, truncated: false }
+  })
+})
+
+/** 大类别：按关键词到服务端检索匹配项目（防抖触发，结果有上限） */
+async function searchLargeAuxItems(keyword: string) {
+  const catIds: string[] = filters.value.aux_category_ids || []
+  const largeCatIds = catIds.filter(
+    id => (auxItemTotals.value[id] ?? 0) > AUX_FILTER_CLIENT_LOAD_LIMIT
+  )
+  if (!keyword || largeCatIds.length === 0) {
+    auxItemSearchResults.value = {}
+    auxItemSearchTruncated.value = {}
+    return
+  }
+  auxItemSearching.value = true
+  try {
+    const results: Record<string, any[]> = {}
+    const truncated: Record<string, boolean> = {}
+    for (const categoryId of largeCatIds) {
+      const { items, total } = await fetchAuxItemsPage({
+        category_id: categoryId,
+        keyword,
+        status: 'active',
+        page: 1,
+        pageSize: AUX_FILTER_SEARCH_LIMIT,
+      })
+      results[categoryId] = items
+      truncated[categoryId] = total > items.length
+    }
+    auxItemSearchResults.value = results
+    auxItemSearchTruncated.value = truncated
+  } catch (error) {
+    console.error('检索辅助项目失败:', error)
+  } finally {
+    auxItemSearching.value = false
+  }
+}
+
+watch(debouncedAuxKeyword, kw => {
+  void searchLargeAuxItems(String(kw || '').trim())
 })
 
 const activeCategoryColumns = computed(() => {
@@ -423,79 +737,132 @@ const activeCategoryColumns = computed(() => {
   return result
 })
 
+const discoveredDynamicCols = computed<ColSetting[]>(() => {
+  const result: ColSetting[] = []
+  for (const cat of activeCategoryColumns.value) {
+    for (const field of cat.fields) {
+      const prop = `${cat.code}_${field.field_key}`
+      result.push({
+        prop,
+        label: field.field_name,
+        visible: true,
+        dynamic: true,
+        group: cat.name,
+      })
+    }
+  }
+  return result
+})
+
+watch(
+  discoveredDynamicCols,
+  dynamic => {
+    const kept = visibleCols.value.filter(c => !c.dynamic)
+    const merged = [...kept]
+    for (const col of dynamic) {
+      const existing = visibleCols.value.find(c => c.prop === col.prop)
+      merged.push(existing ? { ...existing } : { ...col })
+    }
+    visibleCols.value = merged
+  },
+  { immediate: true }
+)
+
 const auxTableColumnKey = computed(() => {
+  const visibleKeys = visibleCols.value.filter(c => c.visible).map(c => c.prop)
   const parts = activeCategoryColumns.value.map(
     c => `${c.code}:${c.fields.map(f => f.field_key).join(',')}`
   )
-  return parts.join('|') || 'none'
+  return `${parts.join('|') || 'none'}:${visibleKeys.join(',')}`
 })
 
-const auxTableWidth = computed(() => {
-  const defs: Array<{ key: string; fallback: number }> = [
-    { key: 'category_name', fallback: 120 },
-    { key: 'aux_name', fallback: 140 },
-  ]
-  for (const cat of activeCategoryColumns.value) {
-    for (const field of cat.fields) {
-      defs.push({ key: `${cat.code}_${field.field_key}`, fallback: 120 })
-    }
+const AUX_DETAIL_COL_FALLBACK: Record<string, number> = {
+  category_name: 120,
+  aux_name: 140,
+  voucher_date: 100,
+  voucher_no: 130,
+  account_code: 100,
+  account_name: 160,
+  summary: 180,
+  借方: 120,
+  贷方: 120,
+  方向: 60,
+  余额: 120,
+}
+
+const auxColumnDefs = computed(() => {
+  const defs: Array<{ key: string; fallback: number }> = []
+  for (const col of visibleCols.value) {
+    if (!col.visible) continue
+    defs.push({ key: col.prop, fallback: AUX_DETAIL_COL_FALLBACK[col.prop] ?? 120 })
   }
-  defs.push(
-    { key: 'voucher_date', fallback: 100 },
-    { key: 'voucher_no', fallback: 130 },
-    { key: 'account_code', fallback: 100 },
-    { key: 'account_name', fallback: 160 },
-    { key: 'summary', fallback: 180 },
-    { key: '借方', fallback: 120 },
-    { key: '贷方', fallback: 120 },
-    { key: '余额', fallback: 120 }
-  )
-  return sumColWidths(colWidth, defs, { includeGutter: false })
+  return defs
 })
 
-watch(auxTableWidth, w => syncAuxTableBodyWidth(tableRef, w))
+const { tableRef, colWidth, tableWidth: auxTableWidth, onDragEnd, afterTableLayout } = useAuxWideTable(
+  'ledger_aux_detail',
+  auxColumnDefs,
+  { columnKey: auxTableColumnKey, afterLayout: relayoutAfterData }
+)
+
+function getRowClassName({ row }: { row: any }) {
+  if (row.is_monthly_subtotal) return 'monthly-subtotal-row'
+  if (row.is_yearly_subtotal) return 'yearly-subtotal-row'
+  if (row.is_opening_balance) return 'carry-forward-row'
+  return ''
+}
 
 function getSummaries(param: { columns: TableColumnCtx<any>[]; data: any[] }) {
   const { columns, data } = param
   const sums: string[] = []
 
-  // 计算自定义字段列数
-  const customFieldsCount = activeCategoryColumns.value.reduce((sum, cat) => sum + cat.fields.length, 0)
-  // 固定列：辅助类别、辅助项目、日期、凭证号、科目编码、科目名称、摘要 = 7
-  const fixedColsBeforeAmount = 7 + customFieldsCount
+  const normalEntries = data.filter(
+    row => !row.is_monthly_subtotal && !row.is_yearly_subtotal && !row.is_opening_balance
+  )
 
-  columns.forEach((_column, index) => {
+  columns.forEach((column, index) => {
+    const key = String(column.columnKey ?? column.property ?? '')
+
     if (index === 0) {
       sums[index] = '合计'
       return
     }
-    if (index < fixedColsBeforeAmount) {
-      sums[index] = ''
+
+    if (key === '借方') {
+      const total = normalEntries.reduce(
+        (sum, row) => sum + (row.direction === 'debit' ? row.amount : 0),
+        0
+      )
+      sums[index] = formatAmount(total)
       return
     }
 
-    // 借方合计
-    if (index === fixedColsBeforeAmount) {
-      const total = data.reduce((sum, row) => {
-        return sum + (row.direction === 'debit' ? row.amount : 0)
-      }, 0)
+    if (key === '贷方') {
+      const total = normalEntries.reduce(
+        (sum, row) => sum + (row.direction === 'credit' ? row.amount : 0),
+        0
+      )
       sums[index] = formatAmount(total)
+      return
     }
-    // 贷方合计
-    else if (index === fixedColsBeforeAmount + 1) {
-      const total = data.reduce((sum, row) => {
-        return sum + (row.direction === 'credit' ? row.amount : 0)
-      }, 0)
-      sums[index] = formatAmount(total)
+
+    if (key === '方向') {
+      sums[index] =
+        normalEntries.length > 0
+          ? formatRunningBalanceDirection(normalEntries[normalEntries.length - 1])
+          : ''
+      return
     }
-    // 余额（显示最后一行的余额）
-    else if (index === fixedColsBeforeAmount + 2) {
-      if (data.length > 0) {
-        sums[index] = formatAmount(data[data.length - 1].running_balance)
-      } else {
-        sums[index] = formatAmount(0)
-      }
+
+    if (key === '余额') {
+      sums[index] =
+        normalEntries.length > 0
+          ? formatSignedBalanceDisplay(normalEntries[normalEntries.length - 1].running_balance)
+          : formatSignedBalanceDisplay(0)
+      return
     }
+
+    sums[index] = ''
   })
 
   return sums
@@ -533,47 +900,179 @@ function buildOpeningBalanceBase() {
   }
 }
 
+function fillOpeningBalanceAmount(
+  row: Record<string, any>,
+  balance: number,
+  accountDirection: 'debit' | 'credit'
+) {
+  const { debit, credit } = splitBalanceToDebitCredit(balance, accountDirection)
+  if (debit > 0) {
+    row.direction = 'debit'
+    row.amount = debit
+  } else if (credit > 0) {
+    row.direction = 'credit'
+    row.amount = credit
+  } else {
+    row.direction = ''
+    row.amount = 0
+  }
+  return row
+}
+
 /** 按辅助类别分开展示期初行，每行「辅助类别」仅显示当前类目 */
 function buildOpeningBalanceRows(
   categoryInits: CategoryInitBalance[] | undefined,
-  totalBalance: number
+  totalBalance: number,
+  accountDirection: 'debit' | 'credit' = 'debit'
 ) {
   const base = buildOpeningBalanceBase()
+  const directionFields = { account_direction: accountDirection }
   const items = (categoryInits || []).filter(c => c.init_balance !== 0)
   if (items.length === 0) {
     return [
-      {
-        ...base,
-        id: '__opening_balance__',
-        category_name: '',
-        running_balance: totalBalance,
-      },
+      fillOpeningBalanceAmount(
+        {
+          ...base,
+          ...directionFields,
+          id: '__opening_balance__',
+          category_name: '',
+          running_balance: totalBalance,
+        },
+        totalBalance,
+        accountDirection
+      ),
     ]
   }
   if (items.length === 1) {
     return [
-      {
-        ...base,
-        id: '__opening_balance__',
-        category_name: items[0].category_name,
-        running_balance: totalBalance,
-      },
+      fillOpeningBalanceAmount(
+        {
+          ...base,
+          ...directionFields,
+          id: '__opening_balance__',
+          category_name: items[0].category_name,
+          running_balance: totalBalance,
+        },
+        totalBalance,
+        accountDirection
+      ),
     ]
   }
   let running = 0
   const rows = items.map((cat, index) => {
     running += cat.init_balance
-    return {
-      ...base,
-      id: `__opening_balance__${index}`,
-      category_name: cat.category_name,
-      running_balance: running,
-    }
+    return fillOpeningBalanceAmount(
+      {
+        ...base,
+        ...directionFields,
+        id: `__opening_balance__${index}`,
+        category_name: cat.category_name,
+        running_balance: running,
+      },
+      cat.init_balance,
+      accountDirection
+    )
   })
   if (rows.length > 0 && running !== totalBalance) {
     rows[rows.length - 1].running_balance = totalBalance
   }
   return rows
+}
+
+function insertMonthlySubtotals(entries: any[], account: any): any[] {
+  if (entries.length === 0) return entries
+  
+  const result: any[] = []
+  let currentMonth = ''
+  let monthlyDebit = 0
+  let monthlyCredit = 0
+  let yearlyDebit = 0
+  let yearlyCredit = 0
+  let currentYear = ''
+  
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]
+    const entryMonth = entry.voucher_date.substring(0, 7)
+    const entryYear = entry.voucher_date.substring(0, 4)
+    
+    if (entryYear !== currentYear) {
+      currentYear = entryYear
+      yearlyDebit = 0
+      yearlyCredit = 0
+    }
+    
+    if (currentMonth && entryMonth !== currentMonth) {
+      result.push({
+        id: `__monthly_subtotal_${currentMonth}__`,
+        voucher_date: currentMonth + '-31',
+        voucher_no: '',
+        summary: '本月合计',
+        direction: '',
+        amount: 0,
+        running_balance: result[result.length - 1].running_balance,
+        is_monthly_subtotal: true,
+        monthly_debit: monthlyDebit,
+        monthly_credit: monthlyCredit,
+      })
+      
+      result.push({
+        id: `__yearly_subtotal_${currentMonth}__`,
+        voucher_date: currentMonth + '-31',
+        voucher_no: '',
+        summary: '本年累计',
+        direction: '',
+        amount: 0,
+        running_balance: result[result.length - 1].running_balance,
+        is_yearly_subtotal: true,
+        yearly_debit: yearlyDebit,
+        yearly_credit: yearlyCredit,
+      })
+      
+      monthlyDebit = 0
+      monthlyCredit = 0
+    }
+    
+    if (entry.direction === 'debit') {
+      monthlyDebit += entry.amount
+      yearlyDebit += entry.amount
+    } else if (entry.direction === 'credit') {
+      monthlyCredit += entry.amount
+      yearlyCredit += entry.amount
+    }
+    
+    currentMonth = entryMonth
+    result.push(entry)
+  }
+  
+  if (currentMonth && entries.length > 0) {
+    result.push({
+      id: `__monthly_subtotal_${currentMonth}__`,
+      voucher_date: currentMonth + '-31',
+      voucher_no: '',
+      summary: '本月合计',
+      direction: '',
+      amount: 0,
+      running_balance: result[result.length - 1].running_balance,
+      is_monthly_subtotal: true,
+      monthly_debit: monthlyDebit,
+      monthly_credit: monthlyCredit,
+    })
+    
+    result.push({
+      id: `__yearly_subtotal_${currentMonth}__`,
+      voucher_date: currentMonth + '-31',
+      voucher_no: '',
+      summary: '本年累计',
+      direction: '',
+      amount: 0,
+      running_balance: result[result.length - 1].running_balance,
+      is_yearly_subtotal: true,
+      yearly_debit: yearlyDebit,
+      yearly_credit: yearlyCredit,
+    })
+  }
+  
+  return result
 }
 
 async function fetchAuxCategories() {
@@ -589,23 +1088,57 @@ async function fetchAuxCategories() {
 async function fetchAuxItems() {
   if (!filters.value.aux_category_ids || filters.value.aux_category_ids.length === 0) {
     auxItemsMap.value = {}
+    auxItemTotals.value = {}
+    auxItemSearchResults.value = {}
+    auxItemSearchTruncated.value = {}
     return
   }
 
+  auxItemsLoading.value = true
   try {
-    // 获取所有选中类别的辅助项目，按类别分别存储
+    const map: Record<string, any[]> = {}
+    const totals: Record<string, number> = {}
+    // 每类别仅取首页（≤AUX_FILTER_CLIENT_LOAD_LIMIT）+ 总数：
+    // 小类别一次性载入做客户端过滤；大类别仅凭总数提示「请检索」，输入关键词后走服务端检索。
     for (const categoryId of filters.value.aux_category_ids) {
-      if (auxItemsMap.value[categoryId]) continue // 已加载过的不重复加载
-      const res = await request.get<any[]>('/base/aux-items', {
-        params: { category_id: categoryId },
+      const { items, total } = await fetchAuxItemsPage({
+        category_id: categoryId,
+        status: 'active',
+        page: 1,
+        pageSize: AUX_FILTER_CLIENT_LOAD_LIMIT,
       })
-      if (res.data) {
-        auxItemsMap.value[categoryId] = res.data
-      }
+      totals[categoryId] = total
+      map[categoryId] = total > AUX_FILTER_CLIENT_LOAD_LIMIT ? [] : items
     }
+    auxItemsMap.value = map
+    auxItemTotals.value = totals
+    auxItemSearchResults.value = {}
+    auxItemSearchTruncated.value = {}
   } catch (error) {
     console.error('加载辅助项目失败:', error)
+  } finally {
+    auxItemsLoading.value = false
   }
+}
+
+function resolveAccountDirection(entry: { account_direction?: string }): 'debit' | 'credit' {
+  return entry.account_direction === 'credit' ? 'credit' : 'debit'
+}
+
+function resolveRowAccountDirection(row: { account_direction?: string }): 'debit' | 'credit' {
+  if (row.account_direction === 'credit' || row.account_direction === 'debit') {
+    return row.account_direction
+  }
+  return queryAccountDirection.value
+}
+
+function formatRunningBalanceDirection(row: { running_balance?: number; account_direction?: string }): string {
+  const balance = row.running_balance ?? 0
+  if (Math.abs(balance) < 0.005) return '平'
+  return formatEndBalanceDirection({
+    end_balance: balance,
+    direction: resolveRowAccountDirection(row),
+  })
 }
 
 async function fetchData(options?: { loadAll?: boolean }) {
@@ -615,7 +1148,7 @@ async function fetchData(options?: { loadAll?: boolean }) {
   }
 
   // 限制选择数量，避免请求过大（全部加载时不传 aux_ids，不受此限）
-  const MAX_AUX_ITEMS = 5000
+  const MAX_AUX_ITEMS = 500000
   if (
     !options?.loadAll &&
     filters.value.aux_ids &&
@@ -663,23 +1196,29 @@ async function fetchData(options?: { loadAll?: boolean }) {
       categoryFields.value = cf
     }
 
+    if (entries.length > 0) {
+      queryAccountDirection.value = resolveAccountDirection(entries[0])
+    }
+
     // 计算运行余额
     // 注意：后端返回的是分页后的数据，但 initBalance 是整个查询的期初余额
     // 前端需要基于 initBalance 计算当前页每条数据的余额
     let balance = pageStartBalance
     for (const entry of entries) {
-      if (entry.direction === 'debit') {
-        balance += entry.amount
-      } else {
-        balance -= entry.amount
-      }
+      balance = applyEntryToSignedBalance(
+        balance,
+        entry.amount,
+        entry.direction,
+        resolveAccountDirection(entry)
+      )
       entry.running_balance = balance
     }
 
+    const entriesWithSubtotals = insertMonthlySubtotals(entries, queryAccountDirection.value)
     const showOpeningRow = options?.loadAll || currentPage.value === 1
     list.value = showOpeningRow
-      ? [...buildOpeningBalanceRows(categoryInitBalances, initBalance), ...entries]
-      : entries
+      ? [...buildOpeningBalanceRows(categoryInitBalances, initBalance, queryAccountDirection.value), ...entriesWithSubtotals]
+      : entriesWithSubtotals
 
     if (options?.loadAll) {
       currentPage.value = 1
@@ -687,7 +1226,7 @@ async function fetchData(options?: { loadAll?: boolean }) {
         pageSize.value = total.value
       }
     }
-    syncAuxTableBodyWidth(tableRef, auxTableWidth.value)
+    await afterTableLayout()
   } catch (error: any) {
     console.error('查询辅助项目明细账失败:', error)
     ElMessage.error(`查询失败：${error.message || '未知错误'}`)
@@ -708,114 +1247,253 @@ function handlePageChange(page: number) {
   fetchData()
 }
 
-async function exportData() {
-  if (!filters.value.aux_category_ids || filters.value.aux_category_ids.length === 0) {
-    ElMessage.warning('请先选择辅助类别')
-    return
+function buildVisibleExportColumns(): ExportColumnDef[] {
+  const columns: ExportColumnDef[] = []
+
+  if (getColVisible('category_name')) {
+    columns.push({
+      label: '辅助类别',
+      width: colWidth('category_name', 120),
+      value: row => row.category_name || '',
+    })
   }
-
-  // 导出全部数据
-  const params: any = {
-    aux_category_ids: filters.value.aux_category_ids.join(','),
-    page: 1,
-    pageSize: 10000,
+  if (getColVisible('aux_name')) {
+    columns.push({
+      label: '辅助项目',
+      width: colWidth('aux_name', 140),
+      value: row => row.aux_name || '',
+    })
   }
-
-  if (filters.value.aux_ids && filters.value.aux_ids.length > 0) {
-    params.aux_ids = filters.value.aux_ids.join(',')
-  }
-
-  if (filters.value.start_date) params.start_date = filters.value.start_date
-  if (filters.value.end_date) params.end_date = filters.value.end_date
-  if (filters.value.account_code) params.account_code = filters.value.account_code
-  if (filters.value.summary_keyword) params.summary_keyword = filters.value.summary_keyword
-  if (filters.value.min_amount) params.min_amount = filters.value.min_amount
-  if (filters.value.max_amount) params.max_amount = filters.value.max_amount
-  if (filters.value.maker_name) params.maker_name = filters.value.maker_name
-  if (filters.value.auditor_name) params.auditor_name = filters.value.auditor_name
-  if (filters.value.include_unposted) params.include_unposted = true
-
-  const res = await request.post<any>('/ledger/aux-detail', params)
-  const entries = res.data || []
-  const exportInitBalance = (res as any).initBalance || 0
-
-  // 计算运行余额
-  let balance = exportInitBalance
-  for (const entry of entries) {
-    if (entry.direction === 'debit') {
-      balance += entry.amount
-    } else {
-      balance -= entry.amount
-    }
-    entry.running_balance = balance
-  }
-
-  const exportCategoryInits = (res as any).categoryInitBalances as CategoryInitBalance[] | undefined
-  const exportRows = [...buildOpeningBalanceRows(exportCategoryInits, exportInitBalance), ...entries]
-
-  const columns: ExportColumnDef[] = [
-    { label: '辅助类别', width: colWidth('category_name', 120), value: row => row.category_name || '' },
-    { label: '辅助项目', width: colWidth('aux_name', 140), value: row => row.aux_name || '' },
-  ]
 
   for (const cat of activeCategoryColumns.value) {
     for (const field of cat.fields) {
+      const key = `${cat.code}_${field.field_key}`
+      if (!getColVisible(key)) continue
       columns.push({
         label: field.field_name,
-        width: colWidth(`${cat.code}_${field.field_key}`, 120),
+        width: colWidth(key, 120),
         value: row =>
           row.category_code === cat.code ? row.field_values?.[field.field_key] ?? '' : '',
       })
     }
   }
 
-  columns.push(
-    { label: '日期', width: colWidth('voucher_date', 100), value: row => row.voucher_date || '' },
-    { label: '凭证号', width: colWidth('voucher_no', 130), value: row => row.voucher_no || '' },
-    { label: '科目编码', width: colWidth('account_code', 100), value: row => row.account_code || '' },
-    { label: '科目名称', width: colWidth('account_name', 160), value: row => row.account_name || '' },
-    { label: '摘要', width: colWidth('summary', 180), value: row => row.summary || '' },
-    {
+  if (getColVisible('voucher_date')) {
+    columns.push({
+      label: '日期',
+      width: colWidth('voucher_date', 100),
+      value: row => row.voucher_date || '',
+    })
+  }
+  if (getColVisible('voucher_no')) {
+    columns.push({
+      label: '凭证号',
+      width: colWidth('voucher_no', 130),
+      value: row => row.voucher_no || '',
+    })
+  }
+  if (getColVisible('account_code')) {
+    columns.push({
+      label: '科目编码',
+      width: colWidth('account_code', 100),
+      value: row => row.account_code || '',
+    })
+  }
+  if (getColVisible('account_name')) {
+    columns.push({
+      label: '科目名称',
+      width: colWidth('account_name', 160),
+      value: row => row.account_name || '',
+    })
+  }
+  if (getColVisible('summary')) {
+    columns.push({
+      label: '摘要',
+      width: colWidth('summary', 180),
+      value: row => row.summary || '',
+    })
+  }
+  if (getColVisible('借方')) {
+    columns.push({
       label: '借方',
       width: colWidth('借方', 120),
       align: 'right',
       type: 'amount',
-      value: row => (!row.is_opening_balance && row.direction === 'debit' ? row.amount : ''),
-    },
-    {
+      value: row => {
+        if (row.is_monthly_subtotal) return row.monthly_debit
+        if (row.is_yearly_subtotal) return row.yearly_debit
+        return row.direction === 'debit' ? row.amount : ''
+      },
+    })
+  }
+  if (getColVisible('贷方')) {
+    columns.push({
       label: '贷方',
       width: colWidth('贷方', 120),
       align: 'right',
       type: 'amount',
-      value: row => (!row.is_opening_balance && row.direction === 'credit' ? row.amount : ''),
-    },
-    {
+      value: row => {
+        if (row.is_monthly_subtotal) return row.monthly_credit
+        if (row.is_yearly_subtotal) return row.yearly_credit
+        return row.direction === 'credit' ? row.amount : ''
+      },
+    })
+  }
+  if (getColVisible('方向')) {
+    columns.push({
+      label: '方向',
+      width: colWidth('方向', 60),
+      align: 'center',
+      value: row => formatRunningBalanceDirection(row),
+    })
+  }
+  if (getColVisible('余额')) {
+    columns.push({
       label: '余额',
       width: colWidth('余额', 120),
       align: 'right',
       type: 'amount',
-      value: row => row.running_balance ?? '',
-    }
-  )
+      value: row => formatSignedBalanceAmount(row.running_balance ?? 0, false),
+    })
+  }
+
+  return columns
+}
+
+async function exportData() {
+  if (total.value <= 0) {
+    ElMessage.warning('请先查询后再导出')
+    return
+  }
+
+  if (!filters.value.aux_category_ids || filters.value.aux_category_ids.length === 0) {
+    ElMessage.warning('请先选择辅助类别')
+    return
+  }
+
+  const EXPORT_WARNING_THRESHOLD = 5000
+
+  if (total.value > EXPORT_WARNING_THRESHOLD) {
+    const confirmed = await useConfirm({
+      title: '数据量较大',
+      message: `当前共 ${total.value.toLocaleString()} 条明细，将由服务端生成 Excel，可能需要较长时间，是否继续？`,
+      confirmButtonText: '继续导出',
+      cancelButtonText: '取消',
+    })
+    if (!confirmed) return
+  }
+
+  exportProgress.start()
 
   const dateRange =
     filters.value.start_date && filters.value.end_date
       ? `${filters.value.start_date}_${filters.value.end_date}`
       : new Date().toISOString().split('T')[0]
 
-  await exportStyledTable({
-    fileName: `辅助项目明细账_${dateRange}.xlsx`,
-    sheetName: '辅助项目明细账',
-    title: '辅助项目明细账',
-    subtitle: filterSummaryText.value,
-    columns,
-    rows: exportRows,
-  })
+  const baseParams: any = {
+    aux_category_ids: filters.value.aux_category_ids.join(','),
+  }
+  if (filters.value.aux_ids && filters.value.aux_ids.length > 0) {
+    baseParams.aux_ids = filters.value.aux_ids.join(',')
+  }
+  if (filters.value.start_date) baseParams.start_date = filters.value.start_date
+  if (filters.value.end_date) baseParams.end_date = filters.value.end_date
+  if (filters.value.account_code) baseParams.account_code = filters.value.account_code
+  if (filters.value.summary_keyword) baseParams.summary_keyword = filters.value.summary_keyword
+  if (filters.value.min_amount) baseParams.min_amount = filters.value.min_amount
+  if (filters.value.max_amount) baseParams.max_amount = filters.value.max_amount
+  if (filters.value.maker_name) baseParams.maker_name = filters.value.maker_name
+  if (filters.value.auditor_name) baseParams.auditor_name = filters.value.auditor_name
+  if (filters.value.include_unposted) baseParams.include_unposted = true
+
+  const EXPORT_PAGE_SIZE = 1000
+
+  try {
+    let entries: any[] = []
+    let exportInitBalance = 0
+    let exportCategoryInits: CategoryInitBalance[] | undefined
+    let page = 1
+    let serverTotal = 0
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const res = await request.post<any>('/ledger/aux-detail', {
+        ...baseParams,
+        page,
+        pageSize: EXPORT_PAGE_SIZE,
+      })
+      const batch = res.data || []
+      if (page === 1) {
+        serverTotal = (res as any).total ?? batch.length
+        exportInitBalance = (res as any).initBalance || 0
+        exportCategoryInits = (res as any).categoryInitBalances as CategoryInitBalance[] | undefined
+      }
+      entries.push(...batch)
+      exportProgress.setFetchProgress(entries.length, serverTotal)
+      if (batch.length === 0 || entries.length >= serverTotal) break
+      page++
+      await yieldToMain()
+    }
+
+    if (entries.length === 0) {
+      ElMessage.warning('没有可导出的数据')
+      return
+    }
+
+    queryAccountDirection.value = resolveAccountDirection(entries[0])
+
+    let balance = exportInitBalance
+    for (const entry of entries) {
+      balance = applyEntryToSignedBalance(
+        balance,
+        entry.amount,
+        entry.direction,
+        resolveAccountDirection(entry)
+      )
+      entry.running_balance = balance
+    }
+
+    const entriesWithSubtotals = insertMonthlySubtotals(entries, queryAccountDirection.value)
+    const exportRows = [
+      ...buildOpeningBalanceRows(exportCategoryInits, exportInitBalance, queryAccountDirection.value),
+      ...entriesWithSubtotals,
+    ]
+
+    const exportColumns = buildVisibleExportColumns()
+    const summaryValues = buildAuxDetailExportSummaryValues(
+      exportColumns,
+      exportRows,
+      formatRunningBalanceDirection,
+      formatSignedBalanceDisplay
+    )
+
+    await exportStyledTableViaServer({
+      fileName: `辅助项目明细账_${dateRange}.xlsx`,
+      sheetName: '辅助项目明细账',
+      title: '辅助项目明细账',
+      subtitle: filterSummaryText.value,
+      columns: exportColumns,
+      rows: exportRows,
+      summaryValues,
+      onProgress: info => exportProgress.report(info),
+    })
+
+    ElMessage.success('导出完成，文件已开始下载')
+  } catch (error: any) {
+    console.error('导出辅助项目明细账失败:', error)
+    ElMessage.error(error?.response?.data?.error || error?.message || '导出失败')
+  } finally {
+    exportProgress.finish()
+  }
 }
 
 // 查询按钮点击
 function handleQuery() {
-  currentPage.value = 1  // 重置到第一页
+  syncFiltersFromCheckMap()
+  if (!filters.value.aux_ids?.length) {
+    ElMessage.warning('请至少选择一个辅助项目，可使用「全选」选中当前列表')
+    return
+  }
+  currentPage.value = 1
   drawerVisible.value = false
   fetchData()
 }
@@ -867,10 +1545,15 @@ function resetFilters() {
   list.value = []
 }
 
+/** 全选/反选/清空：仅作用于当前列表可见项（大类别即检索命中的项），避免一次性勾选海量项目 */
+function getCategoryItemsForBulkAction(categoryId: string) {
+  const group = filteredAuxItemsByCategory.value.find(g => g.categoryId === categoryId)
+  return group?.items || []
+}
+
 // 全选某个类别的项目
 function selectCategoryItems(categoryId: string) {
-  const items = auxItemsMap.value[categoryId] || []
-  items.forEach(item => {
+  getCategoryItemsForBulkAction(categoryId).forEach(item => {
     itemCheckMap.value[item.id] = true
   })
   syncFiltersFromCheckMap()
@@ -878,8 +1561,7 @@ function selectCategoryItems(categoryId: string) {
 
 // 反选某个类别的项目
 function invertCategorySelection(categoryId: string) {
-  const items = auxItemsMap.value[categoryId] || []
-  items.forEach(item => {
+  getCategoryItemsForBulkAction(categoryId).forEach(item => {
     itemCheckMap.value[item.id] = !itemCheckMap.value[item.id]
   })
   syncFiltersFromCheckMap()
@@ -887,8 +1569,7 @@ function invertCategorySelection(categoryId: string) {
 
 // 清空某个类别的选择
 function clearCategorySelection(categoryId: string) {
-  const items = auxItemsMap.value[categoryId] || []
-  items.forEach(item => {
+  getCategoryItemsForBulkAction(categoryId).forEach(item => {
     itemCheckMap.value[item.id] = false
   })
   syncFiltersFromCheckMap()
@@ -905,28 +1586,55 @@ function syncFiltersFromCheckMap() {
 }
 
 async function onAuxCategoryChange() {
-  // 切换辅助类别时清空已选项目
+  // 切换辅助类别时清空已选项目（不再默认全选，避免检索后误以为只查了可见项）
   filters.value.aux_ids = []
   itemCheckMap.value = {}
+  auxItemSearchKeyword.value = ''
   list.value = []
   if (!filters.value.aux_category_ids || filters.value.aux_category_ids.length === 0) return
   await fetchAuxItems()
-  // 初始化 checkMap（默认全选）
-  allAuxItems.value.forEach(item => {
-    itemCheckMap.value[item.id] = true
-  })
-  syncFiltersFromCheckMap()
 }
 
-// 从路由参数初始化筛选条件
-function applyRouteFilters() {
+function resolveCategoryIds(raw: string): string[] {
+  return raw
+    .split(',')
+    .filter(Boolean)
+    .map(part => {
+      const byId = auxCategories.value.find(c => c.id === part)
+      if (byId) return byId.id
+      const byCode = auxCategories.value.find(c => c.code === part)
+      return byCode?.id ?? part
+    })
+}
+
+/** 从路由 query 同步筛选并查询（keep-alive 下 query 变化不会触发 onMounted） */
+async function applyRouteFromQuery() {
+  const hasDrillDown = !!(
+    route.query.aux_category_ids ||
+    route.query.aux_ids ||
+    route.query.account_code
+  )
+  if (!hasDrillDown) return
+
+  list.value = []
+  currentPage.value = 1
+  itemCheckMap.value = {}
+  filters.value.aux_category_ids = []
+  filters.value.aux_ids = []
+  filters.value.account_code = ''
+
   if (route.query.aux_category_ids) {
-    const ids = route.query.aux_category_ids as string
-    filters.value.aux_category_ids = ids.split(',')
+    filters.value.aux_category_ids = resolveCategoryIds(route.query.aux_category_ids as string)
   }
   if (route.query.aux_ids) {
-    const ids = route.query.aux_ids as string
-    filters.value.aux_ids = ids.split(',')
+    const ids = (route.query.aux_ids as string).split(',').filter(Boolean)
+    filters.value.aux_ids = ids
+    ids.forEach(id => {
+      itemCheckMap.value[id] = true
+    })
+  }
+  if (route.query.account_code) {
+    filters.value.account_code = route.query.account_code as string
   }
   if (route.query.start_date) {
     filters.value.start_date = route.query.start_date as string
@@ -934,19 +1642,53 @@ function applyRouteFilters() {
   if (route.query.end_date) {
     filters.value.end_date = route.query.end_date as string
   }
+
+  await fetchAuxItems()
+  if (filters.value.aux_category_ids.length > 0 && filters.value.aux_ids.length > 0) {
+    await fetchData()
+  }
 }
 
-onMounted(async () => {
-  await fetchAuxCategories()
-  applyRouteFilters()
-  await fetchAuxItems()
-  if (filters.value.aux_ids.length > 0) {
-    fetchData()
+watch(
+  () => route.fullPath,
+  async (newPath, oldPath) => {
+    if (!newPath.startsWith('/ledger/aux-detail')) return
+    if (!oldPath || oldPath === newPath) return
+    if (auxCategories.value.length === 0) {
+      await fetchAuxCategories()
+    }
+    await applyRouteFromQuery()
   }
+)
+
+onMounted(async () => {
+  restoreVisibleCols()
+  await fetchAuxCategories()
+  await applyRouteFromQuery()
+})
+
+onActivated(() => {
+  restoreVisibleCols()
+  void tryRestoreVoucherModal()
 })
 </script>
 
 <style scoped>
+:deep(.monthly-subtotal-row) {
+  background-color: #e0f2fe !important;
+  font-weight: 600;
+}
+
+:deep(.yearly-subtotal-row) {
+  background-color: #fef9c3 !important;
+  font-weight: 600;
+}
+
+:deep(.carry-forward-row) {
+  background-color: #f3f4f6 !important;
+  font-weight: 500;
+}
+
 .page {
   padding: 16px;
 }
@@ -965,6 +1707,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex: 1;
+  min-width: 0;
 }
 
 .header-left h3 {
@@ -973,37 +1717,69 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-.filter-summary {
+.filter-hint {
   display: flex;
-  align-items: center;
-  gap: 8px;
+  align-items: flex-start;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
   padding: 6px 12px;
   background-color: #f5f7fa;
   border-radius: 4px;
   font-size: 13px;
+  line-height: 1.5;
   color: #606266;
-  cursor: pointer;
-  transition: all 0.2s;
 }
 
-.filter-summary:hover {
-  background-color: #e4e7ed;
+.filter-hint-label {
+  flex-shrink: 0;
+  color: #303133;
+  font-weight: 500;
 }
 
-.filter-summary .placeholder {
-  color: #909399;
-}
-
-.filter-summary .summary-text {
-  max-width: 500px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.filter-hint-text {
+  flex: 1;
+  min-width: 0;
+  word-break: break-all;
 }
 
 .header-right {
   display: flex;
+  align-items: center;
   gap: 8px;
+}
+
+.aux-detail-col-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.col-settings-group-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: #606266;
+  margin-bottom: 4px;
+}
+
+.col-settings-item {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 2px 0;
+  font-size: 13px;
+}
+
+.col-settings-item :deep(.el-checkbox) {
+  height: auto;
+  min-height: 0;
+  margin-right: 0;
+}
+
+.col-settings-item > span {
+  line-height: 1.4;
 }
 
 /* 抽屉内容样式 */
@@ -1094,13 +1870,6 @@ onMounted(async () => {
 .category-actions {
   display: flex;
   gap: 4px;
-}
-
-.category-items {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-left: 8px;
 }
 
 .empty-hint {

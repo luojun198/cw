@@ -5,7 +5,16 @@
       <div class="header-actions">
         <el-button type="primary" :loading="backingUp" @click="handleBackup">
           <el-icon v-if="!backingUp"><Download /></el-icon>
-          立即备份
+          完整备份
+        </el-button>
+        <el-button
+          type="primary"
+          plain
+          :loading="accountSetBackingUp"
+          @click="handleAccountSetBackup"
+        >
+          <el-icon v-if="!accountSetBackingUp"><Download /></el-icon>
+          单账套备份
         </el-button>
         <el-button type="success" @click="handleImportClick">
           <el-icon><Upload /></el-icon>
@@ -19,7 +28,7 @@
           ref="fileInputRef"
           type="file"
           accept=".db,.sqlite,.sqlite3"
-          style="display:none"
+          style="display: none"
           @change="handleFileSelected"
         />
       </div>
@@ -137,7 +146,7 @@
 
     <!-- 提示 -->
     <el-alert
-      title="建议定期进行数据备份，以防数据丢失。恢复备份将覆盖当前所有数据。"
+      title="完整备份用于整库恢复；单账套备份仅含当前账套数据，导入时将合并恢复到当前登录账套（不会覆盖其他账套）。恢复全量备份后需重新登录。"
       type="info"
       :closable="false"
       style="margin-bottom: 16px"
@@ -171,10 +180,21 @@
         :data="list"
         stripe
         border
-        max-height="500"
+        class="compact-data-table"
         @header-dragend="onDragEnd"
       >
-        <el-table-column prop="filename" label="文件名" :width="colWidth('filename', 260)" show-overflow-tooltip />
+        <el-table-column
+          prop="filename"
+          label="文件名"
+          :width="colWidth('filename', 260)"
+          show-overflow-tooltip
+        />
+        <el-table-column
+          prop="account_set_name"
+          label="触发账套"
+          :width="colWidth('account_set_name', 120)"
+          show-overflow-tooltip
+        />
         <el-table-column column-key="大小" label="大小" :width="colWidth('大小', 100)">
           <template #default="{ row }">{{ formatSize(row.size) }}</template>
         </el-table-column>
@@ -198,7 +218,12 @@
           </template>
         </el-table-column>
         <el-table-column prop="created_at" label="创建时间" :width="colWidth('created_at', 170)" />
-        <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 200)" fixed="right">
+        <el-table-column
+          column-key="操作"
+          label="操作"
+          :width="colWidth('操作', 200)"
+          fixed="right"
+        >
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="handleRestore(row)">恢复</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
@@ -262,6 +287,7 @@
 
 <script setup lang="ts">
 import { ref, reactive, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Download, Folder, Clock, Upload, Brush } from '@element-plus/icons-vue'
 import request from '@/api/request'
@@ -269,10 +295,15 @@ import axios from 'axios'
 import { showSuccess, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm, useConfirm } from '@/composables/useConfirm'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+import { useUserStore } from '@/stores/user'
+
+const router = useRouter()
+const userStore = useUserStore()
 
 const { tableRef, onDragEnd, colWidth } = useListColumnWidth('security_backup')
 const loading = ref(false)
 const backingUp = ref(false)
+const accountSetBackingUp = ref(false)
 const cleaning = ref(false)
 const list = ref<any[]>([])
 const fileInputRef = ref<HTMLInputElement>()
@@ -372,17 +403,19 @@ async function fetchData() {
     await Promise.all([
       fetchSettings(),
       fetchStats(),
-      request.get('/security/backups', {
-        params: {
-          page: pagination.page,
-          pageSize: pagination.pageSize,
-          start_date: dateRange.value?.[0] || undefined,
-          end_date: dateRange.value?.[1] || undefined,
-        },
-      }).then((res: any) => {
-        list.value = res.data
-        pagination.total = res.total || 0
-      }),
+      request
+        .get('/security/backups', {
+          params: {
+            page: pagination.page,
+            pageSize: pagination.pageSize,
+            start_date: dateRange.value?.[0] || undefined,
+            end_date: dateRange.value?.[1] || undefined,
+          },
+        })
+        .then((res: any) => {
+          list.value = res.data
+          pagination.total = res.total || 0
+        }),
     ])
   } catch (error) {
     showOperationError('加载备份数据', error)
@@ -407,6 +440,117 @@ function onPageSizeChange(size: number) {
   fetchData()
 }
 
+async function handleAccountSetBackup() {
+  try {
+    accountSetBackingUp.value = true
+
+    // 直接下载单账套备份
+    const token = localStorage.getItem('token')
+    const accountSetId = localStorage.getItem('accountSetId')
+
+    const res = await axios.post(
+      '/api/security/backups/account-set',
+      {},
+      {
+        responseType: 'blob',
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'X-AccountSet-Id': accountSetId || '',
+          Accept: 'application/octet-stream',
+        },
+      }
+    )
+
+    // 检查响应是否为错误（JSON）
+    const contentType = String(res.headers['content-type'] || '')
+    if (contentType.includes('application/json')) {
+      const text = await res.data.text()
+      const error = JSON.parse(text)
+      throw new Error(error.message || '单账套备份失败')
+    }
+
+    // 从响应头获取文件名
+    const contentDisposition = res.headers['content-disposition']
+    let filename = `单账套备份_${new Date().getTime()}.db`
+    if (contentDisposition) {
+      const matches = /filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/.exec(contentDisposition)
+      if (matches && matches[1]) {
+        filename = decodeURIComponent(matches[1].replace(/['"]/g, ''))
+      }
+    }
+
+    // 创建下载链接
+    const url = window.URL.createObjectURL(res.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = filename
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+    window.URL.revokeObjectURL(url)
+
+    const statsHeader = res.headers['x-backup-stats']
+    if (statsHeader) {
+      try {
+        const stats = JSON.parse(decodeURIComponent(statsHeader)) as {
+          accounts?: number
+          vouchers?: number
+          auxCategories?: number
+          auxItems?: number
+          initBalances?: number
+          reportDefinitions?: number
+          voucherAttachments?: number
+          attachmentFilesEmbedded?: number
+        }
+        const parts = [`科目 ${stats.accounts ?? 0} 个`]
+        if ((stats.vouchers ?? 0) > 0) parts.push(`凭证 ${stats.vouchers} 张`)
+        if ((stats.auxCategories ?? 0) > 0 || (stats.auxItems ?? 0) > 0) {
+          parts.push(
+            `辅助类目 ${stats.auxCategories ?? 0} 个、辅助项目 ${stats.auxItems ?? 0} 条`
+          )
+        }
+        if ((stats.initBalances ?? 0) > 0) parts.push(`期初 ${stats.initBalances} 条`)
+        if ((stats.reportDefinitions ?? 0) > 0) {
+          parts.push(`动态报表 ${stats.reportDefinitions} 个`)
+        }
+        const attRecords = stats.voucherAttachments ?? 0
+        const attEmbedded = stats.attachmentFilesEmbedded ?? 0
+        if (attRecords > 0) {
+          const missing = attRecords - attEmbedded
+          if (missing > 0) {
+            parts.push(
+              `附件 ${attRecords} 条（已打包 ${attEmbedded} 个，${missing} 个源文件缺失）`
+            )
+          } else {
+            parts.push(`附件 ${attRecords} 条（已打包 ${attEmbedded} 个文件）`)
+          }
+        }
+        ElMessage.success(`单账套备份已开始下载（${parts.join('，')}）`)
+      } catch {
+        ElMessage.success('单账套备份文件已开始下载')
+      }
+    } else {
+      ElMessage.success('单账套备份文件已开始下载')
+    }
+  } catch (error: any) {
+    // 处理 blob 响应中的错误
+    if (error?.response?.data instanceof Blob) {
+      try {
+        const text = await error.response.data.text()
+        const errorData = JSON.parse(text)
+        ElMessage.error(errorData.message || '单账套备份失败')
+      } catch {
+        ElMessage.error('单账套备份失败')
+      }
+    } else {
+      const errorMsg = error?.response?.data?.message || error?.message || '单账套备份失败'
+      ElMessage.error(errorMsg)
+    }
+  } finally {
+    accountSetBackingUp.value = false
+  }
+}
+
 async function handleBackup() {
   // 打开备份方式选择对话框
   backupMode.value = 'default'
@@ -419,11 +563,12 @@ async function handleDatabaseCleanup() {
     const res = await request.post('/security/database/cleanup')
     if (res.code === 0) {
       const d = res.data
-      const saved = d.savedBytes >= 1073741824
-        ? (d.savedBytes / 1073741824).toFixed(1) + ' GB'
-        : d.savedBytes >= 1048576
-          ? (d.savedBytes / 1048576).toFixed(1) + ' MB'
-          : (d.savedBytes / 1024).toFixed(0) + ' KB'
+      const saved =
+        d.savedBytes >= 1073741824
+          ? (d.savedBytes / 1073741824).toFixed(1) + ' GB'
+          : d.savedBytes >= 1048576
+            ? (d.savedBytes / 1048576).toFixed(1) + ' MB'
+            : (d.savedBytes / 1024).toFixed(0) + ' KB'
       showSuccess(`数据库清理完成！释放 ${saved}（${d.freedPages} 页）`)
       if (d.deletedLogs > 0) {
         ElMessage.info(`已清理 ${d.deletedLogs} 条过期操作日志`)
@@ -445,15 +590,16 @@ async function confirmBackup() {
       const token = localStorage.getItem('token')
       const accountSetId = localStorage.getItem('accountSetId')
 
-      const res = await axios.post('/api/security/backups',
+      const res = await axios.post(
+        '/api/security/backups',
         { download: true },
         {
           responseType: 'blob',
           headers: {
-            'Authorization': `Bearer ${token}`,
+            Authorization: `Bearer ${token}`,
             'X-AccountSet-Id': accountSetId || '',
-            'Accept': 'application/octet-stream'
-          }
+            Accept: 'application/octet-stream',
+          },
         }
       )
 
@@ -516,9 +662,19 @@ async function confirmBackup() {
   }
 }
 
+async function finishRestoreSuccess(message?: string, requireRelogin = true) {
+  showSuccess(message || (requireRelogin ? '恢复成功，即将跳转到登录页' : '恢复成功'))
+  if (requireRelogin) {
+    userStore.logout()
+    await router.replace('/login')
+  } else {
+    await fetchData()
+  }
+}
+
 async function handleRestore(row: any) {
   const confirmed = await useConfirm({
-    message: `即将用「${row.filename}」覆盖当前所有数据，是否继续？`,
+    message: `恢复前将自动备份当前数据，再用「${row.filename}」覆盖恢复。系统将自动比对并升级旧版数据库结构。恢复成功后需重新登录，是否继续？`,
     title: '警告',
     type: 'warning',
     confirmButtonText: '确认恢复',
@@ -527,8 +683,8 @@ async function handleRestore(row: any) {
   if (!confirmed) return
 
   try {
-    await request.post(`/security/backups/${row.id}/restore`)
-    showSuccess('恢复成功，请刷新页面')
+    const res = await request.post(`/security/backups/${row.id}/restore`)
+    await finishRestoreSuccess(res.message)
   } catch (error) {
     showOperationError('恢复备份', error)
   }
@@ -557,7 +713,7 @@ async function handleFileSelected(event: Event) {
   if (!file) return
 
   const confirmed = await useConfirm({
-    message: `即将用「${file.name}」覆盖当前所有数据，是否继续？`,
+    message: `将上传的备份文件恢复到当前账套。单账套备份会合并导入当前账套；完整备份将覆盖整个数据库并需重新登录。恢复前会自动备份当前数据，是否继续？\n\n文件：${file.name}`,
     title: '警告',
     type: 'warning',
     confirmButtonText: '确认恢复',
@@ -572,10 +728,11 @@ async function handleFileSelected(event: Event) {
   formData.append('file', file)
 
   try {
-    await request.post('/security/backups/restore-upload', formData, {
+    const res = await request.post('/security/backups/restore-upload', formData, {
       headers: { 'Content-Type': 'multipart/form-data' },
     })
-    showSuccess('恢复成功，请刷新页面')
+    const requireRelogin = res.data?.restoreType !== 'single_account_set'
+    await finishRestoreSuccess(res.message, requireRelogin)
   } catch (error) {
     showOperationError('导入备份恢复', error)
   }

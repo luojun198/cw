@@ -1,9 +1,8 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h3>账套管理</h3>
+  <PageListLayout title="账套管理">
+    <template #actions>
       <el-button type="primary" @click="openDialog('add')">新增账套</el-button>
-    </div>
+    </template>
 
     <el-table
       ref="tableRef"
@@ -165,14 +164,16 @@
         </el-button>
       </template>
     </el-dialog>
-  </div>
+  </PageListLayout>
 </template>
 
 <script setup lang="ts">
+import PageListLayout from '@/components/layout/PageListLayout.vue'
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import request from '@/api/request'
+import { logout } from '@/api/auth'
 import { useUserStore } from '@/stores/user'
 import { getAccountSetDefaultStartDate } from '@/utils/format'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
@@ -238,8 +239,14 @@ async function fetchStandardTemplates() {
 }
 
 function generateCode() {
-  const count = list.value.length
-  return `ZT${String(count + 1).padStart(3, '0')}`
+  let maxNum = 0
+  for (const item of list.value) {
+    const match = /^ZT(\d+)$/.exec(String(item.code || ''))
+    if (match) {
+      maxNum = Math.max(maxNum, parseInt(match[1], 10))
+    }
+  }
+  return `ZT${String(maxNum + 1).padStart(3, '0')}`
 }
 
 function openDialog(type: string, row?: any) {
@@ -321,13 +328,19 @@ async function handleSave() {
   }
 }
 
-function handleSelect(row: any) {
-  router.push({
+async function handleSelect(row: any) {
+  try {
+    await logout()
+  } catch (error) {
+    console.error('退出登录失败:', error)
+  }
+  useUserStore().logout()
+  await router.push({
     path: '/login',
     query: {
       targetAccountSetId: row.id,
-      targetAccountSetName: row.name
-    }
+      targetAccountSetName: row.name,
+    },
   })
 }
 

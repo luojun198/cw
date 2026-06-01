@@ -1,120 +1,128 @@
 <template>
-  <div class="page">
-    <div class="page-header">
-      <h3>角色管理</h3>
-      <el-button type="primary" @click="openDialog('add')">新增角色</el-button>
-    </div>
+  <div class="page page--perm">
+    <template v-if="pageView === 'list'">
+      <div class="page-header">
+        <h3>角色管理</h3>
+        <div class="page-header-actions">
+          <el-button type="primary" @click="openEditor('add')">新增角色</el-button>
+        </div>
+      </div>
 
-    <el-table
-      ref="tableRef"
-      :data="list"
-      stripe
-      border
-      size="small"
-      class="compact-data-table"
-      height="100%"
-      @header-dragend="onDragEnd"
-    >
-      <el-table-column prop="name" label="角色名称" :width="colWidth('name', 150)" />
-      <el-table-column prop="code" label="角色编码" :width="colWidth('code', 120)" />
-      <el-table-column prop="description" label="描述" :width="colWidth('description', 200)" />
-      <el-table-column prop="is_system" label="类型" :width="colWidth('is_system', 80)">
-        <template #default="{ row }">
-          <el-tag :type="row.is_system ? 'primary' : 'info'" size="small">{{
-            row.is_system ? '系统' : '自定义'
-          }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 140)" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="openDialog('edit', row)">编辑</el-button>
-          <el-button
-            v-if="!row.is_system"
-            link
-            type="danger"
-            size="small"
-            @click="handleDelete(row)"
-          >删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
+      <el-table
+        ref="tableRef"
+        :data="list"
+        stripe
+        border
+        size="small"
+        class="compact-data-table"
+        height="100%"
+        @header-dragend="onDragEnd"
+      >
+        <el-table-column prop="name" label="角色名称" :width="colWidth('name', 150)" />
+        <el-table-column prop="code" label="角色编码" :width="colWidth('code', 120)" />
+        <el-table-column prop="description" label="描述" :width="colWidth('description', 200)" />
+        <el-table-column prop="is_system" label="类型" :width="colWidth('is_system', 120)">
+          <template #default="{ row }">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+              <el-tag :type="row.is_system ? 'primary' : row.is_personal ? 'warning' : 'info'" size="small">
+                {{ row.is_system ? '系统' : row.is_personal ? '个人' : '自定义' }}
+              </el-tag>
+              <span v-if="row.is_personal && row.username" style="font-size: 12px; color: #909399;">
+                用户：{{ row.username }}
+              </span>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column column-key="操作" label="操作" :width="colWidth('操作', 180)" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="!row.is_personal"
+              link
+              type="primary"
+              size="small"
+              @click="openEditor('edit', row)"
+            >编辑</el-button>
+            <el-button
+              v-if="!row.is_system && !row.is_personal"
+              link
+              type="danger"
+              size="small"
+              @click="handleDelete(row)"
+            >删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </template>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="780px">
-      <el-form :model="form" label-width="100px">
-        <el-form-item label="角色名称" required>
-          <el-input v-model="form.name" />
-        </el-form-item>
-        <el-form-item label="角色编码" required>
-          <el-input v-model="form.code" :disabled="dialogType === 'edit'" />
-        </el-form-item>
-        <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="权限配置">
-          <div v-if="permissionGroups.length === 0" class="perm-loading">加载中...</div>
-          <div v-else class="perm-groups">
-            <!-- 顶部全局全选/反选 -->
-            <div class="perm-global-bar">
-              <el-checkbox
-                :model-value="isAllChecked"
-                :indeterminate="isAllIndeterminate"
-                @change="(v: any) => toggleAll(!!v)"
-              >全选</el-checkbox>
-              <el-button link type="primary" size="small" @click="toggleInvert">反选</el-button>
-            </div>
-            <div v-for="group in permissionGroups" :key="group.module" class="perm-group">
-              <div class="perm-group-header">
-                <el-checkbox
-                  :model-value="isGroupAllChecked(group)"
-                  :indeterminate="isGroupIndeterminate(group)"
-                  @change="(v: any) => toggleGroup(group, !!v)"
-                >{{ group.moduleName }}</el-checkbox>
-                <el-button link type="primary" size="small" @click="toggleGroupInvert(group)">反选</el-button>
-              </div>
-              <div class="perm-items">
-                <el-checkbox
-                  v-for="p in group.permissions"
-                  :key="p.code"
-                  v-model="form.permissions"
-                  :label="p.code"
-                >{{ p.name }}</el-checkbox>
-              </div>
-            </div>
+    <template v-else>
+      <div class="page-header page-header--perm">
+        <div class="page-header__left">
+          <el-button @click="closeEditor">返回</el-button>
+          <h3>{{ editorTitle }}</h3>
+        </div>
+        <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+      </div>
+
+      <div class="role-editor">
+        <el-form :model="form" label-width="88px" class="role-editor__form">
+          <div class="role-editor__fields">
+            <el-form-item label="角色名称" required>
+              <el-input v-model="form.name" />
+            </el-form-item>
+            <el-form-item label="角色编码" required>
+              <el-input v-model="form.code" :disabled="editorType === 'edit'" />
+            </el-form-item>
+            <el-form-item label="描述" class="role-editor__desc">
+              <el-input v-model="form.description" />
+            </el-form-item>
           </div>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="handleSave">保存</el-button>
-      </template>
-    </el-dialog>
+        </el-form>
+
+        <el-tabs v-model="editorTab" class="role-editor__tabs">
+          <el-tab-pane label="功能权限" name="perm">
+            <PermissionConfigPanel v-model:permissions="form.permissions" />
+          </el-tab-pane>
+          <el-tab-pane label="科目授权" name="account">
+            <AccountScopeTree v-model="form.account_scope" />
+          </el-tab-pane>
+        </el-tabs>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
+import { ElMessage } from 'element-plus'
 import request from '@/api/request'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
-
-interface PermissionItem {
-  code: string
-  name: string
-  acdCode?: string
-}
-
-interface PermissionGroup {
-  module: string
-  moduleName: string
-  permissions: PermissionItem[]
-}
+import PermissionConfigPanel from '@/components/system/PermissionConfigPanel.vue'
+import AccountScopeTree, { type AccountScopeValue } from '@/components/system/AccountScopeTree.vue'
 
 const { tableRef, onDragEnd, colWidth } = useListColumnWidth('system_role')
 const list = ref<any[]>([])
-const dialogVisible = ref(false)
-const dialogType = ref('add')
-const dialogTitle = computed(() => (dialogType.value === 'add' ? '新增角色' : '编辑角色'))
-const form = ref<any>({ permissions: [] })
-const permissionGroups = ref<PermissionGroup[]>([])
+const pageView = ref<'list' | 'editor'>('list')
+const editorType = ref('add')
+const editorTitle = computed(() => (editorType.value === 'add' ? '新增角色' : '编辑角色'))
+const defaultAccountScope = (): AccountScopeValue => ({ enabled: false, account_ids: [] })
+const form = ref<any>({
+  name: '',
+  code: '',
+  description: '',
+  permissions: [],
+  account_scope: defaultAccountScope(),
+})
+const editorTab = ref('perm')
+const saving = ref(false)
+
+async function loadRoleAccountScope(roleId: string) {
+  try {
+    const res = await request.get<AccountScopeValue>(`/system/roles/${roleId}/account-scopes`)
+    form.value.account_scope = res.data || defaultAccountScope()
+  } catch {
+    form.value.account_scope = defaultAccountScope()
+  }
+}
 
 async function fetchData() {
   const res = await request.get<any[]>('/system/roles')
@@ -124,87 +132,62 @@ async function fetchData() {
   }))
 }
 
-async function fetchPermissions() {
-  const res = await request.get<PermissionGroup[]>('/system/permissions')
-  permissionGroups.value = res.data
-}
-
-function isGroupAllChecked(group: PermissionGroup): boolean {
-  return group.permissions.every(p => form.value.permissions.includes(p.code))
-}
-
-function isGroupIndeterminate(group: PermissionGroup): boolean {
-  const checked = group.permissions.filter(p => form.value.permissions.includes(p.code))
-  return checked.length > 0 && checked.length < group.permissions.length
-}
-
-/** 全局：所有权限code */
-const allPermCodes = computed(() =>
-  permissionGroups.value.flatMap(g => g.permissions.map(p => p.code))
-)
-
-const isAllChecked = computed(() =>
-  allPermCodes.value.length > 0 && allPermCodes.value.every(c => form.value.permissions.includes(c))
-)
-
-const isAllIndeterminate = computed(() => {
-  const checked = allPermCodes.value.filter(c => form.value.permissions.includes(c))
-  return checked.length > 0 && checked.length < allPermCodes.value.length
-})
-
-/** 全局全选/取消全选 */
-function toggleAll(checked: boolean) {
-  if (checked) {
-    form.value.permissions = [...allPermCodes.value]
-  } else {
-    form.value.permissions = []
-  }
-}
-
-/** 全局反选 */
-function toggleInvert() {
-  const set = new Set(form.value.permissions)
-  form.value.permissions = allPermCodes.value.filter(c => !set.has(c))
-}
-
-/** 单组全选/取消全选 */
-function toggleGroup(group: PermissionGroup, checked: boolean) {
-  const codes = group.permissions.map(p => p.code)
-  if (checked) {
-    const existing = new Set(form.value.permissions)
-    codes.forEach(c => existing.add(c))
-    form.value.permissions = Array.from(existing)
-  } else {
-    form.value.permissions = form.value.permissions.filter((c: string) => !codes.includes(c))
-  }
-}
-
-/** 单组反选 */
-function toggleGroupInvert(group: PermissionGroup) {
-  const codes = group.permissions.map(p => p.code)
-  const codeSet = new Set(codes)
-  const others = form.value.permissions.filter((c: string) => !codeSet.has(c))
-  const inverted = codes.filter(c => !form.value.permissions.includes(c))
-  form.value.permissions = [...others, ...inverted]
-}
-
-function openDialog(type: string, row?: any) {
-  dialogType.value = type
+async function openEditor(type: string, row?: any) {
+  editorType.value = type
+  editorTab.value = 'perm'
   form.value =
     type === 'add'
-      ? { name: '', code: '', description: '', permissions: [] }
-      : { ...row, permissions: Array.isArray(row.permissions) ? [...row.permissions] : [] }
-  dialogVisible.value = true
+      ? {
+          name: '',
+          code: '',
+          description: '',
+          permissions: [],
+          account_scope: defaultAccountScope(),
+        }
+      : {
+          ...row,
+          permissions: Array.isArray(row.permissions) ? [...row.permissions] : [],
+          account_scope: defaultAccountScope(),
+        }
+  pageView.value = 'editor'
+  if (type === 'edit' && row?.id) {
+    await loadRoleAccountScope(row.id)
+  }
+}
+
+function closeEditor() {
+  pageView.value = 'list'
 }
 
 async function handleSave() {
-  if (dialogType.value === 'add') {
-    await request.post('/system/roles', form.value)
-  } else {
-    await request.put(`/system/roles/${form.value.id}`, form.value)
+  if (!form.value.name?.trim()) {
+    ElMessage.warning('请输入角色名称')
+    return
   }
-  dialogVisible.value = false
-  fetchData()
+  if (!form.value.code?.trim()) {
+    ElMessage.warning('请输入角色编码')
+    return
+  }
+
+  saving.value = true
+  try {
+    const { account_scope, ...rolePayload } = form.value
+    let roleId = form.value.id as string | undefined
+    if (editorType.value === 'add') {
+      const res = await request.post<{ id: string }>('/system/roles', rolePayload)
+      roleId = res.data?.id
+    } else {
+      await request.put(`/system/roles/${form.value.id}`, rolePayload)
+    }
+    if (roleId) {
+      await request.put(`/system/roles/${roleId}/account-scopes`, account_scope || defaultAccountScope())
+    }
+    ElMessage.success(editorType.value === 'add' ? '新增角色成功' : '保存成功')
+    pageView.value = 'list'
+    await fetchData()
+  } finally {
+    saving.value = false
+  }
 }
 
 async function handleDelete(row: any) {
@@ -212,54 +195,67 @@ async function handleDelete(row: any) {
   fetchData()
 }
 
-onMounted(() => {
-  fetchData()
-  fetchPermissions()
-})
+onMounted(fetchData)
 </script>
 
 <style scoped>
-.perm-loading {
-  color: #999;
-  font-size: 13px;
-}
-.perm-groups {
-  width: 100%;
+.page--perm {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  height: 100%;
+  min-height: 0;
 }
-.perm-global-bar {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  padding: 8px 12px;
-  background: #ecf5ff;
-  border-radius: 4px;
-  border: 1px solid #b3d8ff;
-}
-.perm-group {
-  border: 1px solid #e4e7ed;
-  border-radius: 4px;
-  overflow: hidden;
-}
-.perm-group-header {
-  background: #f5f7fa;
-  padding: 6px 12px;
-  font-weight: 600;
-  border-bottom: 1px solid #e4e7ed;
+
+.page-header--perm {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-shrink: 0;
 }
-.perm-items {
-  padding: 8px 12px;
+
+.page-header__left {
   display: flex;
-  flex-wrap: wrap;
-  gap: 4px 0;
+  align-items: center;
+  gap: 12px;
 }
-.perm-items .el-checkbox {
-  width: 25%;
-  margin-right: 0;
+
+.page-header__left h3 {
+  margin: 0;
+}
+
+.role-editor {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  gap: 8px;
+}
+
+.role-editor__form {
+  flex-shrink: 0;
+}
+
+.role-editor__fields {
+  display: grid;
+  grid-template-columns: 220px 220px 1fr;
+  gap: 0 16px;
+  align-items: start;
+}
+
+.role-editor__desc {
+  margin-bottom: 0;
+}
+
+.role-editor__tabs {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.role-editor__tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
 }
 </style>

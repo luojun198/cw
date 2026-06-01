@@ -9,14 +9,14 @@ if (!acdPath) {
   process.exit(1)
 }
 
-try {
+async function run() {
   console.log('开始导入ACD文件:', acdPath)
   console.log('账套名称:', accountSetName)
 
   const acdBuffer = readFileSync(acdPath)
   console.log('文件大小:', acdBuffer.length, 'bytes')
 
-  const result = acdImportService({
+  const result = await acdImportService({
     acdBuffer,
     name: accountSetName,
     code: `AS${Date.now()}`,
@@ -34,10 +34,12 @@ try {
   console.log('- 凭证数量:', result.stats.vouchers)
   console.log('- 分录数量:', result.stats.entries)
   console.log('- 辅助核算项:', result.stats.auxItems)
-
-  process.exit(0)
-} catch (error: any) {
-  console.error('\n导入失败:', error.message)
-  console.error(error.stack)
-  process.exit(1)
 }
+
+run()
+  .then(() => process.exit(0))
+  .catch((error: any) => {
+    console.error('\n导入失败:', error.message)
+    console.error(error.stack)
+    process.exit(1)
+  })

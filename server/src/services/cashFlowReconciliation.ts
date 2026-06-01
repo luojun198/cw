@@ -1,4 +1,5 @@
 import type { Database } from 'better-sqlite3'
+import type { AccountScopeContext } from './accountAuthorization.js'
 import { isCashFlowEnabledForAccountSet } from './voucherEntry.js'
 import { getDirectMethodActivityTotals } from './cashFlowAmount.js'
 import {
@@ -125,7 +126,8 @@ export function buildCashFlowReconciliation(
   year: number,
   period: number,
   staticData: StaticCashFlowReportData,
-  scope: CashFlowReportScope = 'month'
+  scope: CashFlowReportScope = 'month',
+  accountScope?: AccountScopeContext
 ): CashFlowReconciliation {
   const validation = validateStaticCashFlowReport(staticData)
   const result: CashFlowReconciliation = { validation }
@@ -149,7 +151,7 @@ export function buildCashFlowReconciliation(
     })
   }
 
-  const dynamic = getDynamicCashFlowTotals(db, accountSetId, year, period, scope)
+  const dynamic = getDynamicCashFlowTotals(db, accountSetId, year, period, scope, accountScope)
   if (dynamic) {
     result.dynamicMethod = dynamic
     const netOperatingStatic = activityNet(staticData.operatingActivities)
@@ -180,7 +182,14 @@ export function buildCashFlowReconciliation(
     return result
   }
 
-  const direct = getDirectMethodActivityTotals(db, accountSetId, year, period, period)
+  const direct = getDirectMethodActivityTotals(
+    db,
+    accountSetId,
+    year,
+    period,
+    period,
+    accountScope
+  )
   result.directMethod = {
     operating: direct.operating,
     investing: direct.investing,

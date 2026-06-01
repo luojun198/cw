@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
 import { getDb } from '../db/index.js'
+import { isVoucherVisibleInAccountScope } from '../services/accountAuthorization.js'
 
 const router = Router()
 router.use(authMiddleware)
@@ -21,6 +22,12 @@ router.post('/ai/anomaly-check', async (req: AuthRequest, res) => {
   }
 
   const voucher = db.prepare('SELECT * FROM vouchers WHERE id=?').get(voucher_id) as any
+  if (
+    req.accountScope &&
+    !isVoucherVisibleInAccountScope(db, req.accountScope, voucher_id, req.accountSetId || '')
+  ) {
+    return res.status(403).json({ code: 403, message: '无权查看该凭证' })
+  }
   const entries = db
     .prepare(
       'SELECT ve.*, a.name as account_name FROM voucher_entries ve JOIN accounts a ON a.id=ve.account_id WHERE ve.voucher_id=?'
