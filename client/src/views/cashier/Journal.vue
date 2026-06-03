@@ -1,7 +1,7 @@
 <template>
   <div class="page page-cashier-journal">
     <div class="page-header">
-      <h3>出纳日记账</h3>
+      <h3>出纳单据</h3>
       <div class="filter-row">
         <el-select
           v-model="filters.account_code"
@@ -50,6 +50,9 @@
         <el-button plain @click="showReconcile = true" :disabled="!filters.account_code">
           <el-icon><Connection /></el-icon>银行对账
         </el-button>
+        <el-button type="success" plain :disabled="!filters.account_code" :loading="generating" @click="handleGenerateVoucher">
+          <el-icon><DocumentAdd /></el-icon>生成凭证
+        </el-button>
       </div>
     </div>
 
@@ -79,7 +82,11 @@
         <el-table-column label="结算方式" prop="settle_type" width="90" />
         <el-table-column label="票据号" prop="bill_no" width="110" show-overflow-tooltip />
         <el-table-column label="对方单位" prop="counter_unit" width="130" show-overflow-tooltip />
-        <el-table-column label="对方科目" prop="counter_account" width="100" />
+        <el-table-column label="对方科目" width="130" show-overflow-tooltip>
+          <template #default="{ row }">
+            {{ formatCounterAccount(row.counter_account) }}
+          </template>
+        </el-table-column>
         <el-table-column label="借方(收入)" prop="debit" width="120" align="right">
           <template #default="{ row }">
             <span v-if="row.debit" class="debit">{{ fmt(row.debit) }}</span>
@@ -140,8 +147,50 @@
           <el-input v-model="form.counter_unit" />
         </el-form-item>
         <el-form-item label="对方科目">
-          <el-input v-model="form.counter_account" />
+          <el-select
+            v-model="form.counter_account"
+            filterable
+            clearable
+            placeholder="输入编码或名称检索"
+            style="width:100%"
+            popper-class="counter-account-popper"
+            :filter-method="onCounterFilter"
+            @visible-change="onCounterVisibleChange"
+            @change="onCounterAccountChange"
+          >
+            <el-option
+              v-for="a in filteredCounterAccounts"
+              :key="a.code"
+              :label="`${a.code} ${a.name}`"
+              :value="a.isParent ? '' : a.code"
+              :disabled="a.isParent"
+              :class="{ 'parent-option': a.isParent }"
+            />
+          </el-select>
         </el-form-item>
+        <template v-if="counterAccountAuxCategoryIds.length > 0">
+          <el-form-item
+            v-for="catId in counterAccountAuxCategoryIds"
+            :key="catId"
+            :label="getAuxCategoryName(catId)"
+          >
+            <el-select
+              v-model="counterAuxSelections[catId]"
+              filterable
+              clearable
+              placeholder="选择辅助项目（可选）"
+              style="width:100%"
+              @visible-change="(v: boolean) => v && auxItems.onDropdownOpen(catId)"
+            >
+              <el-option
+                v-for="item in auxItems.getAuxOptions(catId)"
+                :key="item.id"
+                :label="`${item.code ?? ''} ${item.name}`"
+                :value="item.id"
+              />
+            </el-select>
+          </el-form-item>
+        </template>
         <el-form-item label="开户行">
           <el-input v-model="form.bank_name" />
         </el-form-item>
@@ -182,13 +231,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Search, Plus, Connection, CircleCheck } from '@element-plus/icons-vue'
+import { Search, Plus, Connection, CircleCheck, DocumentAdd } from '@element-plus/icons-vue'
 import { cashierApi, type JournalRow, type JournalResult, type SettleType, type BankStatement } from '@/api/cashier'
+import { useBaseDataStore } from '@/stores/baseData'
 import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import { useVoucherAuxItems } from '@/composables/useVoucherAuxItems'
 
 const { tableRef, containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+const baseData = useBaseDataStore()
+const auxItems = useVoucherAuxItems()
 
 const accounts = ref<{ code: string; name: string; is_cash: number; is_bank: number }[]>([])
 const cashAccounts = computed(() => accounts.value.filter(a => a.is_cash))
@@ -197,23 +250,119 @@ const settleTypes = ref<SettleType[]>([])
 const journalResult = ref<JournalResult | null>(null)
 const rows = computed(() => journalResult.value?.rows ?? [])
 
-const filters = ref({ account_code: '', start_date: '', end_date: '' })
+const firstDay = `${new Date().getFullYear()}-${String(new Date().getMonth() + 1).padStart(2, '0')}-01`
+const lastDay = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0)
+const lastDayStr = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, '0')}-${String(lastDay.getDate()).padStart(2, '0')}`
+const filters = ref({ account_code: '', start_date: firstDay, end_date: lastDayStr })
 
 const dialogVisible = ref(false)
 const editRow = ref<JournalRow | null>(null)
 const saving = ref(false)
 const form = ref<Partial<JournalRow>>({})
+const counterAuxSelections = ref<Record<string, string>>({})
+
+/** 对方科目启用的辅助核算类别 ID 列表 */
+const counterAccountAuxCategoryIds = computed((): string[] => {
+  const code = form.value.counter_account
+  if (!code) return []
+  const acc = (baseData.accounts as any[]).find(a => a.code === code)
+  if (!acc?.is_aux || !acc?.aux_types) return []
+  try {
+    const parsed = typeof acc.aux_types === 'string' ? JSON.parse(acc.aux_types) : acc.aux_types
+    if (Array.isArray(parsed)) return parsed as string[]
+    if (parsed && typeof parsed === 'object') return Object.keys(parsed)
+  } catch { /* ignore */ }
+  return []
+})
+
+const auxCategoryMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const cat of baseData.auxCategories) map.set(String(cat.id), cat.name)
+  return map
+})
+function getAuxCategoryName(catId: string) {
+  return auxCategoryMap.value.get(catId) || '辅助项目'
+}
+
+async function onCounterAccountChange(_code: string | undefined) {
+  counterAuxSelections.value = {}
+  const catIds = counterAccountAuxCategoryIds.value
+  for (const catId of catIds) {
+    await auxItems.onDropdownOpen(catId)
+  }
+}
+
+/** 对方科目候选：全部启用科目，父科目标记不可选（虚拟上级） */
+const counterAccounts = computed(() => {
+  const all = baseData.accounts
+  if (!all.length) return [] as { code: string; name: string; isParent: boolean }[]
+  const parentIds = new Set(all.filter(a => a.parent_id).map(a => String(a.parent_id)))
+  return all
+    .filter(a => a.is_enabled !== 0)
+    .map(a => ({
+      code: a.code,
+      name: a.name,
+      isParent: parentIds.has(String(a.id)),
+    }))
+    .sort((a, b) => a.code.localeCompare(b.code))
+})
+
+const counterFilter = ref('')
+const filteredCounterAccounts = computed(() => {
+  const q = counterFilter.value.trim().toLowerCase()
+  if (!q) return counterAccounts.value
+  // 匹配末级 + 其父科目（父科目始终跟在匹配的末级前）
+  const matched = counterAccounts.value.filter(
+    a => a.code.toLowerCase().includes(q) || a.name.toLowerCase().includes(q)
+  )
+  // 对于匹配到的末级科目，把它们的直接父级也带出来
+  if (q) {
+    const ids = new Set(matched.map(a => a.code))
+    for (const a of matched) {
+      if (!a.isParent) {
+        const parent = counterAccounts.value.find(
+          p => p.isParent && a.code.startsWith(p.code) && a.code !== p.code
+        )
+        if (parent && !ids.has(parent.code)) {
+          matched.unshift(parent)
+          ids.add(parent.code)
+        }
+      }
+    }
+  }
+  return matched
+})
+function onCounterFilter(val: string) { counterFilter.value = val }
+function onCounterVisibleChange(visible: boolean) { if (!visible) counterFilter.value = '' }
+
+const counterAccountMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const a of counterAccounts.value) map.set(a.code, a.name || '')
+  return map
+})
+function formatCounterAccount(code: string | null) {
+  if (!code) return ''
+  const name = counterAccountMap.value.get(code)
+  return name ? `${code} ${name}` : code
+}
 
 const showReconcile = ref(false)
 const reconciling = ref(false)
+const generating = ref(false)
 const reconDate = ref<string[]>(['', ''])
 const unmatched = ref<BankStatement[]>([])
 
+const now = new Date()
 const fmt = (v: number) =>
   v === 0 ? '' : v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 onMounted(async () => {
-  const [acRes, stRes] = await Promise.all([cashierApi.getAccounts(), cashierApi.getSettleTypes()])
+  const [acRes, stRes] = await Promise.all([
+    cashierApi.getAccounts(),
+    cashierApi.getSettleTypes(),
+    baseData.loadAccounts(),
+    baseData.loadAuxCategories(),
+  ])
   if (acRes.code === 0) accounts.value = acRes.data
   if (stRes.code === 0) settleTypes.value = stRes.data
   if (accounts.value.length) {
@@ -235,23 +384,37 @@ async function handleQuery() {
 function openAddDialog() {
   editRow.value = null
   form.value = { biz_date: new Date().toISOString().slice(0, 10), debit: 0, credit: 0 }
+  counterAuxSelections.value = {}
   dialogVisible.value = true
 }
 
 function openEditDialog(row: JournalRow) {
   editRow.value = row
   form.value = { ...row }
+  counterAuxSelections.value = {}
+  if (row.counter_aux_item_id) {
+    try { Object.assign(counterAuxSelections.value, JSON.parse(row.counter_aux_item_id)) } catch { /* ignore */ }
+  }
   dialogVisible.value = true
+  if (row.counter_account) {
+    nextTick(async () => {
+      for (const catId of counterAccountAuxCategoryIds.value) {
+        await auxItems.onDropdownOpen(catId)
+      }
+    })
+  }
 }
 
 async function handleSave() {
   if (!form.value.biz_date) return ElMessage.warning('请填写日期')
+  const selected = Object.fromEntries(Object.entries(counterAuxSelections.value).filter(([, v]) => v))
+  const counter_aux_item_id = Object.keys(selected).length > 0 ? JSON.stringify(selected) : null
   saving.value = true
   try {
     if (editRow.value) {
-      await cashierApi.updateJournal(editRow.value.id, form.value)
+      await cashierApi.updateJournal(editRow.value.id, { ...form.value, counter_aux_item_id })
     } else {
-      await cashierApi.createJournal({ ...form.value, account_code: filters.value.account_code })
+      await cashierApi.createJournal({ ...form.value, account_code: filters.value.account_code, counter_aux_item_id })
     }
     dialogVisible.value = false
     handleQuery()
@@ -286,6 +449,34 @@ async function handleAutoReconcile() {
     if (res.code === 0) {
       ElMessage.success(`自动勾对完成，匹配 ${res.data.matched} 条`)
       await Promise.all([loadUnmatched(), handleQuery()])
+
+async function handleGenerateVoucher() {
+  // 当前会计期间（当年当月）
+  const y = now.getFullYear()
+  const m = now.getMonth() + 1
+  const start = `${y}-${String(m).padStart(2,'0')}-01`
+  const lastDay = new Date(y, m, 0).getDate()
+  const end = `${y}-${String(m).padStart(2,'0')}-${String(lastDay).padStart(2,'0')}`
+
+  try {
+    await ElMessageBox.confirm(
+      `将当前会计期间（${start} 至 ${end}）已对账的出纳记录生成为会计凭证，确定继续？`,
+      '生成凭证', { type: 'info' }
+    )
+  } catch { return }
+  generating.value = true
+  try {
+    const res = await cashierApi.generateVoucher({
+      account_code: filters.value.account_code,
+      start_date: start,
+      end_date: end,
+    })
+    if (res.code === 0) {
+      ElMessage.success(`凭证 ${res.data.voucherNo} 已生成，同步 ${res.data.syncedCount} 条记录`)
+      handleQuery()
+    }
+  } finally { generating.value = false }
+}
     }
   } finally {
     reconciling.value = false
@@ -293,8 +484,6 @@ async function handleAutoReconcile() {
 }
 
 // 打开对账面板时加载对账单
-const origShowReconcile = showReconcile
-import { watch } from 'vue'
 watch(showReconcile, v => { if (v) loadUnmatched() })
 </script>
 
@@ -308,4 +497,20 @@ watch(showReconcile, v => { if (v) loadUnmatched() })
 .debit { color: #409eff; }
 .credit { color: #f56c6c; }
 .table-container { flex: 1; overflow: hidden; padding: 0 16px 8px; }
+:deep(.parent-option) { color: #c0c4cc; font-style: italic; }
+</style>
+
+<style>
+/* 对方科目下拉：键盘+鼠标焦点深蓝色（非 scoped，因 el-select popper teleport 到 body，scoped 无效） */
+.counter-account-popper .el-select-dropdown__item.selected:not(.is-disabled),
+.counter-account-popper .el-select-dropdown__item.is-hovering:not(.is-disabled),
+.counter-account-popper .el-select-dropdown__item:hover:not(.is-disabled) {
+  background-color: #1d4ed8 !important;
+  color: #fff;
+}
+.counter-account-popper .el-select-dropdown__item.selected .parent-option,
+.counter-account-popper .el-select-dropdown__item.is-hovering .parent-option,
+.counter-account-popper .el-select-dropdown__item:hover .parent-option {
+  color: #93c5fd;
+}
 </style>

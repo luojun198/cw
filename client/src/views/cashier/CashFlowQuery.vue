@@ -1,0 +1,146 @@
+<template>
+  <div class="page page-flow-query">
+    <div class="page-header">
+      <h3>出纳流水账</h3>
+      <div class="filter-row">
+        <el-select v-model="filters.account_code" filterable placeholder="选择科目" style="width:220px" @change="handleQuery">
+          <el-option-group label="现金科目">
+            <el-option v-for="a in cashAccounts" :key="a.code" :label="`${a.code} ${a.name}`" :value="a.code" />
+          </el-option-group>
+          <el-option-group label="银行存款">
+            <el-option v-for="a in bankAccounts" :key="a.code" :label="`${a.code} ${a.name}`" :value="a.code" />
+          </el-option-group>
+        </el-select>
+        <el-date-picker v-model="filters.start_date" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" style="width:140px" />
+        <el-date-picker v-model="filters.end_date" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" style="width:140px" />
+        <el-button type="primary" @click="handleQuery">
+          <el-icon><Search /></el-icon>查询
+        </el-button>
+        <el-button plain @click="handlePrint">
+          <el-icon><Printer /></el-icon>打印
+        </el-button>
+      </div>
+    </div>
+
+    <!-- 余额摘要 -->
+    <div v-if="journalResult" class="balance-summary">
+      <span>期初余额：<b>{{ fmt(journalResult.opening) }}</b></span>
+      <span>本期收入：<b class="debit">{{ fmt(journalResult.totalDebit) }}</b></span>
+      <span>本期支出：<b class="credit">{{ fmt(journalResult.totalCredit) }}</b></span>
+      <span>期末余额：<b>{{ fmt(journalResult.closing) }}</b></span>
+    </div>
+
+    <!-- 流水表格 -->
+    <div ref="tableContainerRef" class="table-container">
+      <el-table ref="tableRef" :data="rows" :height="tableHeight" border stripe size="small" :row-class-name="rowClassName">
+        <el-table-column label="日期" prop="biz_date" width="100" />
+        <el-table-column label="摘要" prop="summary" min-width="140" show-overflow-tooltip />
+        <el-table-column label="结算方式" prop="settle_type" width="90" />
+        <el-table-column label="票据号" prop="bill_no" width="110" show-overflow-tooltip />
+        <el-table-column label="对方单位" prop="counter_unit" width="120" show-overflow-tooltip />
+        <el-table-column label="借方(收入)" prop="debit" width="120" align="right">
+          <template #default="{ row }"><span v-if="row.debit" class="debit">{{ fmt(row.debit) }}</span></template>
+        </el-table-column>
+        <el-table-column label="贷方(支出)" prop="credit" width="120" align="right">
+          <template #default="{ row }"><span v-if="row.credit" class="credit">{{ fmt(row.credit) }}</span></template>
+        </el-table-column>
+        <el-table-column label="余额" prop="balance" width="120" align="right">
+          <template #default="{ row }">{{ fmt(row.balance ?? 0) }}</template>
+        </el-table-column>
+        <el-table-column label="已对账" width="70" align="center">
+          <template #default="{ row }">
+            <el-icon v-if="row.reconciled" color="#67c23a"><CircleCheck /></el-icon>
+          </template>
+        </el-table-column>
+        <el-table-column label="关联凭证" width="110">
+          <template #default="{ row }">
+            <span v-if="row.voucher_no">
+              {{ row.voucher_year }}-{{ String(row.voucher_month).padStart(2,'0') }} #{{ row.voucher_no }}
+            </span>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div v-if="rows.length" class="table-footer">
+      <span>共 {{ journalResult ? journalResult.rows.length : 0 }} 条记录</span>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { Search, Printer, CircleCheck } from '@element-plus/icons-vue'
+import { cashierApi, type JournalResult } from '@/api/cashier'
+import { useFillHeightTable } from '@/composables/useFillHeightTable'
+
+const { tableRef, containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+
+const accounts = ref<{ code: string; name: string; is_cash: number; is_bank: number }[]>([])
+const cashAccounts = computed(() => accounts.value.filter(a => a.is_cash))
+const bankAccounts = computed(() => accounts.value.filter(a => a.is_bank && !a.is_cash))
+const journalResult = ref<JournalResult | null>(null)
+const rows = computed(() => {
+  const raw = journalResult.value?.rows ?? []
+  if (raw.length === 0 && !journalResult.value) return []
+  const opening = journalResult.value?.opening ?? 0
+  return [
+    {
+      id: '__opening__',
+      account_code: filters.value.account_code,
+      currency: 'RMB', biz_date: '', seq: -1,
+      summary: '期初余额', debit: 0, credit: 0,
+      settle_type: null, bill_no: null, counter_unit: null, counter_account: null,
+      reconciled: 0, voucher_year: null, voucher_month: null, voucher_type: null, voucher_no: null,
+      balance: opening,
+      _is_opening: true,
+    },
+    ...raw,
+  ]
+})
+
+const rowClassName = ({ row }: any) => row._is_opening ? 'opening-row' : ''
+
+const now = new Date()
+const filters = ref({ account_code: '', start_date: `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-01`, end_date: '' })
+
+const fmt = (v: number) => v === 0 ? '0.00' : v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+onMounted(async () => {
+  const res = await cashierApi.getAccounts()
+  if (res.code === 0) {
+    accounts.value = res.data
+    if (accounts.value.length) {
+      filters.value.account_code = accounts.value[0].code
+      handleQuery()
+    }
+  }
+})
+
+async function handleQuery() {
+  if (!filters.value.account_code) return
+  const res = await cashierApi.getJournal({
+    account_code: filters.value.account_code,
+    start_date: filters.value.start_date || undefined,
+    end_date: filters.value.end_date || undefined,
+  })
+  if (res.code === 0) journalResult.value = res.data
+}
+
+function handlePrint() { window.print() }
+</script>
+
+<style scoped>
+.page-flow-query { display: flex; flex-direction: column; height: 100%; }
+.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
+.page-header h3 { margin: 0 0 8px; font-size: 15px; }
+.filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.balance-summary { display: flex; gap: 24px; padding: 6px 16px; background: var(--el-fill-color-lighter); font-size: 13px; }
+.balance-summary b { font-weight: 600; }
+.debit { color: #409eff; }
+.credit { color: #f56c6c; }
+.table-container { flex: 1; overflow: hidden; padding: 0 16px 0; }
+.table-footer { padding: 4px 16px; font-size: 12px; color: var(--el-text-color-secondary); border-top: 1px solid var(--el-border-color-lighter); }
+:deep(.opening-row) { background: var(--el-fill-color-light); font-style: italic; }
+:deep(.opening-row td) { color: var(--el-text-color-secondary); }
+</style>

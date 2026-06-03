@@ -3339,8 +3339,14 @@ export function importAcdTemplateToAccountSet(
     }
     // Skip initBalances for template import
     // Skip vouchers for template import
-    // Skip report templates from ACD (VTS parsing is unreliable, use Excel import instead)
-    // importReportTemplates(accountSet.id, tables, stats, false)
+    // 导入 ACD 报表模板（VTS 解析在某些边界情况下可能不完美，
+    // 但至少提供可用的初始模板；用户后续可通过 Excel 导入覆盖）
+    try {
+      importReportTemplates(accountSet.id, tables, stats, false)
+    } catch (err: any) {
+      console.warn('[ACD] 报表模板导入失败（不影响其他数据）:', err.message)
+      stats.warnings.push(`报表模板导入失败: ${err.message}`)
+    }
     // Skip ACD users for template import
   }
 

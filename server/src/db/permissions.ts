@@ -94,6 +94,11 @@ export const PERMISSIONS: PermissionDef[] = [
   { code: 'cashier:journal',  name: '出纳日记账',   module: 'cashier', moduleName: '出纳管理', acdCode: '422' },
   { code: 'cashier:initbal',  name: '出纳期初',     module: 'cashier', moduleName: '出纳管理' },
   { code: 'cashier:reconcile',name: '银行对账',     module: 'cashier', moduleName: '出纳管理' },
+
+  // ── 固定资产 ──────────────────────────────────────────
+  { code: 'asset:view',       name: '固定资产查看', module: 'cashier', moduleName: '出纳管理' },
+  { code: 'asset:edit',       name: '固定资产编辑', module: 'cashier', moduleName: '出纳管理' },
+  { code: 'asset:dict',       name: '固定资产字典', module: 'cashier', moduleName: '出纳管理' },
 ]
 
 /** 按模块分组 */
@@ -140,6 +145,7 @@ export const PRESET_ROLES = [
       'report:view', 'report:print', 'report:export',
       'base:account', 'base:summary', 'base:template',
       'period:init',
+      'cashier:journal', 'cashier:initbal', 'cashier:reconcile',
     ],
   },
   {

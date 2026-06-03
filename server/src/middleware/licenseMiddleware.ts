@@ -47,13 +47,15 @@ export function licenseMiddleware(req: Request, res: Response, next: NextFunctio
     }
     return next()
   } catch (err) {
-    log.error('license check failed', {
+    const detail = err instanceof Error ? err.message : String(err)
+    log.error('license check failed with unexpected error', {
       path: req.path,
-      error: err instanceof Error ? err.message : String(err),
+      error: detail,
+      stack: err instanceof Error ? err.stack : undefined,
     })
-    return res.status(500).json({
-      code: 500,
-      message: '授权校验失败，请重启服务或联系技术支持',
-    })
+    // 授权校验异常时不应阻断服务，降级为通过（允许继续处理请求）
+    // 这是缓解首次启动或特殊环境下 getMachineId() 等调用偶发失败的措施
+    log.warn('license check degraded: allowing request due to unexpected error', { path: req.path })
+    return next()
   }
 }

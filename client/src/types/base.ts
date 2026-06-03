@@ -17,6 +17,8 @@ export interface Account {
   parent_id?: number | string | null
   direction?: 'debit' | 'credit'
   account_type?: string
+  is_aux?: number
+  aux_types?: string | null
 }
 
 /** 辅助核算类别 */

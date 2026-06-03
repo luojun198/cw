@@ -5,7 +5,7 @@
   "type": "module",
   "bin": "dist/bundle.cjs",
   "scripts": {
-    "dev": "cross-env SCHEMA_DIR=src/db node --watch --import tsx/esm src/index.ts",
+    "dev": "cross-env SCHEMA_DIR=src/db node --watch-path=./src --import tsx/esm src/index.ts",
     "build": "tsc",
     "build:bundle": "node scripts/buildBundle.mjs",
     "start": "node dist/bundle.cjs",

@@ -77,6 +77,9 @@ import reportAiRoutes from './routes/reportAi.js'
 import reportTemplateRoutes from './routes/reportTemplate.js'
 import dashboardRoutes from './routes/dashboard.js'
 import cashierRoutes from './routes/cashierJournal.js'
+import fixedAssetRoutes from './routes/fixedAsset.js'
+import acdExportRoutes from './routes/acdExport.js'
+import cashierImportRoutes from './routes/cashierImport.js'
 import backupRoutes from './routes/backup.js'
 import licenseRoutes from './routes/license.js'
 import { licenseMiddleware } from './middleware/licenseMiddleware.js'
@@ -246,6 +249,9 @@ app.use('/api/report', reportTemplateRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/security', backupRoutes)
 app.use('/api', cashierRoutes)
+app.use('/api', fixedAssetRoutes)
+app.use('/api', acdExportRoutes)
+app.use('/api', cashierImportRoutes)
 
 // 静态文件服务（前端页面）
 const clientDist = resolve(EXE_DIR, 'client', 'dist')

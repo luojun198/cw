@@ -79,6 +79,30 @@ import {
   up as addFixedAssetUp,
   down as addFixedAssetDown,
 } from './migrations/20260601_add_fixed_asset.js'
+import {
+  up as addVoucherSourceUp,
+  down as addVoucherSourceDown,
+} from './migrations/20260601_add_voucher_source.js'
+import {
+  up as addAssetChangeTypeUp,
+  down as addAssetChangeTypeDown,
+} from './migrations/20260602_add_asset_change_type.js'
+import {
+  up as addAssetWorkloadUp,
+  down as addAssetWorkloadDown,
+} from './migrations/20260602_add_asset_workload.js'
+import {
+  up as addAssetInventoryUp,
+  down as addAssetInventoryDown,
+} from './migrations/20260602_add_asset_inventory.js'
+import {
+  up as addCashierJournalAuxUp,
+  down as addCashierJournalAuxDown,
+} from './migrations/20260603_cashier_journal_aux.js'
+import {
+  up as addCashierInitBalanceDateUp,
+  down as addCashierInitBalanceDateDown,
+} from './migrations/20260603_cashier_init_balance_date.js'
 
 /**
  * 迁移示例：添加新字段
@@ -1242,5 +1266,41 @@ export const migrations: Migration[] = [
     name: 'add_fixed_asset',
     up: addFixedAssetUp,
     down: addFixedAssetDown,
+  },
+  {
+    version: 40,
+    name: 'add_voucher_source',
+    up: addVoucherSourceUp,
+    down: addVoucherSourceDown,
+  },
+  {
+    version: 41,
+    name: 'add_asset_change_type',
+    up: addAssetChangeTypeUp,
+    down: addAssetChangeTypeDown,
+  },
+  {
+    version: 42,
+    name: 'add_asset_workload',
+    up: addAssetWorkloadUp,
+    down: addAssetWorkloadDown,
+  },
+  {
+    version: 43,
+    name: 'add_asset_inventory',
+    up: addAssetInventoryUp,
+    down: addAssetInventoryDown,
+  },
+  {
+    version: 44,
+    name: 'cashier_journal_aux',
+    up: addCashierJournalAuxUp,
+    down: addCashierJournalAuxDown,
+  },
+  {
+    version: 45,
+    name: 'cashier_init_balance_date',
+    up: addCashierInitBalanceDateUp,
+    down: addCashierInitBalanceDateDown,
   },
 ]

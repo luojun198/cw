@@ -1,4 +1,4 @@
-export interface NavItem {
+﻿export interface NavItem {
   path: string
   title: string
   /** 任一权限满足即显示；省略表示登录即可见 */
@@ -53,6 +53,16 @@ const ROUTE_PERMISSION_MAP: Record<string, string | string[]> = {
   '/security/backup': ['system:backup', 'system:restore'],
   '/cashier/journal': 'cashier:journal',
   '/cashier/init-balance': 'cashier:initbal',
+  '/cashier/reconciliation': 'cashier:reconcile',
+  '/cashier/flow-query': 'cashier:journal',
+  '/cashier/daily-report': 'cashier:journal',
+  '/cashier/bank-import': 'cashier:reconcile',
+  '/cashier/reset': 'cashier:initbal',
+  '/asset/list': 'asset:view',
+  '/asset/depreciation': 'asset:edit',
+  '/asset/report': 'asset:view',
+  '/asset/inventory': 'asset:edit',
+  '/asset/dict': 'asset:dict',
   '/report/cash-flow': 'ledger:cashflow',
   '/aux/dept': 'base:dept',
   '/aux/project': 'base:project',
@@ -104,6 +114,9 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
     { path: '/report/dynamic', title: '报表维护', permission: 'report:define' },
     { path: '/base/print-template', title: '打印模版', permission: 'system:print' },
   ]
+  baseSettingChildren.push(
+    { path: '/asset/dict', title: '资产档案', permission: 'asset:dict' },
+  )
   if (enableCashFlow) {
     baseSettingChildren.push(
       { path: '/base/cash-flow-items', title: '现金流量项目', permission: 'base:cashitem', requiresCashFlow: true },
@@ -128,7 +141,6 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
   ledgerChildren.push({ path: '/ledger/chronological', title: '序时账', permission: 'ledger:detail' })
 
   return [
-    { title: '基础设置', icon: 'Coin', children: baseSettingChildren },
     {
       title: '凭证管理',
       icon: 'EditPen',
@@ -156,6 +168,30 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
     },
     { title: '报表管理', icon: 'TrendCharts', children: [] },
     {
+      title: '出纳管理',
+      icon: 'CreditCard',
+      children: [
+        { path: '/cashier/journal', title: '出纳单据', permission: 'cashier:journal' },
+        { path: '/cashier/daily-report', title: '出纳日报', permission: 'cashier:journal' },
+        { path: '/cashier/flow-query', title: '出纳流水账', permission: 'cashier:journal' },
+        { path: '/cashier/init-balance', title: '出纳期初', permission: 'cashier:initbal' },
+        { path: '/cashier/bank-import', title: '对账单导入', permission: 'cashier:reconcile' },
+        { path: '/cashier/reconciliation', title: '余额调节表', permission: 'cashier:reconcile' },
+        { path: '/cashier/reset', title: '出纳初始化', permission: 'cashier:initbal' },
+      ],
+    },
+    {
+      title: '固定资产',
+      icon: 'OfficeBuilding',
+      children: [
+        { path: '/asset/list', title: '资产卡片', permission: 'asset:view' },
+        { path: '/asset/depreciation', title: '折旧计提', permission: 'asset:edit' },
+        { path: '/asset/report', title: '资产报表', permission: 'asset:view' },
+        { path: '/asset/inventory', title: '资产盘点', permission: 'asset:edit' },
+      ],
+    },
+    { title: '基础设置', icon: 'Coin', children: baseSettingChildren },
+    {
       title: '系统管理',
       icon: 'Setting',
       children: [
@@ -164,14 +200,6 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
         { path: '/system/role', title: '角色管理', permission: 'system:role' },
         { path: '/system/param', title: '系统参数', permission: 'system:init' },
         { path: '/system/log', title: '操作日志', permission: 'period:log' },
-      ],
-    },
-    {
-      title: '出纳管理',
-      icon: 'CreditCard',
-      children: [
-        { path: '/cashier/journal', title: '出纳日记账', permission: 'cashier:journal' },
-        { path: '/cashier/init-balance', title: '出纳期初', permission: 'cashier:initbal' },
       ],
     },
     {
@@ -227,6 +255,12 @@ export function getRoutePermissions(path: string): string[] | undefined {
   const reportRunMatch = normalized.match(/^\/report\/run\/[^/]+$/)
   if (reportRunMatch) {
     return ['report:view']
+  }
+
+  // 资产明细账：/asset/detail/:id
+  const assetDetailMatch = normalized.match(/^\/asset\/detail\/[^/]+$/)
+  if (assetDetailMatch) {
+    return ['asset:view']
   }
 
   return undefined

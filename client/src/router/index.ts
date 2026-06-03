@@ -273,6 +273,73 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/cashier/InitBalance.vue'),
         meta: { title: '出纳期初', icon: 'Wallet', parent: '出纳管理' },
       },
+      {
+        path: 'cashier/flow-query',
+        name: 'CashierFlowQuery',
+        component: () => import('@/views/cashier/CashFlowQuery.vue'),
+        meta: { title: '出纳流水账', icon: 'List', parent: '出纳管理' },
+      },
+      {
+        path: 'cashier/daily-report',
+        name: 'CashierDailyReport',
+        component: () => import('@/views/cashier/DailyReport.vue'),
+        meta: { title: '出纳日报', icon: 'DataLine', parent: '出纳管理' },
+      },
+      {
+        path: 'cashier/bank-import',
+        name: 'CashierBankImport',
+        component: () => import('@/views/cashier/BankImport.vue'),
+        meta: { title: '对账单导入', icon: 'Upload', parent: '出纳管理' },
+      },
+      {
+        path: 'cashier/reconciliation',
+        name: 'CashierReconciliation',
+        component: () => import('@/views/cashier/BankReconciliation.vue'),
+        meta: { title: '余额调节表', icon: 'DocumentChecked', parent: '出纳管理' },
+      },
+      {
+        path: 'cashier/reset',
+        name: 'CashierReset',
+        component: () => import('@/views/cashier/Reset.vue'),
+        meta: { title: '出纳初始化', icon: 'RefreshLeft', parent: '出纳管理' },
+      },
+      // 固定资产
+      {
+        path: 'asset/list',
+        name: 'AssetList',
+        component: () => import('@/views/asset/AssetList.vue'),
+        meta: { title: '资产卡片', icon: 'OfficeBuilding', parent: '固定资产' },
+      },
+      {
+        path: 'asset/detail/:id',
+        name: 'AssetDetail',
+        component: () => import('@/views/asset/AssetDetail.vue'),
+        meta: { title: '资产明细账', parent: '固定资产' },
+      },
+      {
+        path: 'asset/depreciation',
+        name: 'AssetDepreciation',
+        component: () => import('@/views/asset/Depreciation.vue'),
+        meta: { title: '折旧计提', icon: 'TrendCharts', parent: '固定资产' },
+      },
+      {
+        path: 'asset/report',
+        name: 'AssetReport',
+        component: () => import('@/views/asset/AssetReport.vue'),
+        meta: { title: '资产报表', icon: 'DataAnalysis', parent: '固定资产' },
+      },
+      {
+        path: 'asset/inventory',
+        name: 'AssetInventory',
+        component: () => import('@/views/asset/AssetInventory.vue'),
+        meta: { title: '资产盘点', icon: 'Checked', parent: '固定资产' },
+      },
+      {
+        path: 'asset/dict',
+        name: 'AssetDict',
+        component: () => import('@/views/asset/AssetDict.vue'),
+        meta: { title: '资产档案', icon: 'Setting', parent: '基础设置' },
+      },
       // 数据安全
       {
         path: 'security/backup',

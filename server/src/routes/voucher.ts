@@ -15,6 +15,7 @@ import {
   isVoucherVisibleInAccountScope,
 } from '../services/accountAuthorization.js'
 import { yuanToCents } from '../utils/amountUtils.js'
+import { syncCashierFromVoucher } from '../services/cashierQuery.js'
 import {
   attachVoucherEntries,
   buildVoucherEntryPayloads,
@@ -733,6 +734,28 @@ router.post(
           // 提交事务
           db.exec('COMMIT')
 
+          // 自动同步到出纳日记账（异步，失败不影响凭证录入）
+          try {
+            const cashEntries = entries.map((e: any) => ({
+              account_code: e.account_code,
+              direction: e.direction,
+              amount: e.amount,
+              summary: remark || e.summary || undefined,
+            }))
+            syncCashierFromVoucher({
+              db,
+              accountSetId: req.accountSetId || '',
+              voucherDate: voucher_date,
+              voucherYear: year,
+              voucherMonth: period,
+              voucherType: effectiveTypeId,
+              voucherNo,
+              entries: cashEntries,
+            })
+          } catch (syncErr) {
+            console.error('凭证→出纳同步失败:', syncErr)
+          }
+
           // 成功，返回结果
           return res.json({
             code: 0,
@@ -1123,6 +1146,33 @@ router.put(
       })
     })
     updateVoucher()
+
+    // 自动同步到出纳日记账（失败不影响凭证修改）
+    try {
+      const updatedVoucher = db.prepare('SELECT * FROM vouchers WHERE id=?').get(id) as any
+      if (updatedVoucher) {
+        const entryRows = db.prepare('SELECT * FROM voucher_entries WHERE voucher_id=? ORDER BY seq').all(id) as any[]
+        const cashEntries = entryRows.map((e: any) => ({
+          account_code: e.account_code,
+          direction: e.direction,
+          amount: e.amount, // DB 存储为 yuan
+          summary: remark || e.summary || undefined,
+        }))
+        syncCashierFromVoucher({
+          db,
+          accountSetId: req.accountSetId || '',
+          voucherDate: updatedVoucher.voucher_date,
+          voucherYear: updatedVoucher.year,
+          voucherMonth: updatedVoucher.period,
+          voucherType: updatedVoucher.voucher_type_id,
+          voucherNo: updatedVoucher.voucher_no,
+          entries: cashEntries,
+        })
+      }
+    } catch (syncErr) {
+      console.error('凭证修改→出纳同步失败:', syncErr)
+    }
+
     res.json({ code: 0, message: '修改成功', warning: updateDuplicateWarning })
   }
 )
@@ -1314,6 +1364,9 @@ router.delete(
     const voucher = getVoucherById({ db, voucherId: id })
     if (voucher?.status === 'posted') {
       return res.status(400).json({ code: 400, message: '已记账凭证不能删除' })
+    }
+    if (voucher?.source === 'cashier') {
+      return res.status(400).json({ code: 400, message: '出纳生成的凭证不能直接删除，请取消对账后再试' })
     }
     deleteVoucherRecords(db, id)
     res.json({ code: 0, message: '删除成功' })
