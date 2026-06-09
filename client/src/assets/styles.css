@@ -1,10 +1,10 @@
 /* ============================================================
    Design System Tokens - 财务洗头膏
    ============================================================ */
-@import url('./styles/design-tokens/fonts.css');
-@import url('./styles/design-tokens/colors.css');
-@import url('./styles/design-tokens/typography.css');
-@import url('./styles/design-tokens/spacing.css');
+@import url('../styles/design-tokens/fonts.css');
+@import url('../styles/design-tokens/colors.css');
+@import url('../styles/design-tokens/typography.css');
+@import url('../styles/design-tokens/spacing.css');
 
 * {
   margin: 0;
