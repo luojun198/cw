@@ -82,11 +82,11 @@ a {
 
   /* ========== CW Finance 专用色彩系统 - 现代中国风 ========== */
 
-  /* 主色调 - 中国红系 */
-  --cw-red-primary: #C8102E;
-  --cw-red-light: #E8475D;
-  --cw-red-lighter: #F5C4C7;
-  --cw-red-dark: #A00D25;
+  /* 主色调 - 薄荷绿系（设计系统）*/
+  --cw-red-primary: var(--mint-500, #12C7AE);
+  --cw-red-light: var(--mint-400, #2DCFB5);
+  --cw-red-lighter: var(--mint-100, #CFF6EF);
+  --cw-red-dark: var(--mint-700, #0A8576);
   
   /* 辅助色 - 金色系 */
   --cw-gold-primary: #D4AF37;
@@ -108,7 +108,7 @@ a {
   --cw-credit-color: #FF4D4F;
   --cw-balance-color: #1890FF;
   --cw-gold: #D4AF37;
-  --cw-red: #C8102E;
+  --cw-red: var(--mint-500, #12C7AE);
 
   /* 品牌展示红：深色背景上用较亮柔和红，浅色背景用稍深红 */
   --cw-brand-red: #d96666;
@@ -122,8 +122,8 @@ a {
   --cw-bg-base: #F5F5F5;
   --cw-bg-elevated: #FFFFFF;
   --cw-bg-subtle: rgba(255, 255, 255, 0.9);
-  --cw-bg-hover: rgba(200, 16, 46, 0.04);
-  --cw-bg-sidebar: linear-gradient(180deg, #2C3E50 0%, #1a252f 100%);
+  --cw-bg-hover: rgba(18, 199, 174, 0.06);
+  --cw-bg-sidebar: linear-gradient(180deg, #0E665B 0%, #103F39 100%);
 
   /* 边框层次 */
   --cw-border-light: rgba(0, 0, 0, 0.06);
@@ -142,7 +142,7 @@ a {
   --cw-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
   --cw-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
   --cw-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.16);
-  --cw-shadow-red: 0 4px 16px rgba(200, 16, 46, 0.15);
+  --cw-shadow-red: 0 4px 16px rgba(18, 199, 174, 0.22);
 
   /* 字体系统 - 现代中国风 */
   --cw-font-heading: 'Noto Sans SC', 'Source Han Sans CN', 'PingFang SC', 'Microsoft YaHei', sans-serif;
@@ -203,7 +203,7 @@ a {
   --cw-bg-base: #141414;
   --cw-bg-elevated: #1F1F1F;
   --cw-bg-subtle: rgba(31, 31, 31, 0.9);
-  --cw-bg-hover: rgba(200, 16, 46, 0.08);
+  --cw-bg-hover: rgba(18, 199, 174, 0.08);
   --cw-bg-sidebar: linear-gradient(180deg, #1a252f 0%, #0f1419 100%);
 
   --cw-border-light: rgba(255, 255, 255, 0.08);
@@ -220,7 +220,7 @@ a {
   --cw-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.5);
   --cw-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.6);
   --cw-shadow-xl: 0 16px 48px rgba(0, 0, 0, 0.7);
-  --cw-shadow-red: 0 4px 16px rgba(200, 16, 46, 0.3);
+  --cw-shadow-red: 0 4px 16px rgba(18, 199, 174, 0.3);
 
   /* Element Plus 暗色适配 */
   --el-bg-color: #1F1F1F;
@@ -308,32 +308,32 @@ a {
 
 /* ========== 表格选中行样式统一 ========== */
 .el-table__body tr.current-row > td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
-  background-color: rgba(200, 16, 46, 0.08) !important;
+  background-color: rgba(18, 199, 174, 0.08) !important;
   font-weight: 500;
 }
 
 .el-table__body tr.current-row:hover > td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
-  background-color: rgba(200, 16, 46, 0.12) !important;
+  background-color: rgba(18, 199, 174, 0.12) !important;
 }
 
 [data-theme='dark'] .el-table__body tr.current-row > td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
-  background-color: rgba(200, 16, 46, 0.15) !important;
+  background-color: rgba(18, 199, 174, 0.15) !important;
 }
 
 [data-theme='dark'] .el-table__body tr.current-row:hover > td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
-  background-color: rgba(200, 16, 46, 0.22) !important;
+  background-color: rgba(18, 199, 174, 0.22) !important;
 }
 
 /* ========== 表格设计增强 - 现代中国风 ========== */
 
 /* 表头渐变样式 */
 .el-table__header th {
-  background: linear-gradient(180deg, #C8102E 0%, #A00D25 100%) !important;
+  background: linear-gradient(180deg, var(--mint-500, #12C7AE) 0%, var(--mint-700, #0A8576) 100%) !important;
   color: var(--cw-text-inverse) !important;
   font-family: var(--cw-font-heading) !important;
   font-weight: var(--cw-font-bold) !important;
   font-size: var(--cw-table-header-font-size) !important;
-  border-bottom: 2px solid var(--cw-gold-primary) !important;
+  border-bottom: 2px solid var(--mint-300, #66E0CB) !important;
   position: relative;
 }
 
@@ -344,12 +344,12 @@ a {
   left: 0;
   right: 0;
   height: 1px;
-  background: linear-gradient(90deg, transparent 0%, var(--cw-gold-primary) 50%, transparent 100%);
+  background: linear-gradient(90deg, transparent 0%, var(--mint-300, #66E0CB) 50%, transparent 100%);
 }
 
 /* 暗色模式表头 */
 [data-theme='dark'] .el-table__header th {
-  background: linear-gradient(180deg, #A00D25 0%, #7A0A1C 100%) !important;
+  background: linear-gradient(180deg, var(--mint-700, #0A8576) 0%, var(--mint-900, #103F39) 100%) !important;
 }
 
 /* 表格数字列使用 DIN 字体 */
@@ -455,7 +455,7 @@ a {
 
 .el-button--primary:hover {
   background: linear-gradient(135deg, var(--cw-red-light) 0%, var(--cw-red-primary) 100%);
-  box-shadow: 0 6px 20px rgba(200, 16, 46, 0.25);
+  box-shadow: 0 6px 20px rgba(18, 199, 174, 0.25);
   transform: translateY(-1px);
 }
 
