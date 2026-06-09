@@ -195,8 +195,17 @@
   background: rgba(255, 255, 255, 0.08);
 }
 
-.apple-menu .el-sub-menu.is-active > .el-sub-menu__title {
+.apple-menu .el-sub-menu.is-active > .el-sub-menu__title,
+.apple-menu .el-sub-menu.sub-menu-current > .el-sub-menu__title {
   color: #ffd700 !important;
+}
+
+/* 当前所在分组导航页：标题前显示 👉 手指（展开态） */
+.apple-menu:not(.el-menu--collapse) .el-sub-menu.sub-menu-current > .el-sub-menu__title .menu-title-label::before {
+  content: '👉';
+  margin-right: 6px;
+  font-size: 13px;
+  line-height: 1;
 }
 
 .apple-menu .el-menu-item {
@@ -289,7 +298,8 @@
   flex-shrink: 0;
 }
 
-.apple-menu.el-menu--collapse .el-sub-menu.is-active > .el-sub-menu__title .menu-icon-wrap::after {
+.apple-menu.el-menu--collapse .el-sub-menu.is-active > .el-sub-menu__title .menu-icon-wrap::after,
+.apple-menu.el-menu--collapse .el-sub-menu.sub-menu-current > .el-sub-menu__title .menu-icon-wrap::after {
   content: '👉';
   position: absolute;
   right: -9px;

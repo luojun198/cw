@@ -3,7 +3,8 @@
     <div class="page-header">
       <h2>打印模版管理</h2>
       <div class="header-actions">
-        <el-button type="primary" @click="handleCreate">新增模版</el-button>
+        <el-button @click="handleCreate">新增凭证模版（旧）</el-button>
+        <el-button type="primary" @click="handleCreateHiprint">新增套打模板</el-button>
       </div>
     </div>
 
@@ -19,6 +20,11 @@
         @header-dragend="onDragEnd"
       >
         <el-table-column prop="name" label="模版名称" :width="colWidth('name', 200)" />
+        <el-table-column prop="template_type" label="类型" :width="colWidth('类型', 90)" align="center">
+          <template #default="{ row }">
+            <el-tag size="small" :type="templateTypeTag(row)">{{ templateTypeLabel(row) }}</el-tag>
+          </template>
+        </el-table-column>
         <el-table-column prop="paper_size" label="纸张规格" :width="colWidth('paper_size', 120)">
           <template #default="{ row }">
             {{ getPaperSizeLabel(row.paper_size) }}
@@ -75,30 +81,100 @@
       :close-on-click-modal="false"
       destroy-on-close
     >
+      <div v-if="editingTemplate && navigationInfo" style="margin-bottom: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 12px;">
+        <DialogNavigation
+          :current="navigationInfo.current"
+          :total="navigationInfo.total"
+          :is-first="navigationInfo.isFirst"
+          :is-last="navigationInfo.isLast"
+          @navigate="handleNavigate"
+        />
+      </div>
       <TemplateDesigner
         :template-id="editingTemplate?.id"
         @save="handleSaveTemplate"
         @cancel="designerVisible = false"
       />
     </el-dialog>
+
+    <!-- 新 hiprint 套打设计器 -->
+    <el-dialog
+      v-model="hiprintDesignerVisible"
+      :title="editingTemplate ? '编辑套打模板' : '新增套打模板'"
+      width="95%"
+      top="3vh"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <HiprintDesigner
+        :template-id="editingTemplate?.id"
+        :default-type="newTemplateType"
+        @save="handleSaveTemplate"
+        @cancel="hiprintDesignerVisible = false"
+      />
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PrintTemplate } from '@/types/print'
 import { useUserStore } from '@/stores/user'
 import request from '@/api/request'
 import TemplateDesigner from '@/components/print/TemplateDesigner.vue'
+import HiprintDesigner from '@/components/print/HiprintDesigner.vue'
+import type { PrintTemplateType } from '@/types/print'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+import DialogNavigation from '@/components/common/DialogNavigation.vue'
 
 const { tableRef, onDragEnd, colWidth } = useListColumnWidth('base_print_template')
 const userStore = useUserStore()
 const loading = ref(false)
 const templates = ref<PrintTemplate[]>([])
 const designerVisible = ref(false)
+const hiprintDesignerVisible = ref(false)
+const newTemplateType = ref<PrintTemplateType>('voucher')
 const editingTemplate = ref<PrintTemplate | null>(null)
+
+const TYPE_LABELS: Record<string, string> = { voucher: '凭证', ledger: '账册', report: '报表' }
+const templateTypeLabel = (row: PrintTemplate) => TYPE_LABELS[row.template_type || 'voucher'] || '凭证'
+const templateTypeTag = (row: PrintTemplate) => {
+  const t = row.template_type || 'voucher'
+  return t === 'report' ? 'success' : t === 'ledger' ? 'warning' : 'primary'
+}
+/** 是否 hiprint 套打模板（有 panel.panels） */
+const isHiprintTemplate = (row: PrintTemplate) =>
+  !!(row.panel && Array.isArray((row.panel as any).panels) && (row.panel as any).panels.length > 0)
+
+/** 翻页导航信息 */
+const navigationInfo = computed(() => {
+  if (templates.value.length === 0 || !editingTemplate.value) return null
+  const idx = templates.value.findIndex(t => t.id === editingTemplate.value?.id)
+  return {
+    current: idx + 1,
+    total: templates.value.length,
+    isFirst: idx <= 0,
+    isLast: idx >= templates.value.length - 1 || idx === -1
+  }
+})
+
+/** 翻页处理 */
+function handleNavigate(direction: 'first' | 'previous' | 'next' | 'last') {
+  if (templates.value.length === 0) return
+  
+  let targetIdx = 0
+  const currentIdx = templates.value.findIndex(t => t.id === editingTemplate.value?.id)
+  
+  if (direction === 'first') targetIdx = 0
+  else if (direction === 'last') targetIdx = templates.value.length - 1
+  else if (direction === 'previous') targetIdx = Math.max(0, currentIdx - 1)
+  else if (direction === 'next') targetIdx = Math.min(templates.value.length - 1, currentIdx + 1)
+  
+  if (templates.value[targetIdx]) {
+    handleEdit(templates.value[targetIdx])
+  }
+}
 
 // 获取纸张规格标签
 const getPaperSizeLabel = (size: string) => {
@@ -151,23 +227,34 @@ const handleSetDefault = async (template: PrintTemplate) => {
   }
 }
 
-// 新增模版
+// 新增旧版凭证模版
 const handleCreate = () => {
   editingTemplate.value = null
   designerVisible.value = true
 }
 
-// 编辑模版
+// 新增 hiprint 套打模板
+const handleCreateHiprint = () => {
+  editingTemplate.value = null
+  newTemplateType.value = 'voucher'
+  hiprintDesignerVisible.value = true
+}
+
+// 编辑模版：hiprint 模板走新设计器，旧模板走旧设计器
 const handleEdit = (template: PrintTemplate) => {
   editingTemplate.value = template
-  designerVisible.value = true
+  if (isHiprintTemplate(template)) {
+    hiprintDesignerVisible.value = true
+  } else {
+    designerVisible.value = true
+  }
 }
 
 // 保存模版
 const handleSaveTemplate = async () => {
   designerVisible.value = false
+  hiprintDesignerVisible.value = false
   await loadTemplates()
-  ElMessage.success('保存成功')
 }
 
 // 删除模版

@@ -58,6 +58,16 @@
               plain
               size="small"
               :disabled="!selectedVoucherId"
+              @click="handleHiprint"
+            >
+              <el-icon><Printer /></el-icon>
+              套打
+            </el-button>
+            <el-button
+              class="voucher-toolbar-btn"
+              plain
+              size="small"
+              :disabled="!selectedVoucherId"
               @click="handleTurnTemplate"
             >
               转模版
@@ -140,6 +150,12 @@
       :default-voucher-type-ids="batchPrintVoucherTypeIds"
     />
 
+    <VoucherHiprintDialog
+      v-model="hiprintVisible"
+      :voucher-ids="printVoucherIds"
+      mode="single"
+    />
+
     <el-dialog v-model="templateDialogVisible" title="保存为模版" width="500px">
       <el-form :model="templateForm" label-width="100px">
         <el-form-item label="模版编号" required>
@@ -167,6 +183,7 @@ import { Setting, Printer, Download } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import PrintDialog from '@/components/print/PrintDialog.vue'
 import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
+import VoucherHiprintDialog from '@/components/print/VoucherHiprintDialog.vue'
 import VoucherFilterBar from '@/components/voucher/VoucherFilterBar.vue'
 import VoucherAuditTable from '@/components/voucher/VoucherAuditTable.vue'
 import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
@@ -403,6 +420,7 @@ function handleRowDblclick(row: any) {
 }
 
 const printDialogVisible = ref(false)
+const hiprintVisible = ref(false)
 const printVoucherIds = ref<Array<string | number>>([])
 const printMode = ref<'single' | 'batch'>('batch')
 const directPrint = ref(false)
@@ -416,6 +434,13 @@ function printVoucher(row: { _voucherId?: string; id?: string }) {
   printVoucherIds.value = [voucherId]
   printMode.value = 'single'
   printDialogVisible.value = true
+}
+
+// hiprint 套打选中凭证
+function handleHiprint() {
+  if (!selectedVoucherId.value) return
+  printVoucherIds.value = [selectedVoucherId.value]
+  hiprintVisible.value = true
 }
 
 function handleBatchPrint() {

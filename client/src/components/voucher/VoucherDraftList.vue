@@ -220,6 +220,22 @@
           <el-tag :type="statusTagType(row.status)" size="small">{{
             statusLabel(row.status)
           }}</el-tag>
+          <el-tag
+            v-if="row.source === 'cashier'"
+            type="warning"
+            size="small"
+            effect="plain"
+            style="margin-left: 4px"
+            title="由出纳日记账生成，可在此编辑对方科目并回写出纳"
+          >出纳</el-tag>
+          <el-tag
+            v-if="typeof row.source === 'string' && row.source.startsWith('asset_')"
+            type="primary"
+            size="small"
+            effect="plain"
+            style="margin-left: 4px"
+            title="由固定资产模块生成，不能直接删除，请到固定资产模块反折旧/撤销处置/删除资产"
+          >资产</el-tag>
         </template>
       </el-table-column>
     </el-table>
@@ -449,27 +465,40 @@ const draftFlatList = computed(() => {
   return rows
 })
 
-// 动态辅助列：从 aux_data 中提取出现过的辅助类别，排除已有固定列的
+// 动态辅助列：从数据中提取出现过的辅助类别，含固定列（部门、项目等）与自定义列
 const auxColumns = computed(() => {
-  const fixedCodes = new Set(['dept', 'project', 'supplier', 'person', 'func_class'])
-  const colMap = new Map<string, string>()
-  for (const row of draftFlatList.value) {
+  const fixedMap: Record<string, { prop: string; label: string }> = {
+    dept: { prop: 'dept_name', label: '部门' },
+    project: { prop: 'project_name', label: '项目' },
+    supplier: { prop: 'supplier_name', label: '供应商/单位' },
+    person: { prop: 'person_name', label: '个人/职员' },
+    func_class: { prop: 'func_class_name', label: '功能分类' },
+  }
+  
+  const activeCols = new Map<string, { code: string; name: string; prop: string }>()
+  const flat = draftFlatList.value
+
+  // 1. 检查固定列
+  for (const [code, info] of Object.entries(fixedMap)) {
+    if (flat.some(row => row[info.prop] && String(row[info.prop]).trim() !== '')) {
+      activeCols.set(code, { code, name: info.label, prop: info.prop })
+    }
+  }
+
+  // 2. 检查自定义列 (_aux_xxx)
+  for (const row of flat) {
     for (const key of Object.keys(row)) {
       if (key.startsWith('_aux_') && row[key]) {
         const code = key.slice(5)
-        if (fixedCodes.has(code) || colMap.has(code)) continue
+        if (activeCols.has(code)) continue
         const cat = props.auxCategories.find(c => c.code === code)
         if (cat) {
-          colMap.set(code, cat.name || code)
+          activeCols.set(code, { code, name: cat.name || code, prop: key })
         }
       }
     }
   }
-  return Array.from(colMap.entries()).map(([code, name]) => ({
-    code,
-    name,
-    prop: `_aux_${code}`,
-  }))
+  return Array.from(activeCols.values())
 })
 
 // 搜索功能：现在改为服务端搜索，移除本地过滤

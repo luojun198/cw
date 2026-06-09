@@ -66,14 +66,15 @@ export function disposeAsset(params: DisposalParams): DisposalResult {
 
   // 在事务中执行
   db.transaction(() => {
-    // 1. 更新资产卡片
+    // 1. 更新资产卡片（存处置前状态，供撤销还原）
     db.prepare(`
       UPDATE fixed_asset SET
-        status_code = COALESCE(?, status_code),
+        status_code = '04',
+        pre_scrap_status = ?,
         scrap_date = ?, scrap_reason = ?,
         updated_at = datetime('now')
       WHERE id = ?
-    `).run('04', scrapDate, scrapReason, assetId)
+    `).run(asset.status_code || '01', scrapDate, scrapReason, assetId)
 
     // 2. 记录变动流水
     const changeTypeName = changeTypeCode
@@ -95,13 +96,15 @@ export function disposeAsset(params: DisposalParams): DisposalResult {
 
     // 3. 可选生成清理凭证
     if (generateVoucher) {
-      generateDisposalVoucher({
+      const vid = generateDisposalVoucher({
         db, accountSetId, asset, scrapDate, scrapReason, changeTypeName,
         originalValue, accumDepr, netValue, salvageValue,
         disposalIncome, disposalExpense, disposalGainLoss,
         accumAccount, clearingAccount,
         operatorName,
       })
+      voucherRes = vid
+      db.prepare('UPDATE fixed_asset SET scrap_voucher_id=? WHERE id=?').run(vid, assetId)
     }
   })()
 
@@ -148,21 +151,24 @@ function generateDisposalVoucher(params: VoucherGenParams) {
   // 查找科目
   const lookupAcc = db.prepare('SELECT id, code, name FROM accounts WHERE account_set_id=? AND code=? LIMIT 1')
 
-  // 查找资产科目
+  // 查找资产所属类别的科目配置
   const assetCat = (asset.category_code
-    ? db.prepare('SELECT account_code FROM fixed_asset_category WHERE account_set_id=? AND code=?').get(accountSetId, asset.category_code)
+    ? db.prepare('SELECT account_code, depr_account_code, clearing_account_code FROM fixed_asset_category WHERE account_set_id=? AND code=?').get(accountSetId, asset.category_code)
     : null) as any
+  
   const assetAccountCode = assetCat?.account_code || '1601'
+  const actualAccumAccount = assetCat?.depr_account_code || accumAccount || '1602'
+  const actualClearingAccount = assetCat?.clearing_account_code || clearingAccount || '1606'
 
   const assetRow = lookupAcc.get(accountSetId, assetAccountCode) as any
-  const accumRow = lookupAcc.get(accountSetId, accumAccount) as any
-  const clearingRow = lookupAcc.get(accountSetId, clearingAccount) as any
+  const accumRow = lookupAcc.get(accountSetId, actualAccumAccount) as any
+  const clearingRow = lookupAcc.get(accountSetId, actualClearingAccount) as any
 
   // 预检科目
   const missing: string[] = []
   if (!assetRow) missing.push(assetAccountCode)
-  if (!accumRow) missing.push(accumAccount)
-  if (!clearingRow) missing.push(clearingAccount)
+  if (!accumRow) missing.push(actualAccumAccount)
+  if (!clearingRow) missing.push(actualClearingAccount)
   if (disposalIncome > 0 || disposalExpense > 0 || disposalGainLoss !== 0) {
     // 可能需要营业外收支科目
   }
@@ -186,8 +192,8 @@ function generateDisposalVoucher(params: VoucherGenParams) {
   db.prepare(`
     INSERT INTO vouchers
       (id, account_set_id, voucher_no, voucher_type_id, voucher_date, year, period,
-       total_amount, maker_name, remark)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       total_amount, maker_name, remark, source)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'asset_disposal')
   `).run(
     voucherId, accountSetId, voucherNo, null,
     scrapDate, scrapYear, scrapMonth,
@@ -209,7 +215,7 @@ function generateDisposalVoucher(params: VoucherGenParams) {
   if (accumDepr > 0) {
     insEntry.run(
       uuidv4(), accountSetId, voucherId, seq++,
-      accumRow.id, accumAccount, accumRow.name,
+      accumRow.id, actualAccumAccount, accumRow.name,
       'debit', accumDepr, Math.round(accumDepr * 100), summary
     )
   }
@@ -218,7 +224,7 @@ function generateDisposalVoucher(params: VoucherGenParams) {
   if (netValue > 0) {
     insEntry.run(
       uuidv4(), accountSetId, voucherId, seq++,
-      clearingRow.id, clearingAccount, clearingRow.name,
+      clearingRow.id, actualClearingAccount, clearingRow.name,
       'debit', netValue, Math.round(netValue * 100), summary
     )
   }
@@ -241,61 +247,115 @@ function generateDisposalVoucher(params: VoucherGenParams) {
         'debit', disposalIncome, Math.round(disposalIncome * 100), `${summary}（处置收入）`
       )
       insEntry.run(
-        uuidv4(), accountSetId, voucherId, seq++,
-        clearingRow.id, clearingAccount, clearingRow.name,
-        'credit', disposalIncome, Math.round(disposalIncome * 100), `${summary}（处置收入）`
+      uuidv4(), accountSetId, voucherId, seq++,
+      clearingRow.id, actualClearingAccount, clearingRow.name,
+      'credit', disposalIncome, Math.round(disposalIncome * 100), `${summary}（处置收入）`
       )
-    }
-  }
+      }
+      }
 
-  // 处置费用：借 固定资产清理 / 贷 银行存款
-  if (disposalExpense > 0) {
-    const bankRow = lookupAcc.get(accountSetId, '1001') as any
-    if (bankRow) {
+      // 处置费用：借 固定资产清理 / 贷 银行存款
+      if (disposalExpense > 0) {
+      const bankRow = lookupAcc.get(accountSetId, '1001') as any
+      if (bankRow) {
       insEntry.run(
-        uuidv4(), accountSetId, voucherId, seq++,
-        clearingRow.id, clearingAccount, clearingRow.name,
-        'debit', disposalExpense, Math.round(disposalExpense * 100), `${summary}（处置费用）`
+      uuidv4(), accountSetId, voucherId, seq++,
+      clearingRow.id, actualClearingAccount, clearingRow.name,
+      'debit', disposalExpense, Math.round(disposalExpense * 100), `${summary}（处置费用）`
       )
       insEntry.run(
-        uuidv4(), accountSetId, voucherId, seq++,
-        bankRow.id, '1001', bankRow.name,
-        'credit', disposalExpense, Math.round(disposalExpense * 100), `${summary}（处置费用）`
+      uuidv4(), accountSetId, voucherId, seq++,
+      bankRow.id, '1001', bankRow.name,
+      'credit', disposalExpense, Math.round(disposalExpense * 100), `${summary}（处置费用）`
       )
-    }
-  }
+      }
+      }
 
-  // 结转清理净损益
-  if (disposalGainLoss !== 0) {
-    const glAccount = disposalGainLoss > 0 ? '6301' : '6711' // 营业外收入 / 营业外支出
-    const glRow = lookupAcc.get(accountSetId, glAccount) as any
-    if (glRow) {
+      // 结转清理净损益
+      if (disposalGainLoss !== 0) {
+      const glAccount = disposalGainLoss > 0 ? '6301' : '6711' // 营业外收入 / 营业外支出
+      const glRow = lookupAcc.get(accountSetId, glAccount) as any
+      if (glRow) {
       const absGainLoss = Math.abs(disposalGainLoss)
       if (disposalGainLoss > 0) {
-        // 处置净收益：借 固定资产清理 / 贷 营业外收入
-        insEntry.run(
-          uuidv4(), accountSetId, voucherId, seq++,
-          clearingRow.id, clearingAccount, clearingRow.name,
-          'debit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净收益）`
-        )
-        insEntry.run(
-          uuidv4(), accountSetId, voucherId, seq++,
-          glRow.id, glAccount, glRow.name,
-          'credit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净收益）`
-        )
+      // 处置净收益：借 固定资产清理 / 贷 营业外收入
+      insEntry.run(
+        uuidv4(), accountSetId, voucherId, seq++,
+        clearingRow.id, actualClearingAccount, clearingRow.name,
+        'debit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净收益）`
+      )
+      insEntry.run(
+        uuidv4(), accountSetId, voucherId, seq++,
+        glRow.id, glAccount, glRow.name,
+        'credit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净收益）`
+      )
       } else {
-        // 处置净损失：借 营业外支出 / 贷 固定资产清理
-        insEntry.run(
-          uuidv4(), accountSetId, voucherId, seq++,
-          glRow.id, glAccount, glRow.name,
-          'debit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净损失）`
-        )
-        insEntry.run(
-          uuidv4(), accountSetId, voucherId, seq++,
-          clearingRow.id, clearingAccount, clearingRow.name,
-          'credit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净损失）`
-        )
+      // 处置净损失：借 营业外支出 / 贷 固定资产清理
+      insEntry.run(
+        uuidv4(), accountSetId, voucherId, seq++,
+        glRow.id, glAccount, glRow.name,
+        'debit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净损失）`
+      )
+      insEntry.run(
+        uuidv4(), accountSetId, voucherId, seq++,
+        clearingRow.id, actualClearingAccount, clearingRow.name,
+        'credit', absGainLoss, Math.round(absGainLoss * 100), `${summary}（结转净损失）`
+      )
       }
+      }
+      }  return voucherId
+}
+
+// ── 撤销处置 ─────────────────────────────────────────────
+
+export interface CancelDisposalResult {
+  assetNo: string
+  restoredStatus: string
+  deletedVoucherNo: string | null
+}
+
+export function cancelDisposal(params: {
+  db: any
+  accountSetId: string
+  assetId: string
+}): CancelDisposalResult {
+  const { db, accountSetId, assetId } = params
+
+  const asset = db.prepare(
+    'SELECT * FROM fixed_asset WHERE id = ? AND account_set_id = ?'
+  ).get(assetId, accountSetId) as any
+
+  if (!asset) throw new Error('资产不存在')
+  if (!asset.scrap_date) throw new Error('该资产未处置，无需撤销')
+
+  const restoredStatus = asset.pre_scrap_status || '01'
+  let deletedVoucherNo: string | null = null
+
+  // 处置凭证：若已记账则阻止
+  if (asset.scrap_voucher_id) {
+    const v = db.prepare('SELECT id, voucher_no, status FROM vouchers WHERE id=?').get(asset.scrap_voucher_id) as any
+    if (v) {
+      if (v.status === 'posted') throw new Error('处置凭证已记账，请先取消记账后再撤销处置')
+      deletedVoucherNo = v.voucher_no
     }
   }
+
+  db.transaction(() => {
+    // 1. 删除处置凭证（模块内部操作，绕过 API 删除拦截）
+    if (asset.scrap_voucher_id) {
+      const vc = db.prepare('SELECT id FROM vouchers WHERE id=?').get(asset.scrap_voucher_id) as any
+      if (vc) {
+        db.prepare('DELETE FROM voucher_entries WHERE voucher_id=?').run(asset.scrap_voucher_id)
+        db.prepare('DELETE FROM vouchers WHERE id=?').run(asset.scrap_voucher_id)
+      }
+    }
+    // 2. 删除处置流水
+    db.prepare("DELETE FROM fixed_asset_change WHERE account_set_id=? AND asset_no=? AND change_item LIKE '资产减少%'").run(accountSetId, asset.asset_no)
+    // 3. 还原资产状态
+    db.prepare(`UPDATE fixed_asset SET status_code=?, scrap_date=NULL, scrap_reason=NULL,
+      scrap_voucher_id=NULL, pre_scrap_status=NULL, updated_at=datetime('now') WHERE id=?`)
+      .run(restoredStatus, assetId)
+  })()
+
+  return { assetNo: asset.asset_no, restoredStatus, deletedVoucherNo }
 }

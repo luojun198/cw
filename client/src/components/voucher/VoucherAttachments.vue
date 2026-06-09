@@ -1,77 +1,116 @@
 <template>
-  <div class="voucher-attachments">
-    <div class="attachment-header">
-      <span class="attachment-title">
-        <el-icon><Document /></el-icon>
-        凭证附件
-        <span class="attachment-count">({{ attachments.length }})</span>
-      </span>
-      <el-button
-        v-if="canUpload"
-        type="primary"
-        size="small"
-        @click="triggerFileInput"
-      >
-        <el-icon><Upload /></el-icon>
-        上传附件
-      </el-button>
-    </div>
-
-    <input
-      ref="fileInput"
-      type="file"
-      multiple
-      accept="*"
-      @change="handleFileUpload"
-      style="display: none"
-    />
-
-    <div v-if="attachments.length > 0" class="attachment-list">
-      <div
-        v-for="file in attachments"
-        :key="file.id"
-        class="attachment-item"
-      >
-        <div class="attachment-info">
-          <el-icon :class="getFileIcon(file.mime_type)">
-            <Document />
-          </el-icon>
-          <div class="attachment-details">
-            <div class="attachment-name">{{ file.original_name }}</div>
-            <div class="attachment-meta">
-              <span>{{ formatFileSize(file.file_size) }}</span>
-              <span class="attachment-date">{{ formatDate(file.created_at) }}</span>
-              <span v-if="file.created_by">{{ file.created_by }}</span>
-            </div>
-          </div>
-        </div>
-        <div class="attachment-actions">
-          <el-button
-            link
-            type="primary"
-            @click="previewFile(file)"
-            :previewing="previewing === file.id"
+  <div :class="['voucher-attachments', { 'is-compact': compact }]">
+    <template v-if="compact">
+      <div class="compact-attachments-row">
+        <el-button
+          v-if="canUpload"
+          size="small"
+          @click="triggerFileInput"
+        >
+          <el-icon><Upload /></el-icon>
+          上传附件
+        </el-button>
+        <div class="compact-file-list">
+          <span class="empty-text" v-if="attachments.length === 0">暂无附件</span>
+          <el-tag
+            v-for="file in attachments"
+            :key="file.id"
+            type="info"
+            :closable="canDelete(file)"
+            @close="deleteAttachment(file)"
+            @click="!hidePreview && previewFile(file)"
+            :class="{ 'clickable-tag': !hidePreview }"
           >
-            <el-icon><View /></el-icon>
-            预览
-          </el-button>
-          <el-button
-            v-if="canDelete(file)"
-            link
-            type="danger"
-            @click="deleteAttachment(file)"
-            :loading="deleting === file.id"
-          >
-            <el-icon><Delete /></el-icon>
-            删除
-          </el-button>
+            <el-icon style="vertical-align: middle; margin-right: 4px;"><Document /></el-icon>
+            <span style="vertical-align: middle;" :title="file.original_name">{{ file.original_name }}</span>
+          </el-tag>
         </div>
       </div>
-    </div>
+      <input
+        ref="fileInput"
+        type="file"
+        multiple
+        accept="*"
+        @change="handleFileUpload"
+        style="display: none"
+      />
+    </template>
 
-    <div v-else class="empty-attachments">
-      <el-empty description="暂无附件" />
-    </div>
+    <template v-else>
+      <div class="attachment-header">
+        <span class="attachment-title">
+          <el-icon><Document /></el-icon>
+          {{ title }}
+          <span class="attachment-count">({{ attachments.length }})</span>
+        </span>
+        <el-button
+          v-if="canUpload"
+          type="primary"
+          size="small"
+          @click="triggerFileInput"
+        >
+          <el-icon><Upload /></el-icon>
+          上传附件
+        </el-button>
+      </div>
+
+      <input
+        ref="fileInput"
+        type="file"
+        multiple
+        accept="*"
+        @change="handleFileUpload"
+        style="display: none"
+      />
+
+      <div v-if="attachments.length > 0" class="attachment-list">
+        <div
+          v-for="file in attachments"
+          :key="file.id"
+          class="attachment-item"
+        >
+          <div class="attachment-info">
+            <el-icon :class="getFileIcon(file.mime_type)">
+              <Document />
+            </el-icon>
+            <div class="attachment-details">
+              <div class="attachment-name">{{ file.original_name }}</div>
+              <div class="attachment-meta">
+                <span>{{ formatFileSize(file.file_size) }}</span>
+                <span class="attachment-date">{{ formatDate(file.created_at) }}</span>
+                <span v-if="file.created_by">{{ file.created_by }}</span>
+              </div>
+            </div>
+          </div>
+          <div class="attachment-actions">
+            <el-button
+              v-if="!hidePreview"
+              link
+              type="primary"
+              @click="previewFile(file)"
+              :previewing="previewing === file.id"
+            >
+              <el-icon><View /></el-icon>
+              预览
+            </el-button>
+            <el-button
+              v-if="canDelete(file)"
+              link
+              type="danger"
+              @click="deleteAttachment(file)"
+              :loading="deleting === file.id"
+            >
+              <el-icon><Delete /></el-icon>
+              删除
+            </el-button>
+          </div>
+        </div>
+      </div>
+
+      <div v-else class="empty-attachments">
+        <el-empty description="暂无附件" />
+      </div>
+    </template>
 
     <!-- 文件预览对话框 -->
     <el-dialog
@@ -94,6 +133,9 @@
         <template v-else-if="isText(previewAttachment?.mime_type)">
           <pre style="white-space: pre-wrap; max-height: 500px; overflow: auto">{{ previewContent }}</pre>
         </template>
+        <template v-else-if="isExcel(previewAttachment?.mime_type, previewAttachment?.original_name)">
+          <div class="excel-preview-container" v-html="previewContent"></div>
+        </template>
         <template v-else-if="isPdf(previewAttachment?.mime_type)">
           <iframe
             :src="previewAttachment?.file_path"
@@ -108,7 +150,6 @@
             <h3>不支持预览的文件类型</h3>
             <p>{{ previewAttachment?.mime_type }}</p>
             <el-button type="primary" @click="previewAttachment && downloadFile(previewAttachment)">
-              <el-icon><Download /></el-icon>
               下载文件
             </el-button>
           </div>
@@ -118,7 +159,6 @@
         <div class="dialog-footer">
           <el-button @click="closePreview">关闭</el-button>
           <el-button type="primary" @click="previewAttachment && downloadFile(previewAttachment)">
-            <el-icon><Download /></el-icon>
             下载
           </el-button>
         </div>
@@ -137,10 +177,11 @@
 </template>
 
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, nextTick } from 'vue'
 import { ElMessageBox } from 'element-plus'
 import { Document, Upload, View, Delete, Download } from '@element-plus/icons-vue'
 import { showError } from '@/composables/useMessage'
+import * as XLSX from 'xlsx'
 
 interface Attachment {
   id: string
@@ -156,13 +197,19 @@ interface Attachment {
 interface Props {
   voucherId: string
   attachments: Attachment[]
+  title?: string
   canUpload?: boolean
   canDelete?: (attachment: Attachment) => boolean
+  compact?: boolean
+  hidePreview?: boolean
 }
 
 const props = withDefaults(defineProps<Props>(), {
+  title: '凭证附件',
   canUpload: true,
   canDelete: () => true,
+  compact: false,
+  hidePreview: false,
 })
 
 const emit = defineEmits<{
@@ -203,6 +250,20 @@ function isPdf(mimeType?: string): boolean {
   return mimeType?.includes('pdf') || false
 }
 
+function isExcel(mimeType?: string, filename?: string): boolean {
+  return mimeType?.includes('excel') || 
+         mimeType?.includes('spreadsheet') || 
+         filename?.endsWith('.xlsx') || 
+         filename?.endsWith('.xls') || false
+}
+
+function isWord(mimeType?: string, filename?: string): boolean {
+  return mimeType?.includes('word') || 
+         mimeType?.includes('officedocument.wordprocessingml.document') || 
+         filename?.endsWith('.docx') || 
+         filename?.endsWith('.doc') || false
+}
+
 // 触发文件选择
 function triggerFileInput() {
   fileInput.value?.click()
@@ -226,18 +287,29 @@ async function previewFile(file: Attachment) {
   previewing.value = file.id
   previewVisible.value = true
   previewAttachment.value = file
+  previewContent.value = ''
 
-  if (isText(file.mime_type)) {
-    try {
+  try {
+    if (isText(file.mime_type)) {
       const response = await fetch(file.file_path)
       if (response.ok) {
         previewContent.value = await response.text()
       } else {
         showError('文件读取失败')
       }
-    } catch (error) {
-      showError('文件读取失败')
+    } else if (isExcel(file.mime_type, file.original_name)) {
+      const response = await fetch(file.file_path)
+      const arrayBuffer = await response.arrayBuffer()
+      const data = new Uint8Array(arrayBuffer)
+      const workbook = XLSX.read(data, { type: 'array' })
+      const firstSheetName = workbook.SheetNames[0]
+      const worksheet = workbook.Sheets[firstSheetName]
+      // 转换为HTML，并添加一些基础样式
+      previewContent.value = XLSX.utils.sheet_to_html(worksheet, { editable: false })
     }
+  } catch (error) {
+    console.error('Preview error:', error)
+    showError('文件预览生成失败')
   }
 
   previewing.value = null
@@ -321,7 +393,52 @@ function formatDate(dateString: string): string {
 </script>
 
 <style scoped>
-.voucher-attachments {
+.voucher-attachments.is-compact {
+  margin-top: 0;
+  border: none;
+  background: transparent;
+}
+
+.compact-attachments-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.compact-file-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.compact-file-list .empty-text {
+  font-size: 13px;
+  color: #c0c4cc;
+}
+
+.compact-file-list .el-tag {
+  max-width: 200px;
+}
+
+.compact-file-list .el-tag span {
+  display: inline-block;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clickable-tag {
+  cursor: pointer;
+}
+.clickable-tag:hover {
+  opacity: 0.8;
+}
+
+.voucher-attachments:not(.is-compact) {
   margin-top: 16px;
   border: 1px solid #e4e7ed;
   border-radius: 4px;
@@ -476,6 +593,26 @@ function formatDate(dateString: string): string {
   z-index: 9999;
 }
 
+.excel-preview-container {
+  max-height: 600px;
+  overflow: auto;
+  background: #fff;
+  padding: 10px;
+}
+.excel-preview-container :deep(table) {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0 auto;
+}
+.excel-preview-container :deep(td) {
+  border: 1px solid #dcdfe6;
+  padding: 4px 8px;
+  font-size: 13px;
+  min-width: 60px;
+}
+.excel-preview-container :deep(tr:nth-child(even)) {
+  background-color: #fafafa;
+}
 :deep(.el-empty) {
   color: #c0c4cc;
 }

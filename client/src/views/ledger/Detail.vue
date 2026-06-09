@@ -48,6 +48,10 @@
           <el-icon><Printer /></el-icon>
           打印
         </el-button>
+        <el-button plain @click="hiprintVisible = true">
+          <el-icon><Printer /></el-icon>
+          套打
+        </el-button>
       </div>
       <div v-if="showAdvancedFilter" class="filter-row" style="margin-top: 8px">
         <el-input
@@ -198,6 +202,15 @@
     </div>
 
     <VoucherEntryDialogHost ref="entryDialogHostRef" @saved="fetchData" />
+
+    <HiprintDialog
+      v-model="hiprintVisible"
+      template-type="ledger"
+      template-key="ledger:detail"
+      title="明细账"
+      :get-print-html="buildPrintHtml"
+      default-paper="A4"
+    />
   </div>
 </template>
 
@@ -220,6 +233,8 @@ import {
 } from '@/composables/useLedgerVoucherNavigate'
 import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 import { formatAmount } from '@/utils/format'
+import HiprintDialog from '@/components/print/HiprintDialog.vue'
+import { buildTablePrintHtml } from '@/utils/printTemplateHiprint'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
 import { formatSignedBalanceAmount } from '@/utils/exportLedgerHelpers'
 import { ACCOUNT_SELECT_POPPER_CLASS } from '@/utils/accountSelectDisplay'
@@ -333,6 +348,39 @@ function formatVoucherNo(row: any) {
   const seq = getVoucherSeq(row.voucher_no)
   const abbr = getTypeAbbr(row.voucher_type_name)
   return `${abbr}-${seq}`
+}
+
+// hiprint 套打
+const hiprintVisible = ref(false)
+
+function directionLabel(row: any): string {
+  if (row.is_monthly_subtotal || row.is_yearly_subtotal) return ''
+  if (row.running_balance === 0) return '平'
+  const dir = selectedAccount.value?.direction === 'debit'
+  return row.running_balance > 0 ? (dir ? '借' : '贷') : (dir ? '贷' : '借')
+}
+
+function buildPrintHtml(): string {
+  const title = selectedAccount.value
+    ? `明细账 —— ${selectedAccount.value.code} ${selectedAccount.value.name}`
+    : '明细账'
+  return buildTablePrintHtml<any>({
+    title,
+    subtitle: printDateLabel.value,
+    rows: list.value,
+    rowStyle: (r: any) =>
+      r.is_monthly_subtotal || r.is_yearly_subtotal ? 'font-weight:600;background:#f7f7f7;' : '',
+    columns: [
+      { label: '日期', align: 'center', render: r => (r.is_monthly_subtotal || r.is_yearly_subtotal ? '' : r.voucher_date || '') },
+      { label: '凭证号', align: 'center', render: r => formatVoucherNo(r) },
+      { label: '摘要', align: 'left', render: r => r.summary || (r.is_monthly_subtotal ? '本月合计' : r.is_yearly_subtotal ? '本年累计' : '') },
+      { label: '对方科目', align: 'left', render: r => r.opposite_accounts || '' },
+      { label: '借方', align: 'right', render: r => (r.is_monthly_subtotal ? formatAmount(r.monthly_debit) : r.is_yearly_subtotal ? formatAmount(r.yearly_debit) : r.direction === 'debit' ? formatAmount(r.amount) : '') },
+      { label: '贷方', align: 'right', render: r => (r.is_monthly_subtotal ? formatAmount(r.monthly_credit) : r.is_yearly_subtotal ? formatAmount(r.yearly_credit) : r.direction === 'credit' ? formatAmount(r.amount) : '') },
+      { label: '方向', align: 'center', render: directionLabel },
+      { label: '余额', align: 'right', render: r => formatAmount(Math.abs(r.running_balance)) },
+    ],
+  })
 }
 
 function getLedgerYear() {

@@ -103,6 +103,62 @@ import {
   up as addCashierInitBalanceDateUp,
   down as addCashierInitBalanceDateDown,
 } from './migrations/20260603_cashier_init_balance_date.js'
+import {
+  up as addCashierJournalMatchBatchUp,
+  down as addCashierJournalMatchBatchDown,
+} from './migrations/20260603_cashier_journal_match_batch.js'
+import {
+  up as addAssetCategoryAccountingFieldsUp,
+  down as addAssetCategoryAccountingFieldsDown,
+} from './migrations/20260603_add_asset_category_accounting_fields.js'
+import {
+  up as addDeprVoucherLinkUp,
+  down as addDeprVoucherLinkDown,
+} from './migrations/20260604_add_depr_voucher_link.js'
+import {
+  up as addCashierAttachmentsUp,
+  down as addCashierAttachmentsDown,
+} from './migrations/20260605_add_cashier_attachments.js'
+import {
+  up as backfillCashierAssetPermsUp,
+  down as backfillCashierAssetPermsDown,
+} from './migrations/20260605_backfill_cashier_asset_permissions.js'
+import {
+  up as addScmCoreUp,
+  down as addScmCoreDown,
+} from './migrations/20260605_add_scm_core.js'
+import {
+  up as addScmArapBomUp,
+  down as addScmArapBomDown,
+} from './migrations/20260605_add_scm_arap_bom.js'
+import {
+  up as addAssetScrapVoucherUp,
+  down as addAssetScrapVoucherDown,
+} from './migrations/20260604_add_asset_scrap_voucher.js'
+import {
+  up as backfillScmPermsUp,
+  down as backfillScmPermsDown,
+} from './migrations/20260605_backfill_scm_permissions.js'
+import {
+  up as addRhStandardReportsUp,
+  down as addRhStandardReportsDown,
+} from './migrations/20260605_add_rh_standard_reports.js'
+import {
+  up as extendPrintTemplatesHiprintUp,
+  down as extendPrintTemplatesHiprintDown,
+} from './migrations/20260606_extend_print_templates_for_hiprint.js'
+import {
+  up as addScmDocBomIdUp,
+  down as addScmDocBomIdDown,
+} from './migrations/20260608_add_scm_doc_bom_id.js'
+import {
+  up as addScmUnitUp,
+  down as addScmUnitDown,
+} from './migrations/20260608_add_scm_unit.js'
+import {
+  up as addScmItemTreeUp,
+  down as addScmItemTreeDown,
+} from './migrations/20260608_add_scm_item_tree.js'
 
 /**
  * 迁移示例：添加新字段
@@ -1303,4 +1359,88 @@ export const migrations: Migration[] = [
     up: addCashierInitBalanceDateUp,
     down: addCashierInitBalanceDateDown,
   },
-]
+  {
+    version: 46,
+    name: 'cashier_journal_match_batch',
+    up: addCashierJournalMatchBatchUp,
+    down: addCashierJournalMatchBatchDown,
+  },
+  {
+    version: 47,
+    name: 'add_asset_category_accounting_fields',
+    up: addAssetCategoryAccountingFieldsUp,
+    down: addAssetCategoryAccountingFieldsDown,
+  },
+  {
+    version: 48,
+    name: 'add_depr_voucher_link',
+    up: addDeprVoucherLinkUp,
+    down: addDeprVoucherLinkDown,
+  },
+  {
+    version: 49,
+    name: 'add_cashier_attachments',
+    up: addCashierAttachmentsUp,
+    down: addCashierAttachmentsDown,
+  },
+  {
+    version: 50,
+    name: 'backfill_cashier_asset_permissions',
+    up: backfillCashierAssetPermsUp,
+    down: backfillCashierAssetPermsDown,
+  },
+  {
+    version: 51,
+    name: 'add_scm_core',
+    up: addScmCoreUp,
+    down: addScmCoreDown,
+  },
+  {
+    version: 52,
+    name: 'add_rh_standard_reports',
+    up: addRhStandardReportsUp,
+    down: addRhStandardReportsDown,
+  },
+  {
+    version: 53,
+    name: 'add_scm_arap_bom',
+    up: addScmArapBomUp,
+    down: addScmArapBomDown,
+  },
+  {
+    version: 54,
+    name: 'add_asset_scrap_voucher',
+    up: addAssetScrapVoucherUp,
+    down: addAssetScrapVoucherDown,
+  },
+  {
+    version: 55,
+    name: 'backfill_scm_permissions',
+    up: backfillScmPermsUp,
+    down: backfillScmPermsDown,
+  },
+  {
+    version: 56,
+    name: 'extend_print_templates_for_hiprint',
+    up: extendPrintTemplatesHiprintUp,
+    down: extendPrintTemplatesHiprintDown,
+  },
+  {
+    version: 57,
+    name: 'add_scm_doc_bom_id',
+    up: addScmDocBomIdUp,
+    down: addScmDocBomIdDown,
+  },
+  {
+    version: 58,
+    name: 'add_scm_unit',
+    up: addScmUnitUp,
+    down: addScmUnitDown,
+  },
+  {
+    version: 59,
+    name: 'add_scm_item_tree',
+    up: addScmItemTreeUp,
+    down: addScmItemTreeDown,
+  },
+  ]

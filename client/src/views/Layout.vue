@@ -22,9 +22,9 @@
 
       <!-- 菜单 -->
       <el-menu
+        ref="menuRef"
         :default-active="activeMenu"
         :collapse="isCollapsed"
-        :openeds="openeds"
         background-color="transparent"
         text-color="rgba(255, 255, 255, 0.7)"
         active-text-color="#ffd700"
@@ -40,16 +40,27 @@
           v-for="group in menuGroups"
           :key="group.title === '报表管理' ? `report-${reportMenuRevision}` : group.title"
           :index="group.title"
+          :class="{ 'sub-menu-current': currentGroupTitle === group.title }"
+          @mouseenter="onGroupMouseEnter(group.title)"
+          @mouseleave="onGroupMouseLeave(group.title)"
         >
           <template #title>
-            <div class="menu-title-inner">
+            <div class="menu-title-inner" style="width: 100%; height: 100%; display: flex; align-items: center;" @click.stop="handleGroupTitleClick(group.title)">
               <div class="menu-icon-wrap">
                 <component :is="group.icon" />
               </div>
               <span class="menu-title-label">{{ group.title }}</span>
             </div>
           </template>
-          <el-menu-item-group class="menu-popup-group">
+          <template v-if="group.subGroups">
+            <el-sub-menu v-for="sg in group.subGroups" :key="sg.label" :index="`${group.title}__${sg.label}`">
+              <template #title><span>{{ sg.label }}</span></template>
+              <el-menu-item v-for="item in sg.items" :key="item.path" :index="item.path">
+                <span class="menu-item-content"><span class="menu-item-label">{{ item.title }}</span></span>
+              </el-menu-item>
+            </el-sub-menu>
+          </template>
+          <el-menu-item-group v-else class="menu-popup-group">
             <template #title>
               <span class="menu-popup-group-title">{{ group.title }}</span>
             </template>
@@ -196,7 +207,7 @@
       <el-main class="main">
         <div class="main-view">
           <router-view v-slot="{ Component, route: viewRoute }">
-            <keep-alive :key="viewCacheKey">
+            <keep-alive :key="viewCacheKey" :max="10">
               <component :is="Component" :key="getViewKey(viewRoute.fullPath)" />
             </keep-alive>
           </router-view>
@@ -260,7 +271,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue'
+import { ref, computed, onMounted, onBeforeUnmount, watch, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { getUsersByAccountSet, logout, switchOperator } from '@/api/auth'
@@ -455,23 +466,34 @@ async function handleChangeAccount() {
   await router.push('/login')
 }
 
+const menuRef = ref<any>()
+let hoverTimer: ReturnType<typeof setTimeout> | null = null
+
+function onGroupMouseEnter(title: string) {
+  if (hoverTimer) clearTimeout(hoverTimer)
+  hoverTimer = setTimeout(() => {
+    menuRef.value?.open(title)
+  }, 150)
+}
+
+function onGroupMouseLeave(title: string) {
+  if (hoverTimer) clearTimeout(hoverTimer)
+  hoverTimer = setTimeout(() => {
+    menuRef.value?.close(title)
+  }, 250)
+}
+
+function handleGroupTitleClick(title: string) {
+  // Always navigate to the group dashboard on click
+  router.push(`/group/${encodeURIComponent(title)}`)
+}
+
 function onGroupOpen(index: string | number) {
-  const key = String(index)
-  if (openGroups.value.length === 1 && openGroups.value[0] === key) return
-  // 先收起其它分组，下一帧再展开，避免两个 collapse 动画叠加产生重影
-  if (openGroups.value.length > 0) {
-    openGroups.value = []
-    requestAnimationFrame(() => {
-      openGroups.value = [key]
-    })
-    return
-  }
-  openGroups.value = [key]
+  // Native logic is fine since we no longer navigate here.
 }
 
 function onGroupClose(index: string | number) {
-  const key = String(index)
-  openGroups.value = openGroups.value.filter(k => k !== key)
+  // Native logic is fine
 }
 
 const openeds = computed(() => openGroups.value)
@@ -488,7 +510,13 @@ const menuGroups = computed(() =>
   )
 )
 
+provide('layoutMenuGroups', menuGroups)
+
 const activeMenu = computed(() => route.path)
+/** 当前所在的分组导航页（/group/:groupTitle），用于让对应分组标题高亮为金色 + 👉 */
+const currentGroupTitle = computed(() =>
+  route.name === 'GroupNav' ? String(route.params.groupTitle || '') : ''
+)
 /** 仅在成功登录/切换账套后更新，logout 清空 accountSetId 时不变化，避免 keep-alive 重挂载当前页触发无效请求 */
 const viewCacheKey = ref(userStore.accountSetId || 'no-account-set')
 
@@ -500,8 +528,15 @@ watch(
 )
 
 function getViewKey(fullPath: string) {
-  // 仅用 path 作为缓存键，避免 query 变化（如 editVoucherId）导致 keep-alive 组件整页重挂载
+  // 默认仅用 path 作为缓存键，避免 query 变化（如 editVoucherId）导致 keep-alive 组件整页重挂载
   const path = fullPath.split('?')[0] || fullPath
+  // 例外：/scm/docs 通过 doc_type 区分不同单据类型，若忽略 query 会让不同单据
+  // 共用同一缓存实例（切换单据类型时复用旧实例、数据串台），故按 doc_type 拆分缓存键
+  if (path === '/scm/docs') {
+    const query = fullPath.split('?')[1] || ''
+    const docType = new URLSearchParams(query).get('doc_type') || ''
+    return `${viewCacheKey.value}:${path}:${docType}`
+  }
   return `${viewCacheKey.value}:${path}`
 }
 

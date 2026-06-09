@@ -285,6 +285,15 @@
       width="520px"
       @keydown="onItemDialogKeydown"
     >
+      <div v-if="itemDialogType === 'edit' && itemNavigationInfo" style="margin-bottom: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 12px;">
+        <DialogNavigation
+          :current="itemNavigationInfo.current"
+          :total="itemNavigationInfo.total"
+          :is-first="itemNavigationInfo.isFirst"
+          :is-last="itemNavigationInfo.isLast"
+          @navigate="handleItemNavigate"
+        />
+      </div>
       <el-form :model="itemForm" label-width="100px">
         <el-form-item label="所属类别" required>
           <el-select
@@ -367,17 +376,19 @@
         </template>
       </el-form>
       <template #footer>
-        <el-button @click="itemDialogVisible = false">取消</el-button>
-        <el-button
-          v-if="itemDialogType === 'add'"
-          :loading="itemSaving"
-          @click="handleSaveItem(true)"
-        >
-          保存并新增 (Ctrl+Enter)
-        </el-button>
-        <el-button type="primary" :loading="itemSaving" @click="handleSaveItem(false)">
-          保存 (Enter)
-        </el-button>
+        <div style="display: flex; justify-content: flex-end; gap: 8px; flex-wrap: nowrap;">
+          <el-button @click="itemDialogVisible = false">取消</el-button>
+          <el-button
+            v-if="itemDialogType === 'add'"
+            :loading="itemSaving"
+            @click="handleSaveItem(true)"
+          >
+            保存并新增 (Ctrl+Enter)
+          </el-button>
+          <el-button type="primary" :loading="itemSaving" @click="handleSaveItem(false)">
+            保存 (Enter)
+          </el-button>
+        </div>
       </template>
     </el-dialog>
 
@@ -681,6 +692,7 @@ import {
 } from '@/utils/accountCashFlow'
 import { fetchAuxItemsPage, fetchAllAuxItemsByType } from '@/composables/useAuxItemsPage'
 import { useVoucherAuxItems } from '@/composables/useVoucherAuxItems'
+import DialogNavigation from '@/components/common/DialogNavigation.vue'
 
 const {
   taskProgressVisible,
@@ -738,6 +750,36 @@ const itemDialogType = ref('add')
 const itemDialogTitle = computed(() =>
   itemDialogType.value === 'add' ? '新增核算项目' : '编辑核算项目'
 )
+
+/** 翻页导航信息 */
+const itemNavigationInfo = computed(() => {
+  if (pageItems.value.length === 0 || itemDialogType.value === 'add') return null
+  const idx = pageItems.value.findIndex(r => r.id === itemForm.value.id)
+  return {
+    current: idx + 1,
+    total: pageItems.value.length,
+    isFirst: idx <= 0,
+    isLast: idx >= pageItems.value.length - 1 || idx === -1
+  }
+})
+
+/** 翻页处理 */
+function handleItemNavigate(direction: 'first' | 'previous' | 'next' | 'last') {
+  if (pageItems.value.length === 0) return
+  
+  let targetIdx = 0
+  const currentIdx = pageItems.value.findIndex(r => r.id === itemForm.value.id)
+  
+  if (direction === 'first') targetIdx = 0
+  else if (direction === 'last') targetIdx = pageItems.value.length - 1
+  else if (direction === 'previous') targetIdx = Math.max(0, currentIdx - 1)
+  else if (direction === 'next') targetIdx = Math.min(pageItems.value.length - 1, currentIdx + 1)
+  
+  if (pageItems.value[targetIdx]) {
+    openItemDialog('edit', pageItems.value[targetIdx])
+  }
+}
+
 const itemForm = ref<any>({ status: 'active' })
 const itemSaving = ref(false)
 

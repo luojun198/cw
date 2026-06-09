@@ -994,9 +994,11 @@ router.get('/permissions/available', (req: AuthRequest, res) => {
 
   let availablePermissions = PERMISSIONS
 
-  // 如果是 ACD 导入的账套，只显示有 acdCode 的权限
+  // ACD 导入的账套：除有 acdCode 的权限外，CW 原生模块（出纳/资产）的权限也应可授予，
+  // 否则新增的出纳/资产权限（无 acdCode）会被隐藏、无法授权。
   if (accountSet?.import_source === 'acd') {
-    availablePermissions = PERMISSIONS.filter(p => p.acdCode)
+    const CW_NATIVE_MODULES = new Set(['cashier', 'asset'])
+    availablePermissions = PERMISSIONS.filter(p => p.acdCode || CW_NATIVE_MODULES.has(p.module))
   }
 
   // 按模块分组返回

@@ -72,43 +72,15 @@
 
       <div v-if="!isReadonly" class="voucher-top-actions">
         <div class="navigation-controls">
-          <el-button-group>
-            <el-button
-              size="small"
-              :disabled="!navigationInfo || navigationInfo.isFirst"
-              @click="emit('navigate', 'first')"
-            >
-              首张
-            </el-button>
-            <el-button
-              size="small"
-              :disabled="!navigationInfo || navigationInfo.isFirst"
-              @click="emit('navigate', 'previous')"
-            >
-              上一张
-            </el-button>
-            <el-button
-              size="small"
-              :disabled="!navigationInfo || navigationInfo.isLast"
-              @click="emit('navigate', 'next')"
-            >
-              下一张
-            </el-button>
-            <el-button
-              size="small"
-              :disabled="!navigationInfo || navigationInfo.isLast"
-              @click="emit('navigate', 'last')"
-            >
-              末张
-            </el-button>
-          </el-button-group>
-
-          <span class="navigation-info">
-            <template v-if="navigationInfo">
-              第 {{ navigationInfo.current }} 张 / 共 {{ navigationInfo.total }} 张
-            </template>
-            <template v-else> 未选择凭证 </template>
-          </span>
+          <DialogNavigation
+            v-if="navigationInfo"
+            :current="navigationInfo.current"
+            :total="navigationInfo.total"
+            :is-first="navigationInfo.isFirst"
+            :is-last="navigationInfo.isLast"
+            @navigate="val => emit('navigate', val)"
+          />
+          <span v-else class="navigation-info"> 未选择凭证 </span>
         </div>
 
         <!-- 当前选中科目的余额显示（含辅助核算各类目余额） -->
@@ -204,6 +176,17 @@
                   </span>
                 </template>
               </div>
+              <div
+                v-else-if="isLockedCashRow(row)"
+                class="entry-account-readonly entry-account-locked"
+                title="出纳生成的凭证：现金/银行科目已锁定，只能修改对方（挂账）科目"
+                @click="setCurrentEntry(row)"
+              >
+                <span class="entry-readonly-text">{{ getAccountDisplay(row) }}</span>
+                <el-tag size="small" type="info" effect="plain" style="margin-left: 6px">
+                  现金科目·锁定
+                </el-tag>
+              </div>
               <div v-else style="width: 100%" @dblclick="emit('quickCreateAccount', row)">
                 <el-autocomplete
                   :ref="(el: any) => setAccountAutocompleteRef(row, el)"
@@ -270,6 +253,7 @@
                 v-model="row.debit_amount"
                 :precision="2"
                 :controls="false"
+                :disabled="isLockedCashRow(row)"
                 size="small"
                 class="amount-input"
                 @focus="setCurrentEntry(row)"
@@ -290,6 +274,7 @@
                 v-model="row.credit_amount"
                 :precision="2"
                 :controls="false"
+                :disabled="isLockedCashRow(row)"
                 size="small"
                 class="amount-input"
                 @focus="setCurrentEntry(row)"
@@ -306,7 +291,7 @@
                 link
                 type="danger"
                 size="small"
-                :disabled="form.entries.length <= 2"
+                :disabled="form.entries.length <= 2 || isLockedCashRow(row)"
                 @click="removeEntry($index, row)"
                 >删除</el-button
               >
@@ -718,6 +703,7 @@ import request from '@/api/request'
 import { Document, Upload, Download, Printer, Collection } from '@element-plus/icons-vue'
 import { formatAmount } from '@/utils/format'
 import { accountNeedsCashFlowItem, isAuxCategoryExcludedFromAccount } from '@/utils/accountCashFlow'
+import DialogNavigation from '@/components/common/DialogNavigation.vue'
 
 interface NavigationInfo {
   current: number
@@ -781,6 +767,16 @@ const route = useRoute()
 const voucherModalReturnStore = useVoucherModalReturnStore()
 
 const isReadonly = computed(() => props.mode === 'view')
+
+// 出纳生成的凭证（source='cashier'）在编辑时：现金/银行分录锁定，只能改对方（挂账）科目
+const isCashierEdit = computed(() => props.mode === 'edit' && props.form?.source === 'cashier')
+
+/** 该分录是否为「出纳凭证里被锁定的现金/银行分录」 */
+function isLockedCashRow(row: any): boolean {
+  if (!isCashierEdit.value || !row?.account_id) return false
+  const acc = props.accounts.find(a => a.id === row.account_id)
+  return !!acc && (Number(acc.is_cash) === 1 || Number(acc.is_bank) === 1)
+}
 
 const dialogTitle = computed(() => {
   switch (props.mode) {

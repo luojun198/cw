@@ -23,6 +23,8 @@ export const PERMISSION_MODULES = [
   { key: 'period',   name: '期间管理' },
   { key: 'system',   name: '系统管理' },
   { key: 'cashier',  name: '出纳管理' },
+  { key: 'asset',    name: '固定资产' },
+  { key: 'scm',      name: '供应链' },
 ] as const
 
 export const PERMISSIONS: PermissionDef[] = [
@@ -94,11 +96,30 @@ export const PERMISSIONS: PermissionDef[] = [
   { code: 'cashier:journal',  name: '出纳日记账',   module: 'cashier', moduleName: '出纳管理', acdCode: '422' },
   { code: 'cashier:initbal',  name: '出纳期初',     module: 'cashier', moduleName: '出纳管理' },
   { code: 'cashier:reconcile',name: '银行对账',     module: 'cashier', moduleName: '出纳管理' },
+  { code: 'cashier:voucher',  name: '出纳生成/删除凭证', module: 'cashier', moduleName: '出纳管理' },
+  { code: 'cashier:import',   name: '银行对账单导入', module: 'cashier', moduleName: '出纳管理' },
+  { code: 'cashier:report',   name: '出纳日报/报表', module: 'cashier', moduleName: '出纳管理' },
+  { code: 'cashier:param',    name: '出纳参数设置', module: 'cashier', moduleName: '出纳管理' },
 
   // ── 固定资产 ──────────────────────────────────────────
-  { code: 'asset:view',       name: '固定资产查看', module: 'cashier', moduleName: '出纳管理' },
-  { code: 'asset:edit',       name: '固定资产编辑', module: 'cashier', moduleName: '出纳管理' },
-  { code: 'asset:dict',       name: '固定资产字典', module: 'cashier', moduleName: '出纳管理' },
+  { code: 'asset:view',       name: '固定资产查看', module: 'asset',   moduleName: '固定资产' },
+  { code: 'asset:edit',       name: '固定资产编辑', module: 'asset',   moduleName: '固定资产' },
+  { code: 'asset:dict',       name: '资产档案字典', module: 'asset',   moduleName: '固定资产' },
+  { code: 'asset:depr',       name: '资产折旧计提', module: 'asset',   moduleName: '固定资产' },
+  { code: 'asset:dispose',    name: '资产处置',     module: 'asset',   moduleName: '固定资产' },
+  { code: 'asset:inventory',  name: '资产盘点',     module: 'asset',   moduleName: '固定资产' },
+  { code: 'asset:report',     name: '资产报表',     module: 'asset',   moduleName: '固定资产' },
+  { code: 'asset:param',      name: '资产参数设置', module: 'asset',   moduleName: '固定资产' },
+
+  // ── 供应链 ──────────────────────────────────────────
+  { code: 'scm:item',         name: '物料档案',     module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:partner',      name: '往来单位档案', module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:warehouse',    name: '仓库档案',     module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:category',     name: '物料分类',     module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:stock',        name: '库存查询',     module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:opening',      name: '期初库存',     module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:import',       name: '供应链ACD导入',module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:param',        name: '供应链参数',   module: 'scm',     moduleName: '供应链' },
 ]
 
 /** 按模块分组 */
@@ -146,6 +167,9 @@ export const PRESET_ROLES = [
       'base:account', 'base:summary', 'base:template',
       'period:init',
       'cashier:journal', 'cashier:initbal', 'cashier:reconcile',
+      'cashier:voucher', 'cashier:import', 'cashier:report', 'cashier:param',
+      'asset:view', 'asset:edit', 'asset:dict', 'asset:depr',
+      'asset:dispose', 'asset:inventory', 'asset:report', 'asset:param',
     ],
   },
   {

@@ -213,6 +213,7 @@ export function bootstrapNewAccountSetDefaults(
   }
 
   ensureDefaultPrintTemplateForAccountSet(db, accountSetId)
+  ensureDefaultAssetDicts(db, accountSetId)
 
   return startDate
 }
@@ -246,4 +247,79 @@ export function readAccountSetStartDate(
   const resolved = resolveAccountSetStartDate(null, accountSet?.fiscal_year)
   syncAccountSetStartDate(db, accountSetId, resolved)
   return resolved
+}
+
+/** 预设固定资产字典的基础默认值（资产状态、增减方式等） */
+export function ensureDefaultAssetDicts(db: Database.Database, accountSetId: string, specificType?: string) {
+  // 1. 预设资产状态
+  if (!specificType || specificType === 'status') {
+    const statusCount = (db.prepare('SELECT COUNT(*) as c FROM fixed_asset_status WHERE account_set_id=?').get(accountSetId) as any).c
+    if (statusCount === 0) {
+      const insStatus = db.prepare('INSERT INTO fixed_asset_status (id, account_set_id, code, name, depreciable) VALUES (?, ?, ?, ?, ?)')
+      insStatus.run(uuidv4(), accountSetId, '01', '在用', 1)
+      insStatus.run(uuidv4(), accountSetId, '02', '未使用', 0)
+      insStatus.run(uuidv4(), accountSetId, '03', '不需用', 0)
+      insStatus.run(uuidv4(), accountSetId, '04', '已报废', 0)
+    }
+  }
+
+  // 2. 预设增减方式
+  if (!specificType || specificType === 'change_type') {
+    try {
+      const ctCount = (db.prepare('SELECT COUNT(*) as c FROM fixed_asset_change_type WHERE account_set_id=?').get(accountSetId) as any).c
+      if (ctCount === 0) {
+        const insCT = db.prepare('INSERT INTO fixed_asset_change_type (id, account_set_id, code, name, direction) VALUES (?, ?, ?, ?, ?)')
+        // 增加方式
+        insCT.run(uuidv4(), accountSetId, '01', '直接购入', 'increase')
+        insCT.run(uuidv4(), accountSetId, '02', '投资者投入', 'increase')
+        insCT.run(uuidv4(), accountSetId, '03', '接受捐赠', 'increase')
+        insCT.run(uuidv4(), accountSetId, '04', '盘盈', 'increase')
+        // 减少方式
+        insCT.run(uuidv4(), accountSetId, '11', '报废', 'decrease')
+        insCT.run(uuidv4(), accountSetId, '12', '出售', 'decrease')
+        insCT.run(uuidv4(), accountSetId, '13', '盘亏', 'decrease')
+        insCT.run(uuidv4(), accountSetId, '14', '毁损', 'decrease')
+      }
+    } catch (e) {
+      // 忽略表可能不存在的情况
+    }
+  }
+
+  // 3. 预设资产类别
+  if (!specificType || specificType === 'category') {
+    const catCount = (db.prepare('SELECT COUNT(*) as c FROM fixed_asset_category WHERE account_set_id=?').get(accountSetId) as any).c
+    if (catCount === 0) {
+      const insCat = db.prepare('INSERT INTO fixed_asset_category (id, account_set_id, code, name, salvage_rate, account_code, depr_account_code, clearing_account_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?)')
+      insCat.run(uuidv4(), accountSetId, '01', '房屋及建筑物', 5, '1601', '1602', '1606')
+      insCat.run(uuidv4(), accountSetId, '02', '机器设备', 5, '1601', '1602', '1606')
+      insCat.run(uuidv4(), accountSetId, '03', '运输工具', 5, '1601', '1602', '1606')
+      insCat.run(uuidv4(), accountSetId, '04', '电子设备', 5, '1601', '1602', '1606')
+      insCat.run(uuidv4(), accountSetId, '05', '办公家具', 5, '1601', '1602', '1606')
+    }
+  }
+
+  // 4. 预设资产用途
+  if (!specificType || specificType === 'purpose') {
+    const purpCount = (db.prepare('SELECT COUNT(*) as c FROM fixed_asset_purpose WHERE account_set_id=?').get(accountSetId) as any).c
+    if (purpCount === 0) {
+      const insPurp = db.prepare('INSERT INTO fixed_asset_purpose (id, account_set_id, code, name, expense_account) VALUES (?, ?, ?, ?, ?)')
+      insPurp.run(uuidv4(), accountSetId, '01', '管理用', '6602')
+      insPurp.run(uuidv4(), accountSetId, '02', '经营用', '6601')
+      insPurp.run(uuidv4(), accountSetId, '03', '生产用', '5001')
+    }
+  }
+  // 5. 预设使用部门
+  if (!specificType || specificType === 'dept') {
+    const deptCount = (db.prepare('SELECT COUNT(*) as c FROM fixed_asset_dept WHERE account_set_id=?').get(accountSetId) as any).c
+    if (deptCount === 0) {
+      const insDept = db.prepare('INSERT INTO fixed_asset_dept (id, account_set_id, code, name) VALUES (?, ?, ?, ?)')
+      insDept.run(uuidv4(), accountSetId, '01', '办公室')
+      insDept.run(uuidv4(), accountSetId, '02', '财务部')
+      insDept.run(uuidv4(), accountSetId, '03', '人事部')
+      insDept.run(uuidv4(), accountSetId, '04', '销售部')
+      insDept.run(uuidv4(), accountSetId, '05', '技术部')
+      insDept.run(uuidv4(), accountSetId, '06', '生产部')
+      insDept.run(uuidv4(), accountSetId, '07', '采购部')
+    }
+  }
 }

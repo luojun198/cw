@@ -64,6 +64,15 @@
       width="500px"
       @close="handleDialogClose"
     >
+      <div v-if="editForm.id && navigationInfo" style="margin-bottom: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 12px;">
+        <DialogNavigation
+          :current="navigationInfo.current"
+          :total="navigationInfo.total"
+          :is-first="navigationInfo.isFirst"
+          :is-last="navigationInfo.isLast"
+          @navigate="handleNavigate"
+        />
+      </div>
       <el-form :model="editForm" label-width="100px">
         <el-form-item label="模块">
           <el-input v-model="editForm.module" disabled />
@@ -125,6 +134,7 @@ import {
   resetKeyboardShortcuts,
 } from '@/api/keyboardShortcuts'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+import DialogNavigation from '@/components/common/DialogNavigation.vue'
 
 const { tableRef, onDragEnd, colWidth } = useListColumnWidth('base_keyboard_shortcuts')
 
@@ -145,6 +155,38 @@ interface KeyboardShortcut {
 
 const loading = ref(false)
 const shortcuts = ref<KeyboardShortcut[]>([])
+
+/** 翻页导航信息 */
+const navigationInfo = computed(() => {
+  const allRows = filteredShortcuts.value
+  if (allRows.length === 0 || !editForm.value.id) return null
+  const idx = allRows.findIndex(r => r.id === editForm.value.id)
+  return {
+    current: idx + 1,
+    total: allRows.length,
+    isFirst: idx <= 0,
+    isLast: idx >= allRows.length - 1 || idx === -1
+  }
+})
+
+/** 翻页处理 */
+function handleNavigate(direction: 'first' | 'previous' | 'next' | 'last') {
+  const allRows = filteredShortcuts.value
+  if (allRows.length === 0) return
+  
+  let targetIdx = 0
+  const currentIdx = allRows.findIndex(r => r.id === editForm.value.id)
+  
+  if (direction === 'first') targetIdx = 0
+  else if (direction === 'last') targetIdx = allRows.length - 1
+  else if (direction === 'previous') targetIdx = Math.max(0, currentIdx - 1)
+  else if (direction === 'next') targetIdx = Math.min(allRows.length - 1, currentIdx + 1)
+  
+  if (allRows[targetIdx]) {
+    handleEdit(allRows[targetIdx])
+  }
+}
+
 const searchKeyword = ref('')
 const editDialogVisible = ref(false)
 const saving = ref(false)

@@ -47,6 +47,15 @@
     </el-table>
 
     <el-dialog v-model="dialogVisible" :title="dialogTitle" width="480px">
+      <div v-if="dialogType === 'edit' && navigationInfo" style="margin-bottom: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 12px;">
+        <DialogNavigation
+          :current="navigationInfo.current"
+          :total="navigationInfo.total"
+          :is-first="navigationInfo.isFirst"
+          :is-last="navigationInfo.isLast"
+          @navigate="handleNavigate"
+        />
+      </div>
       <el-form :model="form" label-width="96px">
         <el-form-item label="编码" required>
           <el-input v-model="form.code" :disabled="dialogType === 'edit'" />
@@ -92,6 +101,7 @@ import {
 import { showSuccess, showOperationError } from '@/composables/useMessage'
 import { useDeleteConfirm } from '@/composables/useConfirm'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+import DialogNavigation from '@/components/common/DialogNavigation.vue'
 
 const { tableRef, onDragEnd, colWidth } = useListColumnWidth('base_cash_flow_items')
 const router = useRouter()
@@ -103,6 +113,36 @@ const searchKeyword = ref('')
 const dialogVisible = ref(false)
 const dialogType = ref<'add' | 'edit'>('add')
 const saving = ref(false)
+
+/** 翻页导航信息 */
+const navigationInfo = computed(() => {
+  if (filteredList.value.length === 0 || dialogType.value === 'add') return null
+  const idx = filteredList.value.findIndex(r => r.id === form.value.id)
+  return {
+    current: idx + 1,
+    total: filteredList.value.length,
+    isFirst: idx <= 0,
+    isLast: idx >= filteredList.value.length - 1 || idx === -1
+  }
+})
+
+/** 翻页处理 */
+function handleNavigate(direction: 'first' | 'previous' | 'next' | 'last') {
+  if (filteredList.value.length === 0) return
+  
+  let targetIdx = 0
+  const currentIdx = filteredList.value.findIndex(r => r.id === form.value.id)
+  
+  if (direction === 'first') targetIdx = 0
+  else if (direction === 'last') targetIdx = filteredList.value.length - 1
+  else if (direction === 'previous') targetIdx = Math.max(0, currentIdx - 1)
+  else if (direction === 'next') targetIdx = Math.min(filteredList.value.length - 1, currentIdx + 1)
+  
+  if (filteredList.value[targetIdx]) {
+    openDialog('edit', filteredList.value[targetIdx])
+  }
+}
+
 const initLoading = ref(false)
 const form = ref({
   id: '',

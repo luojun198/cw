@@ -23,6 +23,8 @@ export interface VoucherForm {
   maker_name?: string
   auditor_name?: string
   poster_name?: string
+  /** 凭证来源：'cashier' 表示出纳生成（编辑时现金分录锁定） */
+  source?: string
 }
 
 export function useVoucherForm(auxCategories: Ref<any[]>) {
@@ -43,6 +45,7 @@ export function useVoucherForm(auxCategories: Ref<any[]>) {
       maker_name: currentUser,
       auditor_name: '',
       poster_name: '',
+      source: '',
     }
   }
 
@@ -187,6 +190,7 @@ export function useVoucherForm(auxCategories: Ref<any[]>) {
       maker_name: voucher.maker_name || '',
       auditor_name: voucher.auditor_name || '',
       poster_name: voucher.poster_name || '',
+      source: (voucher as any).source || '',
     }
     currentEntry.value = form.value.entries[0] || null
   }

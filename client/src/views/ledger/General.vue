@@ -65,6 +65,10 @@
           <el-icon><Printer /></el-icon>
           打印
         </el-button>
+        <el-button plain @click="hiprintVisible = true">
+          <el-icon><Printer /></el-icon>
+          套打
+        </el-button>
       </div>
     </div>
 
@@ -236,6 +240,15 @@
       </template>
     </el-table>
     </div>
+
+    <HiprintDialog
+      v-model="hiprintVisible"
+      template-type="ledger"
+      template-key="ledger:general"
+      title="科目余额表"
+      :get-print-html="buildPrintHtml"
+      default-paper="A4"
+    />
   </div>
 </template>
 
@@ -248,6 +261,8 @@ import type { TableColumnCtx } from 'element-plus'
 import { useLedgerWideTable } from '@/composables/useLedgerWideTable'
 import { useFillHeightTable } from '@/composables/useFillHeightTable'
 import { formatAmount } from '@/utils/format'
+import HiprintDialog from '@/components/print/HiprintDialog.vue'
+import { buildTablePrintHtml } from '@/utils/printTemplateHiprint'
 import { exportStyledTable } from '@/utils/exportStyledExcel'
 import {
   buildGeneralLedgerExportColumns,
@@ -289,6 +304,36 @@ const printDateLabel = computed(() => {
   const e = filters.value.end_date || `${year}-12-31`
   return `日期：${s} 至 ${e}`
 })
+
+// hiprint 套打
+const hiprintVisible = ref(false)
+function balDir(balance: number, acctDir: string): string {
+  if (!balance) return ''
+  const dr = balance > 0 ? acctDir === 'debit' : acctDir !== 'debit'
+  return dr ? '借' : '贷'
+}
+function amt(v: number): string {
+  return v && v > 0 ? formatAmount(v) : hideZero.value ? '' : formatAmount(0)
+}
+function buildPrintHtml(): string {
+  return buildTablePrintHtml<any>({
+    title: '科目余额表',
+    subtitle: printDateLabel.value,
+    rows: list.value,
+    columns: [
+      { label: '科目编码', align: 'left', render: r => '　'.repeat(Math.max(0, (r.level || 1) - 1)) + (r.account_code || '') },
+      { label: '科目名称', align: 'left', render: r => '　'.repeat(Math.max(0, (r.level || 1) - 1)) + (r.account_name || '') },
+      { label: '期初方向', align: 'center', render: r => balDir(r.init_balance, r.direction) },
+      { label: '期初余额', align: 'right', render: r => (r.init_balance !== 0 ? formatAmount(Math.abs(r.init_balance)) : hideZero.value ? '' : formatAmount(0)) },
+      { label: '本期借方', align: 'right', render: r => amt(r.current_debit) },
+      { label: '本期贷方', align: 'right', render: r => amt(r.current_credit) },
+      { label: '本年借方', align: 'right', render: r => amt(r.year_debit) },
+      { label: '本年贷方', align: 'right', render: r => amt(r.year_credit) },
+      { label: '期末方向', align: 'center', render: r => balDir(r.end_balance, r.direction) },
+      { label: '期末余额', align: 'right', render: r => (r.end_balance !== 0 ? formatAmount(Math.abs(r.end_balance)) : hideZero.value ? '' : formatAmount(0)) },
+    ],
+  })
+}
 
 onBeforeUnmount(() => {
   if (printTimer) clearTimeout(printTimer)

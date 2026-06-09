@@ -61,6 +61,10 @@
           <el-icon><Printer /></el-icon>
           打印
         </el-button>
+        <el-button plain @click="hiprintVisible = true">
+          <el-icon><Printer /></el-icon>
+          套打
+        </el-button>
       </div>
       <div v-if="showAdvancedFilter" class="filter-row filter-row--advanced">
         <el-input
@@ -175,6 +179,15 @@
     </div>
 
     <VoucherEntryDialogHost ref="entryDialogHostRef" @saved="fetchData" />
+
+    <HiprintDialog
+      v-model="hiprintVisible"
+      template-type="ledger"
+      template-key="ledger:chronological"
+      title="序时账"
+      :get-print-html="buildPrintHtml"
+      default-paper="A4"
+    />
   </div>
 </template>
 
@@ -191,6 +204,8 @@ import {
 } from '@/composables/useLedgerVoucherNavigate'
 import { useVoucherModalRestore } from '@/composables/useVoucherModalRestore'
 import { formatAmount } from '@/utils/format'
+import HiprintDialog from '@/components/print/HiprintDialog.vue'
+import { buildTablePrintHtml } from '@/utils/printTemplateHiprint'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
 import AccountScopeAlert from '@/components/AccountScopeAlert.vue'
 
@@ -251,6 +266,28 @@ const printDateLabel = computed(() => {
   }
   return `日期：${filters.value.year}年 ${filters.value.period}月`
 })
+
+// hiprint 套打
+const hiprintVisible = ref(false)
+function buildPrintHtml(): string {
+  return buildTablePrintHtml<any>({
+    title: '序时账',
+    subtitle: printDateLabel.value,
+    rows: list.value,
+    rowStyle: (r: any) => (r.is_monthly_subtotal ? 'font-weight:600;background:#f7f7f7;' : ''),
+    columns: [
+      { label: '日期', align: 'center', render: r => (r.is_monthly_subtotal ? '' : r.voucher_date || '') },
+      { label: '凭证类型', align: 'center', render: r => r.voucher_type_name || '' },
+      { label: '凭证号', align: 'center', render: r => r.voucher_no || '' },
+      { label: '科目编码', align: 'left', render: r => r.account_code || '' },
+      { label: '科目名称', align: 'left', render: r => r.account_name || '' },
+      { label: '摘要', align: 'left', render: r => r.summary || (r.is_monthly_subtotal ? '本月合计' : '') },
+      { label: '借方金额', align: 'right', render: r => (r.is_monthly_subtotal ? formatAmount(r.monthly_debit) : r.direction === 'debit' ? formatAmount(r.amount) : '') },
+      { label: '贷方金额', align: 'right', render: r => (r.is_monthly_subtotal ? formatAmount(r.monthly_credit) : r.direction === 'credit' ? formatAmount(r.amount) : '') },
+      { label: '制单人', align: 'center', render: r => r.maker_name || '' },
+    ],
+  })
+}
 
 let printTimer: ReturnType<typeof setTimeout> | null = null
 

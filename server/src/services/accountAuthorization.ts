@@ -474,6 +474,23 @@ export function assertAccountIdsInScope(
   return null
 }
 
+/**
+ * 校验某张凭证的全部分录科目都在授权范围内（用于出纳/资产生成凭证后的科目授权校验）。
+ * 在同一事务内调用（凭证及分录已插入但未提交），越权返回错误信息以便抛出回滚。
+ */
+export function assertVoucherEntriesInScopeById(
+  database: Database.Database,
+  ctx: AccountScopeContext | undefined,
+  voucherId: string,
+  accountSetId: string
+): string | null {
+  if (!ctx || ctx.bypass || !ctx.restricted) return null
+  const rows = database
+    .prepare('SELECT account_id FROM voucher_entries WHERE voucher_id = ? AND account_set_id = ?')
+    .all(voucherId, accountSetId) as Array<{ account_id: string | null }>
+  return assertAccountIdsInScope(ctx, rows.map(r => r.account_id || ''))
+}
+
 /** 期初/清理：受限且未指定科目时，仅操作授权科目列表 */
 export function resolveScopedAccountIdsForClear(
   ctx: AccountScopeContext | undefined,

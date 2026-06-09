@@ -64,6 +64,7 @@ import voucherTemplateRoutes from './routes/voucherTemplate.js'
 import taskRoutes from './routes/task.js'
 import sharedTasksRoutes from './routes/sharedTasks.js'
 import ledgerRoutes from './routes/ledger.js'
+import ledgerStandardReportRoutes from './routes/ledgerStandardReport.js'
 import reportRoutes from './routes/report.js'
 import exportRoutes from './routes/export.js'
 // 以下静态报表路由已废弃（前端改用动态报表 DynamicReport + report_definitions 表）
@@ -78,6 +79,8 @@ import reportTemplateRoutes from './routes/reportTemplate.js'
 import dashboardRoutes from './routes/dashboard.js'
 import cashierRoutes from './routes/cashierJournal.js'
 import fixedAssetRoutes from './routes/fixedAsset.js'
+import scmBaseRoutes from './routes/scmBase.js'
+import scmDocRoutes from './routes/scmDoc.js'
 import acdExportRoutes from './routes/acdExport.js'
 import cashierImportRoutes from './routes/cashierImport.js'
 import backupRoutes from './routes/backup.js'
@@ -236,6 +239,7 @@ app.use('/api/voucher', voucherAutoTransferRoutes)
 app.use('/api/voucher', taskRoutes)
 app.use('/api/voucher-templates', voucherTemplateRoutes)
 app.use('/api/ledger', ledgerRoutes)
+app.use('/api/ledger/standard-reports', ledgerStandardReportRoutes)
 app.use('/api/report', reportRoutes)
 app.use('/api/export', exportRoutes)
 // 以下静态报表路由已废弃
@@ -250,6 +254,8 @@ app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/security', backupRoutes)
 app.use('/api', cashierRoutes)
 app.use('/api', fixedAssetRoutes)
+app.use('/api', scmBaseRoutes)
+app.use('/api', scmDocRoutes)
 app.use('/api', acdExportRoutes)
 app.use('/api', cashierImportRoutes)
 

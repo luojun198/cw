@@ -15,7 +15,7 @@ import {
   isVoucherVisibleInAccountScope,
 } from '../services/accountAuthorization.js'
 import { yuanToCents } from '../utils/amountUtils.js'
-import { syncCashierFromVoucher } from '../services/cashierQuery.js'
+import { syncCashierFromVoucher, syncCashierCounterFromVoucher } from '../services/cashierQuery.js'
 import {
   attachVoucherEntries,
   buildVoucherEntryPayloads,
@@ -984,6 +984,42 @@ router.put(
       return res.status(400).json({ code: 400, message: '已记账凭证不能修改' })
     }
 
+    // 出纳生成的凭证：只能修改对方（挂账）科目，现金/银行科目分录不得改动
+    if (voucher.source === 'cashier') {
+      const cashRows = db
+        .prepare('SELECT id FROM accounts WHERE account_set_id=? AND (is_cash=1 OR is_bank=1)')
+        .all(accountSetId) as Array<{ id: string }>
+      const cashIds = new Set(cashRows.map(r => String(r.id)))
+      const origEntries = db
+        .prepare('SELECT account_id, direction, amount FROM voucher_entries WHERE voucher_id=?')
+        .all(id) as Array<{ account_id: string; direction: string; amount: number }>
+      // 现金分录签名：account_id|direction|amount（保留两位小数避免浮点误差），排序后比较
+      const cashSignature = (
+        list: Array<{ account_id: any; direction?: string; debit_amount?: any; credit_amount?: any; amount?: any }>
+      ) =>
+        list
+          .filter(e => cashIds.has(String(e.account_id)))
+          .map(e => {
+            const direction =
+              e.direction || (Number(e.debit_amount) > 0 ? 'debit' : 'credit')
+            const amount =
+              e.amount != null
+                ? Number(e.amount)
+                : Number(e.debit_amount) > 0
+                  ? Number(e.debit_amount)
+                  : Number(e.credit_amount)
+            return `${e.account_id}|${direction}|${(amount || 0).toFixed(2)}`
+          })
+          .sort()
+          .join(';')
+      if (cashSignature(origEntries) !== cashSignature(entries || [])) {
+        return res.status(400).json({
+          code: 400,
+          message: '出纳生成的凭证只能修改对方（挂账）科目，现金/银行科目分录不能改动',
+        })
+      }
+    }
+
     const finalVoucherDate = voucher_date || voucher.voucher_date
 
     if (voucher_date && voucher_date !== voucher.voucher_date) {
@@ -1168,6 +1204,25 @@ router.put(
           voucherNo: updatedVoucher.voucher_no,
           entries: cashEntries,
         })
+
+        // 出纳生成的凭证（含挂账）被改对方科目后，回写出纳日记账的 counter_account
+        if (voucher.source === 'cashier') {
+          syncCashierCounterFromVoucher({
+            db,
+            accountSetId: req.accountSetId || '',
+            // 编辑前标识（定位日记账行）
+            oldYear: voucher.year,
+            oldMonth: voucher.period,
+            oldVoucherType: voucher.voucher_type_id,
+            oldVoucherNo: voucher.voucher_no,
+            entries: entryRows.map((e: any) => ({ account_code: e.account_code })),
+            // 编辑后标识（刷新链接）
+            newYear: updatedVoucher.year,
+            newMonth: updatedVoucher.period,
+            newVoucherType: updatedVoucher.voucher_type_id,
+            newVoucherNo: updatedVoucher.voucher_no,
+          })
+        }
       }
     } catch (syncErr) {
       console.error('凭证修改→出纳同步失败:', syncErr)
@@ -1367,6 +1422,12 @@ router.delete(
     }
     if (voucher?.source === 'cashier') {
       return res.status(400).json({ code: 400, message: '出纳生成的凭证不能直接删除，请取消对账后再试' })
+    }
+    if (typeof voucher?.source === 'string' && voucher.source.startsWith('asset_')) {
+      return res.status(400).json({
+        code: 400,
+        message: '固定资产生成的凭证不能直接删除，请到固定资产模块反折旧/撤销处置/删除资产后再试',
+      })
     }
     deleteVoucherRecords(db, id)
     res.json({ code: 0, message: '删除成功' })

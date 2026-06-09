@@ -26,6 +26,7 @@
     "pinia": "^2.1.7",
     "print-js": "^1.6.0",
     "vue": "^3.4.21",
+    "vue-plugin-hiprint": "^0.0.60",
     "vue-router": "^4.3.0",
     "xlsx": "^0.18.5"
   },

@@ -157,6 +157,14 @@ instance.interceptors.response.use(
           const router = (await import('@/router')).default
           const userStore = useUserStore()
           const systemParamsStore = useSystemParamsStore()
+          // 跳转前用最新权限复核：前端权限快照可能因 bootstrap/切换账套竞态而过期，
+          // 直接拿旧快照判断会把正在进入的页面误踢回首页（第一次失败第二次成功）。
+          // 先刷新一次权限，确认确实无权限再跳转。
+          try {
+            await userStore.fetchUserInfo()
+          } catch {
+            /* 刷新失败（网络抖动等）则沿用现有权限判断，不阻断跳转逻辑 */
+          }
           await systemParamsStore.load()
           const landing = getDefaultLandingPath(
             userStore.permissions,

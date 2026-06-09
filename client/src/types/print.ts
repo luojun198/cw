@@ -94,6 +94,37 @@ export interface PrintTemplate {
   is_default: boolean
   created_at: string
   updated_at: string
+  // ===== vue-plugin-hiprint 套打扩展字段 =====
+  template_type?: PrintTemplateType   // voucher | ledger | report
+  template_key?: string | null        // 业务子类型，如 report:balance_sheet
+  panel?: HiprintPanel | null         // hiprint 原生模板 JSON
+  background_image?: string | null    // 套打底图 URL
+}
+
+/** 打印模板大类 */
+export type PrintTemplateType = 'voucher' | 'ledger' | 'report'
+
+/** hiprint 原生模板面板（结构由 vue-plugin-hiprint 定义，此处用宽松类型承接） */
+export interface HiprintPanel {
+  index?: number
+  height?: number
+  width?: number
+  paperType?: string
+  paperHeader?: number
+  paperFooter?: number
+  printElements?: unknown[]
+  background?: string
+  [key: string]: unknown
+}
+
+/** /print-templates/applicable 返回的轻量条目 */
+export interface ApplicableTemplate {
+  id: string
+  name: string
+  template_type: PrintTemplateType
+  template_key: string | null
+  background_image: string | null
+  is_default: boolean
 }
 
 // ============ 兼容旧版类型（保留用于迁移） ============

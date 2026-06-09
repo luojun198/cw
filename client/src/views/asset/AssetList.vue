@@ -20,37 +20,38 @@
     </div>
 
     <div ref="tableContainerRef" class="table-container">
-      <el-table ref="tableRef" :data="list" :height="tableHeight" border stripe size="small"
-        highlight-current-row @row-dblclick="openEdit">
-        <el-table-column label="资产编号" prop="asset_no" width="120" />
-        <el-table-column label="资产名称" prop="asset_name" min-width="150" show-overflow-tooltip />
-        <el-table-column label="类别" prop="category_name" width="100" />
-        <el-table-column label="状态" width="80">
+      <el-table ref="tableRef" :data="list" :height="tableHeight" border stripe size="small" class="compact-data-table"
+        highlight-current-row @row-dblclick="openEdit" @header-dragend="onDragEnd">
+        <el-table-column label="资产编号" prop="asset_no" :width="cw('asset_no', 120)" />
+        <el-table-column label="资产名称" prop="asset_name" :width="cw('asset_name', 150)" show-overflow-tooltip />
+        <el-table-column label="类别" prop="category_name" :width="cw('category_name', 100)" />
+        <el-table-column label="状态" :width="cw('status_code', 80)">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status_code)" size="small">{{ row.status_name || row.status_code }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="使用部门" prop="dept_name" width="110" />
-        <el-table-column label="购置日期" prop="acquire_date" width="105" />
-        <el-table-column label="原值" prop="original_value" width="110" align="right">
+        <el-table-column label="使用部门" prop="dept_name" :width="cw('dept_name', 110)" />
+        <el-table-column label="购置日期" prop="acquire_date" :width="cw('acquire_date', 105)" />
+        <el-table-column label="原值" prop="original_value" :width="cw('original_value', 110)" align="right">
           <template #default="{ row }">{{ fmtAmt(row.original_value) }}</template>
         </el-table-column>
-        <el-table-column label="累计折旧" prop="accum_depr" width="110" align="right">
+        <el-table-column label="累计折旧" prop="accum_depr" :width="cw('accum_depr', 110)" align="right">
           <template #default="{ row }">{{ fmtAmt(row.accum_depr) }}</template>
         </el-table-column>
-        <el-table-column label="净值" prop="net_value" width="110" align="right">
+        <el-table-column label="净值" prop="net_value" :width="cw('net_value', 110)" align="right">
           <template #default="{ row }">{{ fmtAmt(row.net_value) }}</template>
         </el-table-column>
-        <el-table-column label="折旧方法" prop="depr_method" width="110">
+        <el-table-column label="折旧方法" prop="depr_method" :width="cw('depr_method', 110)">
           <template #default="{ row }">{{ DEPR_METHODS[row.depr_method] || row.depr_method }}</template>
         </el-table-column>
-        <el-table-column label="已提月数" prop="depr_months_done" width="80" align="center" />
-        <el-table-column label="使用人" prop="user_name" width="90" />
-        <el-table-column label="操作" width="190" align="center" fixed="right">
+        <el-table-column label="已提月数" prop="depr_months_done" :width="cw('depr_months_done', 80)" align="center" />
+        <el-table-column label="使用人" prop="user_name" :width="cw('user_name', 90)" />
+        <el-table-column label="操作" :width="cw('actions', 190)" align="center" fixed="right">
           <template #default="{ row }">
             <el-button link type="success" size="small" @click.stop="$router.push(`/asset/detail/${row.id}`)">明细</el-button>
             <el-button link type="primary" size="small" @click.stop="openEdit(row)">编辑</el-button>
             <el-button v-if="!row.scrap_date" link type="warning" size="small" @click.stop="openDispose(row)">处置</el-button>
+            <el-button v-if="row.scrap_date" link type="success" size="small" @click.stop="handleCancelDispose(row)">撤销处置</el-button>
             <el-button link type="danger" size="small" @click.stop="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -70,6 +71,15 @@
 
     <!-- 新增/编辑弹窗 -->
     <el-dialog v-model="dialogVisible" :title="editId ? '编辑固定资产' : '新增固定资产'" width="760px" draggable>
+      <div v-if="editId && navigationInfo" style="margin-bottom: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 12px;">
+        <DialogNavigation
+          :current="navigationInfo.current"
+          :total="navigationInfo.total"
+          :is-first="navigationInfo.isFirst"
+          :is-last="navigationInfo.isLast"
+          @navigate="handleNavigate"
+        />
+      </div>
       <el-form :model="form" label-width="90px" size="small">
         <el-row :gutter="16">
           <el-col :span="12">
@@ -83,7 +93,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="资产类别">
+            <el-form-item label="资产类别" required>
               <el-select v-model="form.category_code" clearable style="width:100%"
                 @change="onCategoryChange">
                 <el-option v-for="c in dicts.category" :key="c.code" :label="c.name" :value="c.code" />
@@ -105,7 +115,7 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="用途">
+            <el-form-item label="用途" required>
               <el-select v-model="form.purpose_code" clearable style="width:100%">
                 <el-option v-for="p in dicts.purpose" :key="p.code" :label="p.name" :value="p.code" />
               </el-select>
@@ -117,13 +127,23 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="起折日期">
+            <el-form-item label="起折日期" required>
               <el-date-picker v-model="form.start_depr_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="原值">
-              <el-input-number v-model="form.original_value" :precision="2" :min="0" style="width:100%" @change="calcSalvage" />
+            <el-form-item label="原值" required>
+              <el-input-number v-model="form.original_value" :precision="2" :min="0" style="width:100%" @change="onOriginalValueChange" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="期初累计折旧">
+              <el-input-number v-model="form.accum_depr" :precision="2" :min="0" style="width:100%" @change="onAccumDeprChange" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12">
+            <el-form-item label="已计提月份">
+              <el-input-number v-model="form.depr_months_done" :min="0" :precision="0" style="width:100%" @change="onDeprMonthsChange" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -137,15 +157,20 @@
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="折旧方法">
+            <el-form-item label="折旧方法" required>
               <el-select v-model="form.depr_method" clearable style="width:100%">
                 <el-option v-for="(label, val) in DEPR_METHODS" :key="val" :label="label" :value="val" />
               </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="12">
-            <el-form-item label="使用月数">
+            <el-form-item label="使用月数" :required="form.depr_method !== '2'">
               <el-input-number v-model="form.use_months" :min="1" :precision="0" style="width:100%" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12" v-if="form.depr_method === '2'">
+            <el-form-item label="总工作量" required>
+              <el-input-number v-model="form.total_workload" :min="0.01" :precision="2" style="width:100%" />
             </el-form-item>
           </el-col>
           <el-col :span="12">
@@ -181,6 +206,17 @@
           <el-col :span="24">
             <el-form-item label="备注">
               <el-input v-model="form.remark" type="textarea" :rows="2" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="12" v-if="!editId">
+            <el-form-item label="生成购置凭证">
+              <el-switch v-model="(form as any).generate_voucher" />
+              <span v-if="(form as any).generate_voucher" style="margin-left:10px;color:var(--el-text-color-secondary);font-size:12px">借固定资产 / 贷资金来源</span>
+            </el-form-item>
+          </el-col>
+          <el-col :span="12" v-if="!editId && (form as any).generate_voucher">
+            <el-form-item label="贷方(资金来源)">
+              <AccountSelect v-model="(form as any).credit_account" placeholder="默认 1001 银行存款" search-keyword="银行存款" />
             </el-form-item>
           </el-col>
         </el-row>
@@ -248,13 +284,19 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus, Setting } from '@element-plus/icons-vue'
 import { fixedAssetApi, type AssetCard, type AssetDicts, DEPR_METHODS } from '@/api/fixedAsset'
 import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+import AccountSelect from '@/components/base/AccountSelect.vue'
+import DialogNavigation from '@/components/common/DialogNavigation.vue'
 
-const { tableRef, containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+const { tableRef: colWidthTableRef, colWidth, onDragEnd } = useListColumnWidth('asset_list')
+const { containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+const tableRef = colWidthTableRef
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 const list = ref<AssetCard[]>([])
 const dicts = ref<AssetDicts>({ category: [], status: [], purpose: [], dept: [] })
@@ -263,6 +305,38 @@ const pagination = reactive({ page: 1, page_size: 20, total: 0 })
 
 const dialogVisible = ref(false)
 const editId = ref<string | null>(null)
+
+/** 翻页导航信息 */
+const navigationInfo = computed(() => {
+  const allRows = list.value
+  if (allRows.length === 0 || !editId.value) return null
+  const idx = allRows.findIndex(r => r.id === editId.value)
+  return {
+    current: idx + 1,
+    total: allRows.length,
+    isFirst: idx <= 0,
+    isLast: idx >= allRows.length - 1 || idx === -1
+  }
+})
+
+/** 翻页处理 */
+function handleNavigate(direction: 'first' | 'previous' | 'next' | 'last') {
+  const allRows = list.value
+  if (allRows.length === 0) return
+  
+  let targetIdx = 0
+  const currentIdx = allRows.findIndex(r => r.id === editId.value)
+  
+  if (direction === 'first') targetIdx = 0
+  else if (direction === 'last') targetIdx = allRows.length - 1
+  else if (direction === 'previous') targetIdx = Math.max(0, currentIdx - 1)
+  else if (direction === 'next') targetIdx = Math.min(allRows.length - 1, currentIdx + 1)
+  
+  if (allRows[targetIdx]) {
+    openEdit(allRows[targetIdx])
+  }
+}
+
 const saving = ref(false)
 const form = ref<Partial<AssetCard>>({})
 
@@ -275,9 +349,12 @@ const statusTagType = (code: string | null) => {
 }
 
 onMounted(async () => {
-  const res = await fixedAssetApi.getDicts()
-  if (res.code === 0) dicts.value = res.data
-  handleQuery()
+  // 字典与列表无依赖关系，并行加载减少首屏等待
+  const [dictRes] = await Promise.all([
+    fixedAssetApi.getDicts(),
+    handleQuery(),
+  ])
+  if (dictRes.code === 0) dicts.value = dictRes.data
 })
 
 async function handleQuery() {
@@ -295,10 +372,25 @@ async function handleQuery() {
   }
 }
 
-function openAdd() {
+async function openAdd() {
   editId.value = null
-  form.value = { original_value: 0, salvage_rate: 5, salvage_value: 0, qty: 1, depr_method: '1' }
+  form.value = {
+    original_value: 0,
+    salvage_rate: 5,
+    salvage_value: 0,
+    qty: 1,
+    depr_method: '1',
+    accum_depr: 0,
+    depr_months_done: 0,
+    generate_voucher: false,
+    credit_account: '1001',
+  } as any
   dialogVisible.value = true
+  // 自动生成资产编号（可手动修改）
+  try {
+    const res = await fixedAssetApi.getNextAssetNo()
+    if (res.code === 0 && !form.value.asset_no) form.value.asset_no = res.data.next_no
+  } catch { /* 忽略，留空让用户手填 */ }
 }
 
 function openEdit(row: AssetCard) {
@@ -306,6 +398,50 @@ function openEdit(row: AssetCard) {
   form.value = { ...row }
   dialogVisible.value = true
 }
+
+function onOriginalValueChange() {
+  calcSalvage()
+}
+
+function onDeprMonthsChange() {
+  if (!form.value.original_value || !form.value.use_months) return
+  const monthly = (form.value.original_value - (form.value.salvage_value || 0)) / form.value.use_months
+  form.value.accum_depr = Math.round(monthly * (form.value.depr_months_done || 0) * 100) / 100
+}
+
+function onAccumDeprChange() {
+  if (!form.value.original_value || !form.value.use_months) return
+  const monthly = (form.value.original_value - (form.value.salvage_value || 0)) / form.value.use_months
+  if (monthly > 0) {
+    form.value.depr_months_done = Math.round((form.value.accum_depr || 0) / monthly)
+  }
+}
+
+/** 自动估算已提月份和累计折旧（仅限录入新资产时参考） */
+function autoEstimateInitialDepr() {
+  if (!form.value.start_depr_date || !form.value.original_value || !form.value.use_months) return
+  
+  const start = new Date(form.value.start_depr_date)
+  const now = new Date()
+  const months = (now.getFullYear() - start.getFullYear()) * 12 + (now.getMonth() - start.getMonth())
+  
+  if (months > 0) {
+    const validMonths = Math.min(months, form.value.use_months)
+    form.value.depr_months_done = validMonths
+    
+    // 粗略估算累计折旧 (直线法)
+    const monthly = (form.value.original_value - (form.value.salvage_value || 0)) / form.value.use_months
+    form.value.accum_depr = Math.round(monthly * validMonths * 100) / 100
+  }
+}
+
+// 监听日期和年限变化尝试自动填充
+watch(() => form.value.start_depr_date, () => {
+  if (!editId.value) autoEstimateInitialDepr()
+})
+watch(() => form.value.use_months, () => {
+  if (!editId.value) autoEstimateInitialDepr()
+})
 
 function onCategoryChange(code: string) {
   const cat = dicts.value.category.find(c => c.code === code)
@@ -323,18 +459,56 @@ function calcSalvage() {
 
 async function handleSave() {
   if (!form.value.asset_no || !form.value.asset_name) return ElMessage.warning('请填写资产编号和名称')
+  if (!form.value.category_code) return ElMessage.warning('请选择资产类别')
+  if (!form.value.purpose_code) return ElMessage.warning('请选择资产用途')
+  if (!form.value.start_depr_date) return ElMessage.warning('请选择起折日期')
+  if (!form.value.original_value) return ElMessage.warning('资产原值不能为空')
+  if (!form.value.depr_method) return ElMessage.warning('请选择折旧方法')
+  
+  // 动态校验：根据折旧方法判断必填项
+  if (form.value.depr_method === '2') {
+    if (!form.value.total_workload) return ElMessage.warning('使用工作量法时，总工作量不能为空')
+  } else {
+    if (!form.value.use_months) return ElMessage.warning('请填写预计使用月数')
+  }
+
   saving.value = true
   try {
     if (editId.value) {
       await fixedAssetApi.updateCard(editId.value, form.value)
+      ElMessage.success('保存成功')
     } else {
-      await fixedAssetApi.createCard(form.value)
+      const res = await fixedAssetApi.createCard(form.value)
+      const data: any = res?.data || {}
+      if (data.voucher?.voucherNo) {
+        ElMessage.success(`保存成功，已生成购置凭证 ${data.voucher.voucherNo}`)
+      } else if (data.voucherWarning) {
+        ElMessage.warning(`资产已保存，但购置凭证未生成：${data.voucherWarning}`)
+      } else {
+        ElMessage.success('保存成功')
+      }
     }
     dialogVisible.value = false
     handleQuery()
-    ElMessage.success('保存成功')
   } finally {
     saving.value = false
+  }
+}
+
+async function handleCancelDispose(row: AssetCard) {
+  await ElMessageBox.confirm(
+    `确认撤销「${row.asset_name}」的处置？将还原资产状态为在用，删除处置流水及处置凭证。`,
+    '撤销处置', { type: 'warning', confirmButtonText: '确认撤销', confirmButtonClass: 'el-button--danger' }
+  )
+  try {
+    const res = await fixedAssetApi.cancelDispose(row.id)
+    if (res.code === 0) {
+      const d = res.data
+      ElMessage.success(`已撤销处置：${d.assetNo} 还原为在用${d.deletedVoucherNo ? `，已删除凭证 ${d.deletedVoucherNo}` : ''}`)
+      handleQuery()
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '撤销失败')
   }
 }
 

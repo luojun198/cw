@@ -102,12 +102,12 @@ const fmtAmt = (v: number) =>
   v == null || v === 0 ? '0.00' : v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 
 const entryTypeLabel = (type: string) => {
-  type LabelMap: Record<string, string> = { acquire: '购入', depr: '折旧', change: '变动', disposal: '处置' }
+  const LabelMap: Record<string, string> = { acquire: '购入', depr: '折旧', change: '变动', disposal: '处置' }
   return LabelMap[type] || type
 }
 
 const entryTagType = (type: string) => {
-  type TagMap: Record<string, string> = { acquire: 'success', depr: '', change: 'warning', disposal: 'danger' }
+  const TagMap: Record<string, string> = { acquire: 'success', depr: '', change: 'warning', disposal: 'danger' }
   return TagMap[type] || 'info'
 }
 

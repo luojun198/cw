@@ -16,13 +16,30 @@
         <template v-if="previewLines.length > 0 && !executed">
           <el-divider direction="vertical" />
           <el-checkbox v-model="generateVoucher">同时生成凭证</el-checkbox>
-          <el-input
-            v-if="generateVoucher"
-            v-model="accumAccount"
-            placeholder="累计折旧科目"
-            style="width: 140px"
-          />
-          <el-button type="success" :loading="executing" @click="handleExecute">
+          <div v-if="generateVoucher" class="header-acc-select">
+            <span class="tip-label">默认累计折旧科目：</span>
+            <el-select 
+              v-model="accumAccount" 
+              filterable 
+              placeholder="选择科目" 
+              style="width: 240px" 
+              clearable
+            >
+              <el-option
+                v-for="a in baseData.accounts.filter(acc => !acc.is_parent)"
+                :key="a.code"
+                :label="`${a.code} ${a.name}`"
+                :value="a.code"
+              />
+            </el-select>
+          </div>
+          <el-button
+            type="success"
+            :loading="executing"
+            :disabled="!!priorUnvouchered"
+            :title="priorUnvouchered ? `请先为 ${priorUnvouchered} 折旧生成凭证` : ''"
+            @click="handleExecute"
+          >
             <el-icon><Check /></el-icon>确认计提
           </el-button>
         </template>
@@ -39,6 +56,15 @@
     <el-tabs v-model="activeTab" class="depr-tabs">
       <!-- 预览 Tab -->
       <el-tab-pane label="折旧预览" name="preview">
+        <el-alert
+          v-if="priorUnvouchered"
+          type="warning"
+          :closable="false"
+          show-icon
+          style="margin-bottom: 10px"
+          :title="`${priorUnvouchered} 折旧尚未生成凭证，无法计提 ${period}`"
+          description="已设置折旧起始期间，须从起始期间起逐月计提并生成凭证。请先到「历史记录」页为上述期间补生成折旧凭证。"
+        />
         <div v-if="executed" class="result-banner">
           <el-result
             icon="success"
@@ -73,7 +99,12 @@
             <el-table-column label="折旧方法" width="110">
               <template #default="{ row }">{{ DEPR_METHODS[row.depr_method] || row.depr_method }}</template>
             </el-table-column>
-            <el-table-column label="折旧费用科目" prop="expense_account" width="120" />
+            <el-table-column label="折旧费用科目" width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ formatAccount(row.expense_account) }}</template>
+            </el-table-column>
+            <el-table-column label="累计折旧科目" width="150" show-overflow-tooltip>
+              <template #default="{ row }">{{ formatAccount(row.depr_account_code || accumAccount) }}</template>
+            </el-table-column>
             <el-table-column label="原值" prop="original_value" width="110" align="right">
               <template #default="{ row }">{{ fmtAmt(row.original_value) }}</template>
             </el-table-column>
@@ -110,6 +141,45 @@
           <span class="history-total" v-if="historyRows.length">
             共 {{ historyRows.length }} 条，合计 ¥{{ fmtAmt(historyRows.reduce((s,r)=>s+r.month_depr,0)) }}
           </span>
+        </div>
+
+        <!-- 按期间汇总 + 操作（补生成凭证 / 反折旧） -->
+        <div v-if="historyPeriods.length" class="period-summary">
+          <div class="period-summary-title">期间汇总</div>
+          <el-table :data="historyPeriods" size="small" border stripe max-height="200">
+            <el-table-column label="期间" prop="period" width="100" />
+            <el-table-column label="资产数" prop="count" width="80" align="right" />
+            <el-table-column label="折旧合计" width="130" align="right">
+              <template #default="{ row }">¥{{ fmtAmt(row.total) }}</template>
+            </el-table-column>
+            <el-table-column label="折旧凭证" min-width="160">
+              <template #default="{ row }">
+                <el-tag v-if="row.voucherNo" type="success" size="small" effect="plain">
+                  已生成：{{ row.voucherNo }}
+                </el-tag>
+                <el-tag v-else type="info" size="small" effect="plain">未生成</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" align="center">
+              <template #default="{ row }">
+                <el-button
+                  v-if="!row.voucherNo"
+                  link
+                  type="primary"
+                  size="small"
+                  :loading="periodActing === row.period"
+                  @click="handleGenerateVoucherForPeriod(row)"
+                >生成凭证</el-button>
+                <el-button
+                  link
+                  type="danger"
+                  size="small"
+                  :loading="periodActing === row.period"
+                  @click="handleReverseDepr(row)"
+                >反折旧</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </div>
         <el-table :data="historyRows" size="small" border stripe max-height="480">
           <el-table-column label="期间" width="90">
@@ -159,13 +229,17 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Check, List, Edit } from '@element-plus/icons-vue'
 import { fixedAssetApi, type DeprLine, DEPR_METHODS } from '@/api/fixedAsset'
 import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import AccountSelect from '@/components/base/AccountSelect.vue'
+import { useBaseDataStore } from '@/stores/baseData'
+import { confirmRenumberAfterDelete } from '@/composables/useRenumberPrompt'
 
 const { tableRef, containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+const baseData = useBaseDataStore()
 
 const now = new Date()
 const period = ref(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
@@ -177,17 +251,140 @@ const previewTotal = ref(0)
 const generateVoucher = ref(false)
 const accumAccount = ref('1602')
 
+// 顺序控制：设置了折旧起始期间后，从起始期间起到本期之前的每月都必须已生成折旧凭证
+const priorUnvouchered = ref<string | null>(null)
+const deprStartPeriod = ref<string>('')
+
+async function checkPriorVoucher() {
+  try {
+    // 1. 读取折旧起始期间（未设置则不启用约束）
+    const pres = await fixedAssetApi.getAssetParams()
+    if (pres.code === 0) {
+      deprStartPeriod.value =
+        (pres.data || []).find(x => x.param_key === 'asset:depr_start_period')?.param_value || ''
+    }
+    const start = deprStartPeriod.value
+    const target = period.value
+    if (!start || !target || target <= start) {
+      priorUnvouchered.value = null
+      return
+    }
+    // 2. 已生成折旧凭证的期间集合
+    const res = await fixedAssetApi.getDeprHistory({})
+    const vouchered = new Set<string>()
+    if (res.code === 0) {
+      const seen = new Map<string, boolean>()
+      for (const r of res.data as any[]) {
+        const key = `${r.year}-${String(r.month).padStart(2, '0')}`
+        if (!seen.has(key)) seen.set(key, true)
+        if (!r.voucher_no) seen.set(key, false)
+      }
+      for (const [k, ok] of seen) if (ok) vouchered.add(k)
+    }
+    // 3. 从起始期间逐月迭代到本期前一月，找第一个未生成凭证的月份
+    let [py, pm] = start.split('-').map(Number)
+    let found: string | null = null
+    while (true) {
+      const key = `${py}-${String(pm).padStart(2, '0')}`
+      if (key >= target) break
+      if (!vouchered.has(key)) {
+        found = key
+        break
+      }
+      pm++
+      if (pm > 12) { pm = 1; py++ }
+    }
+    priorUnvouchered.value = found
+  } catch {
+    priorUnvouchered.value = null
+  }
+}
+
+watch(period, () => {
+  checkPriorVoucher()
+})
+
 const executed = ref(false)
 const resultPeriod = ref('')
 const resultCount = ref(0)
 const resultTotal = ref(0)
 const resultVoucher = ref<any>(null)
 
-const historyPeriod = ref('')
+const historyPeriod = ref(`${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`)
 const historyRows = ref<any[]>([])
+const periodActing = ref('')
+
+// 按 year-month 分组历史明细，供「补生成凭证 / 反折旧」操作
+const historyPeriods = computed(() => {
+  const map = new Map<string, { period: string; year: number; month: number; count: number; total: number; voucherNo: string | null }>()
+  for (const r of historyRows.value) {
+    const key = `${r.year}-${String(r.month).padStart(2, '0')}`
+    if (!map.has(key)) {
+      map.set(key, { period: key, year: r.year, month: r.month, count: 0, total: 0, voucherNo: r.voucher_no || null })
+    }
+    const g = map.get(key)!
+    g.count++
+    g.total += r.month_depr || 0
+    if (r.voucher_no) g.voucherNo = r.voucher_no
+  }
+  return [...map.values()].sort((a, b) => b.period.localeCompare(a.period))
+})
+
+async function handleGenerateVoucherForPeriod(row: { period: string; year: number; month: number; total: number }) {
+  await ElMessageBox.confirm(
+    `确认为 ${row.period} 补生成折旧凭证（合计 ¥${fmtAmt(row.total)}）？累计折旧科目默认取资产类别配置，未配置时用「${accumAccount.value || '1602'}」。`,
+    '补生成凭证', { type: 'info' }
+  )
+  periodActing.value = row.period
+  try {
+    const res = await fixedAssetApi.generateDeprVoucherForPeriod({
+      year: row.year, month: row.month, accum_account: accumAccount.value || '1602',
+    })
+    if (res.code === 0) {
+      ElMessage.success(`已生成凭证：${res.data.voucher?.voucherNo || ''}`)
+      await loadHistory()
+      await checkPriorVoucher()
+    }
+  } finally {
+    periodActing.value = ''
+  }
+}
+
+async function handleReverseDepr(row: { period: string; year: number; month: number; count: number; total: number; voucherNo: string | null }) {
+  await ElMessageBox.confirm(
+    `确认反折旧 ${row.period}？将删除该期 ${row.count} 条折旧记录、回退资产累计折旧与净值${row.voucherNo ? `、并删除该期折旧凭证「${row.voucherNo}」` : ''}。此操作不可恢复。`,
+    '反折旧确认', { type: 'warning', confirmButtonText: '确认反折旧', confirmButtonClass: 'el-button--danger' }
+  )
+  periodActing.value = row.period
+  try {
+    const res = await fixedAssetApi.reverseDepr({ year: row.year, month: row.month })
+    if (res.code === 0) {
+      const nos = res.data.deletedVoucherNos || []
+      ElMessage.success(`已反折旧 ${row.period}，回退 ${res.data.assetCount} 项资产${nos.length ? `，删除凭证 ${nos.join('、')}` : ''}`)
+      await loadHistory()
+      await checkPriorVoucher()
+      // 删除折旧凭证可能造成断号，提示是否重新排号
+      await confirmRenumberAfterDelete(res.data.affectedGroups, nos.length)
+    }
+  } finally {
+    periodActing.value = ''
+  }
+}
 
 const fmtAmt = (v: number) =>
   (v ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+const accountMap = computed(() => {
+  const map = new Map<string, string>()
+  for (const a of baseData.accounts) map.set(a.code, a.name)
+  return map
+})
+
+function formatAccount(code: string | null | undefined) {
+  if (!code) return ''
+  const name = accountMap.value.get(code)
+  return name ? `${code} ${name}` : code
+}
 
 function parsePeriod(p: string) {
   const [y, m] = p.split('-').map(Number)
@@ -232,6 +429,7 @@ async function handleExecute() {
       resultTotal.value = res.data.totalDepr
       resultVoucher.value = res.data.voucher
       ElMessage.success('折旧计提成功')
+      await checkPriorVoucher()
     }
   } finally {
     executing.value = false
@@ -261,32 +459,38 @@ const workloadAssets = ref<any[]>([])
 const workloadValues = ref<Record<string, number>>({})
 
 async function openWorkloadDialog() {
-  workloadVisible.value = true
-  // 获取工作量法资产列表
-  const [y, m] = parsePeriod(period.value)
-  const res = await fixedAssetApi.getCards({ page_size: 999 })
-  if (res.code === 0) {
-    workloadAssets.value = (res.data.list as any[]).filter(
-      (a: any) => a.depr_method === '2' && !a.scrap_date
-    )
-  }
-  // 加载已有的工作量
-  const wRes = await fixedAssetApi.getWorkload(y, m)
-  if (wRes.code === 0) {
-    workloadValues.value = { ...wRes.data }
-  }
-  // 初始化未录入项
-  for (const a of workloadAssets.value) {
-    if (!(a.asset_no in workloadValues.value)) {
-      workloadValues.value[a.asset_no] = 0
+  if (!period.value) return ElMessage.warning('请选择期间')
+  
+  try {
+    const { year: y, month: m } = parsePeriod(period.value)
+    // 获取工作量法资产列表
+    const res = await fixedAssetApi.getCards({ page_size: 999 })
+    if (res.code === 0) {
+      workloadAssets.value = (res.data.list as any[]).filter(
+        (a: any) => a.depr_method === '2' && !a.scrap_date
+      )
     }
+    // 加载已有的工作量
+    const wRes = await fixedAssetApi.getWorkload(y, m)
+    if (wRes.code === 0) {
+      workloadValues.value = { ...wRes.data }
+    }
+    // 初始化未录入项
+    for (const a of workloadAssets.value) {
+      if (!(a.asset_no in workloadValues.value)) {
+        workloadValues.value[a.asset_no] = 0
+      }
+    }
+    workloadVisible.value = true
+  } catch (e: any) {
+    ElMessage.error('加载工作量失败: ' + e.message)
   }
 }
 
 async function handleSaveWorkload() {
   workloadSaving.value = true
   try {
-    const [y, m] = parsePeriod(period.value)
+    const { year: y, month: m } = parsePeriod(period.value)
     await fixedAssetApi.saveWorkload({ year: y, month: m, workloads: workloadValues.value })
     workloadVisible.value = false
     ElMessage.success('工作量已保存，请重新预览折旧')
@@ -295,7 +499,11 @@ async function handleSaveWorkload() {
   }
 }
 
-onMounted(loadHistory)
+onMounted(() => {
+  baseData.loadAccounts()
+  loadHistory()
+  checkPriorVoucher()
+})
 </script>
 
 <style scoped>
@@ -314,5 +522,9 @@ onMounted(loadHistory)
 .voucher-tip { color: #67c23a; font-size: 13px; margin-top: 8px; }
 .history-filter { display: flex; align-items: center; gap: 16px; margin-bottom: 10px; }
 .history-total { font-size: 13px; color: var(--el-text-color-secondary); }
+.period-summary { margin-bottom: 14px; }
+.period-summary-title { font-size: 13px; font-weight: 600; margin-bottom: 6px; color: var(--el-text-color-regular); }
 .workload-hint { font-size: 13px; color: var(--el-text-color-secondary); margin-bottom: 10px; }
+.header-acc-select { display: inline-flex; align-items: center; margin-left: 12px; }
+.header-acc-select .tip-label { font-size: 13px; color: var(--el-text-color-regular); margin-right: 4px; }
 </style>

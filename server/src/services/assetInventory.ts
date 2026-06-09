@@ -191,9 +191,11 @@ export function completeInventory(params: {
   inventoryId: string
   generateVoucher?: boolean
   accumAccount?: string
+  surplusAccount?: string
+  deficitAccount?: string
   operatorName?: string
 }): { surplusCount: number; deficitCount: number; voucher?: any; voucherWarning?: string } {
-  const { db, accountSetId, inventoryId, generateVoucher = false, accumAccount = '1602', operatorName = '系统' } = params
+  const { db, accountSetId, inventoryId, generateVoucher = false, accumAccount = '1602', surplusAccount = '6901', deficitAccount = '6901', operatorName = '系统' } = params
 
   // 更新汇总统计
   const stats = db.prepare(`
@@ -221,7 +223,7 @@ export function completeInventory(params: {
     try {
       voucherResult = generateInventoryVoucher({
         db, accountSetId, inventoryId,
-        accumAccount, operatorName,
+        accumAccount, surplusAccount, deficitAccount, operatorName,
       })
     } catch (e: any) {
       voucherWarning = e.message
@@ -243,46 +245,66 @@ function generateInventoryVoucher(params: {
   accountSetId: string
   inventoryId: string
   accumAccount: string
+  surplusAccount: string
+  deficitAccount: string
   operatorName: string
 }): any {
-  const { db, accountSetId, inventoryId, accumAccount, operatorName } = params
+  const { db, accountSetId, inventoryId, accumAccount, surplusAccount, deficitAccount, operatorName } = params
 
   const inventory = db.prepare('SELECT * FROM fixed_asset_inventory WHERE id=?').get(inventoryId) as any
   if (!inventory) throw new Error('盘点记录不存在')
 
   const surplusItems = db.prepare(`
-    SELECT * FROM fixed_asset_inventory_item
-    WHERE inventory_id = ? AND actual_status = 'surplus'
+    SELECT i.*, fa.category_code, fc.account_code as asset_account
+    FROM fixed_asset_inventory_item i
+    LEFT JOIN fixed_asset fa ON fa.account_set_id = i.account_set_id AND fa.asset_no = i.asset_no
+    LEFT JOIN fixed_asset_category fc ON fc.account_set_id = fa.account_set_id AND fc.code = fa.category_code
+    WHERE i.inventory_id = ? AND i.actual_status = 'surplus'
   `).all(inventoryId) as any[]
 
   const deficitItems = db.prepare(`
-    SELECT * FROM fixed_asset_inventory_item
-    WHERE inventory_id = ? AND actual_status = 'deficit'
+    SELECT i.*, fa.category_code, fc.account_code as asset_account, fc.depr_account_code
+    FROM fixed_asset_inventory_item i
+    LEFT JOIN fixed_asset fa ON fa.account_set_id = i.account_set_id AND fa.asset_no = i.asset_no
+    LEFT JOIN fixed_asset_category fc ON fc.account_set_id = fa.account_set_id AND fc.code = fa.category_code
+    WHERE i.inventory_id = ? AND i.actual_status = 'deficit'
   `).all(inventoryId) as any[]
 
   if (!surplusItems.length && !deficitItems.length) {
     throw new Error('无盘盈盘亏项，无需生成凭证')
   }
 
-  // 查找科目
+  // 查找科目工具
   const lookupAcc = db.prepare('SELECT id, code, name FROM accounts WHERE account_set_id=? AND code=? LIMIT 1')
+  // 盘盈对应科目（盘盈凭证贷方）/ 盘亏对应科目（盘亏凭证借方），均回退 6901
+  const surplusAccCode = surplusAccount || '6901'
+  const deficitAccCode = deficitAccount || '6901'
+  const surplusRow = lookupAcc.get(accountSetId, surplusAccCode) as any
+  const deficitRow = lookupAcc.get(accountSetId, deficitAccCode) as any
 
-  // 盘盈：借 固定资产 / 贷 以前年度损益调整
-  const fixedAssetAccount = '1601'
-  const priorYearAdjAccount = '6901'
-
-  const assetRow = lookupAcc.get(accountSetId, fixedAssetAccount) as any
-  const adjRow = lookupAcc.get(accountSetId, priorYearAdjAccount) as any
-
+  // 预检科目（仅校验实际用到的）
   const missing: string[] = []
-  if (!assetRow) missing.push(fixedAssetAccount)
-  if (!adjRow) missing.push(priorYearAdjAccount)
-  if (deficitItems.length > 0) {
-    const accumRow = lookupAcc.get(accountSetId, accumAccount)
-    if (!accumRow) missing.push(accumAccount)
+  const checkAccount = (code: string) => {
+    if (!code) return false
+    if (!lookupAcc.get(accountSetId, code)) {
+      missing.push(code)
+      return false
+    }
+    return true
   }
+
+  if (surplusItems.length > 0 && !surplusRow) missing.push(surplusAccCode)
+  if (deficitItems.length > 0 && !deficitRow) missing.push(deficitAccCode)
+  for (const item of surplusItems) {
+    checkAccount(item.asset_account || '1601')
+  }
+  for (const item of deficitItems) {
+    checkAccount(item.asset_account || '1601')
+    checkAccount(item.depr_account_code || accumAccount || '1602')
+  }
+
   if (missing.length > 0) {
-    throw new Error(`以下科目在账套中不存在：${missing.join('、')}`)
+    throw new Error(`以下科目在账套中不存在：${[...new Set(missing)].join('、')}。请先建立对应科目。`)
   }
 
   const now = new Date()
@@ -327,30 +349,36 @@ function generateInventoryVoucher(params: {
 
   let seq = 1
 
-  // 盘盈：借 固定资产 / 贷 以前年度损益调整
+  // 盘盈：借 固定资产 / 贷 盘盈对应科目
   for (const item of surplusItems) {
+    const accCode = item.asset_account || '1601'
+    const assetRow = lookupAcc.get(accountSetId, accCode) as any
     insEntry.run(
       uuidv4(), accountSetId, voucherId, seq++,
-      assetRow.id, fixedAssetAccount, assetRow.name,
+      assetRow.id, accCode, assetRow.name,
       'debit', item.book_net_value, Math.round(item.book_net_value * 100),
       `盘盈：${item.asset_name}（${item.asset_no}）`
     )
     insEntry.run(
       uuidv4(), accountSetId, voucherId, seq++,
-      adjRow.id, priorYearAdjAccount, adjRow.name,
+      surplusRow.id, surplusAccCode, surplusRow.name,
       'credit', item.book_net_value, Math.round(item.book_net_value * 100),
       `盘盈：${item.asset_name}（${item.asset_no}）`
     )
   }
 
-  // 盘亏：借 以前年度损益调整 + 借 累计折旧 / 贷 固定资产
+  // 盘亏：借 盘亏对应科目 + 借 累计折旧 / 贷 固定资产
   if (deficitItems.length > 0) {
-    const accumRow = lookupAcc.get(accountSetId, accumAccount) as any
     for (const item of deficitItems) {
-      // 借 以前年度损益调整（净值）
+      const assetAccCode = item.asset_account || '1601'
+      const deprAccCode = item.depr_account_code || accumAccount || '1602'
+      const assetRow = lookupAcc.get(accountSetId, assetAccCode) as any
+      const accumRow = lookupAcc.get(accountSetId, deprAccCode) as any
+
+      // 借 盘亏对应科目（净值）
       insEntry.run(
         uuidv4(), accountSetId, voucherId, seq++,
-        adjRow.id, priorYearAdjAccount, adjRow.name,
+        deficitRow.id, deficitAccCode, deficitRow.name,
         'debit', item.book_net_value, Math.round(item.book_net_value * 100),
         `盘亏：${item.asset_name}（${item.asset_no}）`
       )
@@ -358,7 +386,7 @@ function generateInventoryVoucher(params: {
       if (item.book_accum_depr > 0) {
         insEntry.run(
           uuidv4(), accountSetId, voucherId, seq++,
-          accumRow.id, accumAccount, accumRow.name,
+          accumRow.id, deprAccCode, accumRow.name,
           'debit', item.book_accum_depr, Math.round(item.book_accum_depr * 100),
           `盘亏冲销折旧：${item.asset_name}（${item.asset_no}）`
         )
@@ -366,7 +394,7 @@ function generateInventoryVoucher(params: {
       // 贷 固定资产（原值）
       insEntry.run(
         uuidv4(), accountSetId, voucherId, seq++,
-        assetRow.id, fixedAssetAccount, assetRow.name,
+        assetRow.id, assetAccCode, assetRow.name,
         'credit', item.book_original_value, Math.round(item.book_original_value * 100),
         `盘亏：${item.asset_name}（${item.asset_no}）`
       )

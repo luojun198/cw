@@ -58,6 +58,8 @@ export const fixedAssetApi = {
   createDict: (type: string, data: any) => request.post(`/asset/dict/${type}`, data),
   updateDict: (type: string, id: string, data: any) => request.put(`/asset/dict/${type}/${id}`, data),
   deleteDict: (type: string, id: string) => request.delete(`/asset/dict/${type}/${id}`),
+  initDict: (type: string) => request.post(`/asset/dict/init/${type}`),
+  // 固定资产卡片
 
   // 卡片
   getCards: (params?: {
@@ -69,13 +71,21 @@ export const fixedAssetApi = {
     page_size?: number
   }) => request.get<{ list: AssetCard[]; total: number; page: number; page_size: number }>('/asset/cards', { params }),
 
+  getNextAssetNo: () => request.get<{ next_no: string }>('/asset/cards/next-no'),
   getCard: (id: string) => request.get<AssetCard>(`/asset/cards/${id}`),
-  createCard: (data: Partial<AssetCard>) => request.post<{ id: string }>('/asset/cards', data),
+  createCard: (data: Partial<AssetCard> & { generate_voucher?: boolean; credit_account?: string }) =>
+    request.post<{ id: string; voucher?: { voucherId: string; voucherNo: string; amount: number }; voucherWarning?: string }>('/asset/cards', data),
   updateCard: (id: string, data: Partial<AssetCard>) => request.put(`/asset/cards/${id}`, data),
   deleteCard: (id: string) => request.delete(`/asset/cards/${id}`),
 
   getDepr: (id: string) => request.get<any[]>(`/asset/cards/${id}/depr`),
   getChanges: (id: string) => request.get<any[]>(`/asset/cards/${id}/changes`),
+
+  // 资产参数（折旧起始期间等）
+  getAssetParams: () =>
+    request.get<{ param_key: string; param_value: string }[]>('/asset/params'),
+  saveAssetParams: (params: { param_key: string; param_value: string }[]) =>
+    request.put('/asset/params', { params }),
 
   // 折旧
   previewDepr: (year: number, month: number) =>
@@ -84,6 +94,17 @@ export const fixedAssetApi = {
     request.post<{ lines: DeprLine[]; totalDepr: number; assetCount: number; voucher: any }>('/asset/depr/execute', data),
   getDeprHistory: (params: { year?: number; month?: number }) =>
     request.get<any[]>('/asset/depr/history', { params }),
+  // 按期间补生成折旧凭证
+  generateDeprVoucherForPeriod: (data: { year: number; month: number; accum_account?: string }) =>
+    request.post<{ voucher: any }>('/asset/depr/generate-voucher', data),
+  // 整期反折旧（删折旧记录 + 回退资产 + 删该期凭证）
+  reverseDepr: (data: { year: number; month: number }) =>
+    request.post<{
+      assetCount: number
+      totalDepr: number
+      deletedVoucherNos: string[]
+      affectedGroups: { year: number; period: number; voucher_type_id: string | null }[]
+    }>('/asset/depr/reverse', data),
 
   // 工作量
   getWorkload: (year: number, month: number) =>
@@ -114,6 +135,8 @@ export const fixedAssetApi = {
     request.get<AssetLedgerResult>(`/asset/cards/${id}/ledger`),
 
   // 处置
+  cancelDispose: (id: string) =>
+    request.post<{ assetNo: string; restoredStatus: string; deletedVoucherNo: string | null }>(`/asset/cards/${id}/dispose/cancel`, {}),
   disposeAsset: (id: string, data: {
     change_type_code?: string
     scrap_date: string
@@ -132,7 +155,7 @@ export const fixedAssetApi = {
     request.get<ChangeDetailRow[]>('/asset/report/change-detail', { params }),
 
   // 变动记录（全局）
-  getChanges: (params: { year?: number; month?: number; asset_no?: string; page?: number; page_size?: number }) =>
+  getGlobalChanges: (params: { year?: number; month?: number; asset_no?: string; page?: number; page_size?: number }) =>
     request.get<{ rows: ChangeRecordRow[]; total: number }>('/asset/report/changes', { params }),
 
   // 折旧预测
@@ -196,6 +219,7 @@ export interface DeprLine {
   net_value_after: number
   expense_account: string | null
   asset_account: string | null
+  depr_account_code: string | null
 }
 
 // ── 报表相关类型 ──────────────────────────────────────────

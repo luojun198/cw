@@ -91,6 +91,14 @@
           >
             <el-icon><Printer /></el-icon>打印
           </el-button>
+          <el-button
+            class="voucher-toolbar-btn"
+            plain
+            :disabled="!selectedDraftId"
+            @click="handleHiprint"
+          >
+            <el-icon><Printer /></el-icon>套打
+          </el-button>
           <el-button class="voucher-toolbar-btn" plain @click="handleBatchPrint">
             <el-icon><Printer /></el-icon>批量打印
           </el-button>
@@ -155,6 +163,12 @@
       :voucher-ids="printVoucherIds"
       mode="single"
       :auto-print="directPrint"
+    />
+
+    <VoucherHiprintDialog
+      v-model="hiprintVisible"
+      :voucher-ids="printVoucherIds"
+      mode="single"
     />
 
     <BatchPrintDialog
@@ -393,6 +407,7 @@ import DrillDownReturnButton from '@/components/common/DrillDownReturnButton.vue
 import AccountDialog from '@/components/base/AccountDialog.vue'
 import PrintDialog from '@/components/print/PrintDialog.vue'
 import BatchPrintDialog from '@/components/print/BatchPrintDialog.vue'
+import VoucherHiprintDialog from '@/components/print/VoucherHiprintDialog.vue'
 import { useVoucherForm } from '@/composables/useVoucherForm'
 import { useAuxiliaryAccounting } from '@/composables/useAuxiliaryAccounting'
 import { useVoucherAuxItems } from '@/composables/useVoucherAuxItems'
@@ -438,6 +453,7 @@ const pageLoading = ref(false)
 const submitLoading = ref(false)
 const batchDeleteVisible = ref(false)
 const printDialogVisible = ref(false)
+const hiprintVisible = ref(false)
 const printVoucherIds = ref<Array<string | number>>([])
 
 // 获取当月日期范围
@@ -554,6 +570,16 @@ function handlePrint() {
   if (row && row.id) {
     printVoucherIds.value = [row.id]
     printDialogVisible.value = true
+  }
+}
+
+// hiprint 套打（可视化模板 + 底图）
+function handleHiprint() {
+  if (!selectedDraftId.value) return
+  const row = sortedVouchers.value.find((v: any) => v.id === selectedDraftId.value)
+  if (row && row.id) {
+    printVoucherIds.value = [row.id]
+    hiprintVisible.value = true
   }
 }
 

@@ -1,4 +1,4 @@
-﻿export interface NavItem {
+export interface NavItem {
   path: string
   title: string
   /** 任一权限满足即显示；省略表示登录即可见 */
@@ -6,10 +6,17 @@
   requiresCashFlow?: boolean
 }
 
+export interface NavSubGroup {
+  label: string
+  items: NavItem[]
+}
+
 export interface NavGroup {
   title: string
   icon: string
   children: NavItem[]
+  /** 可选：内部子分组，有值时用子标题渲染，忽略 children */
+  subGroups?: NavSubGroup[]
 }
 
 /** 路由白名单：登录即可访问，不做权限校验 */
@@ -58,11 +65,23 @@ const ROUTE_PERMISSION_MAP: Record<string, string | string[]> = {
   '/cashier/daily-report': 'cashier:journal',
   '/cashier/bank-import': 'cashier:reconcile',
   '/cashier/reset': 'cashier:initbal',
+  '/cashier/settle-type': 'cashier:dict',
   '/asset/list': 'asset:view',
   '/asset/depreciation': 'asset:edit',
   '/asset/report': 'asset:view',
   '/asset/inventory': 'asset:edit',
   '/asset/dict': 'asset:dict',
+  '/scm/items': 'scm:item',
+  '/scm/units': 'scm:item',
+  '/scm/partners': 'scm:partner',
+  '/scm/suppliers': 'scm:partner',
+  '/scm/customers': 'scm:partner',
+  '/scm/warehouses': 'scm:warehouse',
+  '/scm/stock': 'scm:stock',
+  '/scm/docs': 'scm:stock',
+  '/scm/report': 'scm:stock',
+  '/scm/boms': 'scm:stock',
+  '/scm/production-plans': 'scm:stock',
   '/report/cash-flow': 'ledger:cashflow',
   '/aux/dept': 'base:dept',
   '/aux/project': 'base:project',
@@ -105,7 +124,8 @@ function filterNavItems(items: NavItem[], permissions: string[], enableCashFlow:
 
 /** 静态菜单分组定义（不含动态报表子项） */
 function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
-  const baseSettingChildren: NavItem[] = [
+  // 基础设置 → 总账
+  const baseGlChildren: NavItem[] = [
     { path: '/base/account', title: '会计科目', permission: 'base:account' },
     { path: '/base/init-balance', title: '期初余额', permission: 'period:init' },
     { path: '/base/voucher-type', title: '凭证类型', permission: 'base:vtype' },
@@ -114,15 +134,24 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
     { path: '/report/dynamic', title: '报表维护', permission: 'report:define' },
     { path: '/base/print-template', title: '打印模版', permission: 'system:print' },
   ]
-  baseSettingChildren.push(
-    { path: '/asset/dict', title: '资产档案', permission: 'asset:dict' },
-  )
+
+  // 基础设置 → 出纳
+  const baseCashierChildren: NavItem[] = [
+    { path: '/cashier/init-balance', title: '出纳期初', permission: 'cashier:initbal' },
+    { path: '/cashier/settle-type', title: '结算方式', permission: 'cashier:dict' },
+    { path: '/cashier/reset', title: '出纳初始化', permission: 'cashier:initbal' },
+  ]
   if (enableCashFlow) {
-    baseSettingChildren.push(
+    baseCashierChildren.push(
       { path: '/base/cash-flow-items', title: '现金流量项目', permission: 'base:cashitem', requiresCashFlow: true },
       { path: '/base/fund-source', title: '资金来源', permission: 'base:project', requiresCashFlow: true }
     )
   }
+
+  // 基础设置 → 资产
+  const baseAssetChildren: NavItem[] = [
+    { path: '/asset/dict', title: '资产档案', permission: 'asset:dict' },
+  ]
 
   const ledgerChildren: NavItem[] = [
     { path: '/ledger/general', title: '科目余额表', permission: 'ledger:balance' },
@@ -139,18 +168,15 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
     })
   }
   ledgerChildren.push({ path: '/ledger/chronological', title: '序时账', permission: 'ledger:detail' })
+  ledgerChildren.push({ path: '/ledger/standard-report', title: '标准报表', permission: 'ledger:detail' })
 
-  return [
+  const groups: NavGroup[] = [
     {
       title: '凭证管理',
       icon: 'EditPen',
       children: [
         { path: '/voucher/entry', title: '凭证录入', permission: 'voucher:entry' },
-        {
-          path: '/voucher/audit',
-          title: '凭证管理',
-          permission: ['voucher:audit', 'voucher:post', 'voucher:unpost'],
-        },
+        { path: '/voucher/audit', title: '审核记账', permission: ['voucher:audit', 'voucher:post', 'voucher:unpost'] },
         { path: '/voucher/auto-transfer', title: '凭证结转', permission: 'period:carry' },
         { path: '/voucher/query', title: '凭证查询', permission: 'voucher:query' },
         { path: '/voucher/period-close', title: '期间结账', permission: ['period:close', 'period:unclose'] },
@@ -171,13 +197,11 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
       title: '出纳管理',
       icon: 'CreditCard',
       children: [
-        { path: '/cashier/journal', title: '出纳单据', permission: 'cashier:journal' },
-        { path: '/cashier/daily-report', title: '出纳日报', permission: 'cashier:journal' },
+        { path: '/cashier/journal', title: '出纳录单', permission: 'cashier:journal' },
+        { path: '/cashier/daily-report', title: '账户余额表', permission: 'cashier:journal' },
         { path: '/cashier/flow-query', title: '出纳流水账', permission: 'cashier:journal' },
-        { path: '/cashier/init-balance', title: '出纳期初', permission: 'cashier:initbal' },
-        { path: '/cashier/bank-import', title: '对账单导入', permission: 'cashier:reconcile' },
-        { path: '/cashier/reconciliation', title: '余额调节表', permission: 'cashier:reconcile' },
-        { path: '/cashier/reset', title: '出纳初始化', permission: 'cashier:initbal' },
+        { path: '/cashier/summary-report', title: '资金收支汇总表', permission: 'cashier:journal' },
+        { path: '/cashier/document-query', title: '单据综合查询', permission: 'cashier:journal' },
       ],
     },
     {
@@ -190,7 +214,82 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
         { path: '/asset/inventory', title: '资产盘点', permission: 'asset:edit' },
       ],
     },
-    { title: '基础设置', icon: 'Coin', children: baseSettingChildren },
+    {
+      title: '销售管理',
+      icon: 'Sell',
+      children: [
+        { path: '/scm/docs?doc_type=SQ', title: '报价单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=SOa', title: '销售订单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=SO', title: '销售发货', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=SR', title: '销售退货', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=RCV', title: '收款单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=RS', title: '销售发票', permission: 'scm:stock' },
+      ],
+    },
+    {
+      title: '采购管理',
+      icon: 'ShoppingCart',
+      children: [
+        { path: '/scm/docs?doc_type=PQ', title: '采购询价', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PO', title: '采购订单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PI', title: '采购入库', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PR', title: '采购退货', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PAY', title: '付款单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=RP', title: '采购发票', permission: 'scm:stock' },
+      ],
+    },
+    {
+      title: '生产管理',
+      icon: 'SetUp',
+      children: [
+        { path: '/scm/boms', title: '物料清单(BOM)', permission: 'scm:stock' },
+        { path: '/scm/production-plans', title: '生产计划', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PL', title: '领料单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PF', title: '成品入库', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PS', title: '不良品入库', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=PJ', title: '退料单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=AS', title: '组装单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=DS', title: '拆卸单', permission: 'scm:stock' },
+      ],
+    },
+    {
+      title: '委外管理',
+      icon: 'Connection',
+      children: [
+        { path: '/scm/docs?doc_type=WO', title: '委外发货', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=WI', title: '委外入库', permission: 'scm:stock' },
+      ],
+    },
+    {
+      title: '库存',
+      icon: 'Box',
+      children: [
+        { path: '/scm/stock', title: '库存查询', permission: 'scm:stock' },
+        { path: '/scm/report', title: '收发存汇总', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=OI', title: '其他入库', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=OO', title: '其他出库', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=TR', title: '调拨单', permission: 'scm:stock' },
+        { path: '/scm/docs?doc_type=CK', title: '盘点单', permission: 'scm:stock' },
+      ],
+    },
+    // 基础设置（含4个内部子分组）
+    {
+      title: '基础设置',
+      icon: 'Coin',
+      children: [...baseGlChildren, ...baseCashierChildren, ...baseAssetChildren],
+      subGroups: [
+        { label: '总账', items: baseGlChildren },
+        { label: '出纳', items: baseCashierChildren },
+        { label: '资产', items: baseAssetChildren },
+        { label: '供应链', items: [
+          { path: '/scm/items', title: '物料档案' },
+          { path: '/scm/units', title: '计量单位' },
+          { path: '/scm/suppliers?partner_type=supplier', title: '供应商' },
+          { path: '/scm/customers?partner_type=customer', title: '客户' },
+          { path: '/scm/warehouses', title: '仓库档案' },
+        ]},
+      ],
+    },
     {
       title: '系统管理',
       icon: 'Setting',
@@ -208,6 +307,8 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
       children: [{ path: '/security/backup', title: '备份恢复', permission: ['system:backup', 'system:restore'] }],
     },
   ]
+
+  return groups
 }
 
 /** 过滤菜单分组（保留 enableCashFlow 逻辑 + 权限过滤） */
@@ -221,6 +322,16 @@ export function buildMenuGroups(
       return {
         ...group,
         children: filterNavItems(dynamicReportItems, permissions, enableCashFlow),
+      }
+    }
+    if (group.subGroups) {
+      const filteredSubGroups = group.subGroups
+        .map(sg => ({ ...sg, items: filterNavItems(sg.items, permissions, enableCashFlow) }))
+        .filter(sg => sg.items.length > 0)
+      return {
+        ...group,
+        subGroups: filteredSubGroups,
+        children: filteredSubGroups.flatMap(sg => sg.items),
       }
     }
     return {

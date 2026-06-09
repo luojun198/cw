@@ -15,6 +15,7 @@ import {
   resolveAccountSetStartDate,
 } from '../services/accountSetDefaults.js'
 import { importCashierTables, importFixedAssetTables } from './importAcdCashierAsset.js'
+import { importSupplyChainFromAcd } from '../services/importAcdSupplyChain.js'
 
 type AcdRow = string[]
 
@@ -3248,7 +3249,7 @@ export async function importAcdToAccountSet(
       stats,
       false
     )
-    // 出纳 / 固定资产模块数据（兼容 cn_* / zc_* 表）
+    // 出纳 / 固定资产 / 供应链模块数据（兼容 cn_* / zc_* / cpda/khda/ckda 表）
     importCashierTables(accountSet.id, tables, stats, false)
     importFixedAssetTables(accountSet.id, tables, stats, false)
   }
@@ -3256,6 +3257,9 @@ export async function importAcdToAccountSet(
   db.transaction(execute)()
   importVouchers(accountSet.id, tables, stats, false, { batched: true, batchSize: 150 })
   importAcdUsers(accountSet.id, tables, stats, false)
+
+  // 供应链模块数据（cpda→scm_item, khda→scm_partner, ckda→scm_warehouse）
+  importSupplyChainFromAcd(db, accountSet.id, acdBuffer)
 
   // 报表模板不再随 ACD 导入自动加载，提示用户手动上传
   stats.warnings.push(

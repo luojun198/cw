@@ -1,11 +1,23 @@
 <template>
   <div class="page page-daily">
     <div class="page-header">
-      <h3>出纳日报</h3>
+      <h3>账户余额表</h3>
       <div class="filter-row">
-        <el-date-picker v-model="date" type="date" value-format="YYYY-MM-DD" style="width:150px" @change="load" />
+        <el-date-picker
+          v-model="dateRange"
+          type="daterange"
+          value-format="YYYY-MM-DD"
+          range-separator="至"
+          start-placeholder="开始日期"
+          end-placeholder="结束日期"
+          style="width:260px"
+          @change="load"
+        />
         <el-button type="primary" @click="load" :loading="loading">
           <el-icon><Search /></el-icon>查询
+        </el-button>
+        <el-button plain :disabled="!displayRows.length" @click="handleExport">
+          <el-icon><Download /></el-icon>导出
         </el-button>
         <el-button plain @click="handlePrint">
           <el-icon><Printer /></el-icon>打印
@@ -16,11 +28,11 @@
 
     <div v-if="rows.length" class="report-body">
       <h4 class="report-title">
-        出纳日报 — {{ date }}
-        <span class="subtitle">（单位：人民币元）</span>
+        账户资金余额表
+        <span class="subtitle">（期间：{{ dateRange?.[0] }} 至 {{ dateRange?.[1] }}　单位：人民币元）</span>
       </h4>
 
-      <el-table :data="displayRows" size="small" border stripe show-summary :summary-method="summarize">
+      <el-table :data="displayRows" size="small" class="compact-data-table" border stripe show-summary :summary-method="summarize" @row-dblclick="handleRowDblClick" style="cursor: pointer;">
         <el-table-column label="科目编码" prop="account_code" width="120" />
         <el-table-column label="科目名称" prop="account_name" min-width="150" />
         <el-table-column label="期初余额" prop="opening" width="130" align="right">
@@ -61,10 +73,15 @@
 
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
-import { Search, Printer } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { Search, Printer, Download } from '@element-plus/icons-vue'
 import { cashierApi } from '@/api/cashier'
+import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import { useRouter } from 'vue-router'
 
-const date = ref(new Date().toISOString().slice(0, 10))
+const router = useRouter()
+const today = new Date().toISOString().slice(0, 10)
+const dateRange = ref<[string, string]>([`${today.slice(0, 8)}01`, today])
 const rows = ref<any[]>([])
 const data = ref<{ total_income: number; total_expense: number } | null>(null)
 const loading = ref(false)
@@ -91,9 +108,10 @@ function summarize({ columns, data: tableData }: any) {
 
 onMounted(load)
 async function load() {
+  if (!dateRange.value || !dateRange.value[0] || !dateRange.value[1]) return
   loading.value = true
   try {
-    const res = await cashierApi.getDailyReport(date.value)
+    const res = await cashierApi.getDailyReport(dateRange.value[0], dateRange.value[1])
     if (res.code === 0) {
       rows.value = res.data.rows
       data.value = { total_income: res.data.total_income, total_expense: res.data.total_expense }
@@ -101,7 +119,40 @@ async function load() {
   } finally { loading.value = false }
 }
 
+function handleRowDblClick(row: any) {
+  router.push({
+    path: '/cashier/flow-query',
+    query: {
+      account_code: row.account_code,
+      start_date: dateRange.value?.[0],
+      end_date: dateRange.value?.[1]
+    }
+  })
+}
+
 function handlePrint() { window.print() }
+
+async function handleExport() {
+  if (!displayRows.value.length) return ElMessage.warning('暂无数据可导出')
+  const columns: ExportColumnDef<any>[] = [
+    { label: '科目编码', width: 120, value: r => r.account_code },
+    { label: '科目名称', width: 180, value: r => r.account_name },
+    { label: '期初余额', width: 130, align: 'right', type: 'amount', value: r => r.opening ?? 0 },
+    { label: '本期收入', width: 130, align: 'right', type: 'amount', value: r => r.income || '' },
+    { label: '本期支出', width: 130, align: 'right', type: 'amount', value: r => r.expense || '' },
+    { label: '期末余额', width: 130, align: 'right', type: 'amount', value: r => r.closing ?? 0 },
+  ]
+  const summaryValues = ['', '', '', data.value?.total_income ?? 0, data.value?.total_expense ?? 0, '']
+  await exportStyledTable({
+    fileName: `账户资金余额表_${dateRange.value[0]}_${dateRange.value[1]}.xlsx`,
+    sheetName: '账户资金余额表',
+    title: '账户资金余额表',
+    subtitle: `期间：${dateRange.value[0]} 至 ${dateRange.value[1]}　（单位：人民币元）`,
+    columns,
+    rows: displayRows.value,
+    summaryValues,
+  })
+}
 </script>
 
 <style scoped>

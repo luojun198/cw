@@ -18,7 +18,10 @@
       "Bash(rm -rf deploy-final.prev-20260518-221212)",
       "Bash(git rm *)",
       "Bash(rm -f login_result.json)",
-      "mcp__Claude_in_Chrome__tabs_context_mcp"
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "Bash(xargs grep -l \"el-table\")",
+      "Bash(PowerShell -Command \"Select-String -Path 'D:\\\\BDKF\\\\cw0523\\\\client\\\\src\\\\views\\\\ledger\\\\Detail.vue' -Pattern 'const.*colWidth|function.*colWidth' | Select-Object -First 1\")",
+      "Bash(git add *)"
     ],
     "deny": [],
     "ask": []

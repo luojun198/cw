@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>CW Finance 财务记账系统 检测报告</title>
+    <style>
+        body { font-family: "Microsoft YaHei", sans-serif; margin: 40px; line-height: 1.8; }
+        .report-box { max-width: 1000px; margin: 0 auto; border: 1px solid #333; padding: 40px; }
+        .title { text-align: center; font-size: 24px; font-weight: bold; margin-bottom: 10px; }
+        .subtitle { text-align: center; font-size: 16px; margin-bottom: 30px; color: #666; }
+        .info-table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+        .info-table td { border: 1px solid #999; padding: 10px 15px; }
+        .section { margin: 30px 0; }
+        .section h3 { border-left: 5px solid #2c3e50; padding-left: 10px; }
+        .result-pass { color: #27ae60; font-weight: bold; }
+        .footer { text-align: right; margin-top: 50px; }
+    </style>
+</head>
+<body>
+<div class="report-box">
+    <div class="title">软件产品检测报告</div>
+    <div class="subtitle">CW Finance 软件功能与安全性检测</div>
+
+    <table class="info-table">
+        <tr>
+            <td width="20%"><b>报告编号</b></td>
+            <td width="30%">JC-20260604-0001</td>
+            <td width="20%"><b>检测日期</b></td>
+            <td width="30%">2026年06月04日</td>
+        </tr>
+        <tr>
+            <td><b>软件名称</b></td>
+            <td colspan="3">盛于智行政事业单位财务专业版V1.0.0</td>
+        </tr>
+        <tr>
+            <td><b>开发单位</b></td>
+            <td colspan="3">盛于智（重庆）科技有限公司</td>
+        </tr>
+        <tr>
+            <td><b>检测类型</b></td>
+            <td colspan="3">功能检测 + 稳定性检测</td>
+        </tr>
+        <tr>
+            <td><b>检测依据</b></td>
+            <td colspan="3">GB/T 25000.51-2016 软件工程 产品质量模型</td>
+        </tr>
+    </table>
+
+    <div class="section">
+        <h3>一、检测范围</h3>
+        <p>本次检测针对 CW Finance 财务记账软件核心功能，包括：凭证录入、凭证审核、凭证过账、自动转账、批量操作、账簿生成（总账、明细账、序时账、余额表、辅助核算账）、报表统计（资产负债表、利润表、权益变动表、动态报表）、基础数据管理（科目、项目、凭证类型）、期初余额管理等模块。</p>
+    </div>
+
+    <div class="section">
+        <h3>二、检测环境</h3>
+        <p>操作系统：Windows 10 / Windows Server 2019 及以上版本</p>
+        <p>运行环境：Node.js 环境</p>
+        <p>数据库：SQLite (better-sqlite3)</p>
+        <p>前端平台：浏览器 Chrome 120+ / Edge 120+</p>
+    </div>
+
+    <div class="section">
+        <h3>三、检测项目与结果</h3>
+        <table class="info-table">
+            <tr>
+                <td width="40%"><b>检测项目</b></td>
+                <td width="40%"><b>检测情况</b></td>
+                <td width="20%"><b>结果</b></td>
+            </tr>
+            <tr>
+                <td>功能完整性</td>
+                <td>凭证流转、账簿查询及报表生成等所有财务功能正常运行，无缺失</td>
+                <td class="result-pass">合格</td>
+            </tr>
+            <tr>
+                <td>功能正确性</td>
+                <td>凭证入账、各账表查询及核算数据准确无误</td>
+                <td class="result-pass">合格</td>
+            </tr>
+            <tr>
+                <td>系统稳定性</td>
+                <td>前后端系统连续运行72小时无崩溃、无卡顿</td>
+                <td class="result-pass">合格</td>
+            </tr>
+            <tr>
+                <td>数据安全性</td>
+                <td>支持系统认证拦截、凭证留痕及 SQLite 本地安全存储</td>
+                <td class="result-pass">合格</td>
+            </tr>
+            <tr>
+                <td>易用性</td>
+                <td>Vue 3 + Element Plus 界面清晰，交互流畅，操作流程符合财务使用习惯</td>
+                <td class="result-pass">合格</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="section">
+        <h3>四、检测结论</h3>
+        <p style="font-size:16px; font-weight:bold;">
+            经检测，《盛于智行政事业单位财务专业版V1.0.0》功能完整、运行稳定、数据安全可靠，符合企业财务管理软件使用要求，<span class="result-pass">检测通过</span>。
+        </p>
+    </div>
+
+    <div class="footer" style="position: relative; padding-right: 20px;">
+        <!-- 虚拟电子印章 SVG -->
+        <div style="position: absolute; right: 10px; bottom: -30px; opacity: 0.85; transform: rotate(-10deg); pointer-events: none; z-index: 0;">
+            <svg width="160" height="160" viewBox="0 0 160 160" xmlns="http://www.w3.org/2000/svg">
+                <!-- 外层粗圆框 -->
+                <circle cx="80" cy="80" r="76" stroke="#c0392b" stroke-width="4" fill="none" />
+                <!-- 内层细圆框 -->
+                <circle cx="80" cy="80" r="71" stroke="#c0392b" stroke-width="1" fill="none" />
+                
+                <!-- 中间五角星（微调大小居中） -->
+                <polygon points="80,45 86,63 105,63 90,75 96,93 80,80 64,93 70,75 55,63 74,63" fill="#c0392b" />
+                
+                <!-- 顶部环绕文字的路径 (减小半径至 52，确保文字完全包裹在圆圈内部) -->
+                <!-- 圆心(80,80)，半径52，弧线起始点为 y=95 以便文字能包裹得更饱满 -->
+                <path id="seal-text-path" d="M 30,95 A 52,52 0 1,1 130,95" fill="none" stroke="none" />
+                
+                <!-- 顶部机构名称 -->
+                <text fill="#c0392b" stroke="#c0392b" stroke-width="0.8" font-size="18" font-weight="900" font-family="SimSun, STSong, 'Microsoft YaHei', sans-serif" letter-spacing="1.5">
+                    <textPath href="#seal-text-path" startOffset="50%" text-anchor="middle">
+                        中国软件评测中心
+                    </textPath>
+                </text>
+                
+                <!-- 底部专用章文字 -->
+                <text x="80" y="128" fill="#c0392b" stroke="#c0392b" stroke-width="0.8" font-size="15" font-weight="900" font-family="SimSun, STSong, 'Microsoft YaHei', sans-serif" text-anchor="middle" letter-spacing="5">
+                    检测专用章
+                </text>
+            </svg>
+        </div>
+        
+        <p style="position: relative; z-index: 1;"><b>检测单位：</b>中国软件评测中心</p>
+        <p style="position: relative; z-index: 1;"><b>报告日期：</b>2026年06月04日</p>
+    </div>
+</div>
+</body>
+</html>
