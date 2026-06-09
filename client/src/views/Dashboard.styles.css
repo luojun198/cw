@@ -120,20 +120,21 @@
 .hero-gradient {
   position: absolute;
   inset: 0;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 30%, #0f3460 60%, #1a1a2e 100%);
+  /* 设计系统薄荷渐变（深色版，保证白字可读）：深青薄荷 → 泡沫蓝 */
+  background: linear-gradient(135deg, #0E665B 0%, #0AA694 38%, #1E6AD6 100%);
 }
 
-/* 中国行政事业元素 - 祥云纹理 */
+/* 泡泡点缀（替代原金色星点）*/
 .hero-pattern {
   position: absolute;
   inset: 0;
-  opacity: 0.06;
+  opacity: 0.10;
   background-image:
-    radial-gradient(circle at 20% 30%, rgba(255, 215, 0, 0.8) 1px, transparent 1px),
-    radial-gradient(circle at 60% 20%, rgba(255, 215, 0, 0.6) 1px, transparent 1px),
-    radial-gradient(circle at 80% 60%, rgba(255, 215, 0, 0.5) 1px, transparent 1px),
-    radial-gradient(circle at 40% 70%, rgba(255, 215, 0, 0.7) 1px, transparent 1px),
-    radial-gradient(circle at 10% 80%, rgba(255, 215, 0, 0.4) 1px, transparent 1px);
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.8) 1px, transparent 1px),
+    radial-gradient(circle at 60% 20%, rgba(255, 255, 255, 0.6) 1px, transparent 1px),
+    radial-gradient(circle at 80% 60%, rgba(255, 255, 255, 0.5) 1px, transparent 1px),
+    radial-gradient(circle at 40% 70%, rgba(255, 255, 255, 0.7) 1px, transparent 1px),
+    radial-gradient(circle at 10% 80%, rgba(255, 255, 255, 0.4) 1px, transparent 1px);
   background-size: 60px 60px;
 }
 

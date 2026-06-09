@@ -7,19 +7,20 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(135deg, #0a1f3a 0%, #16213e 30%, #1a4b8c 70%, #0f3460 100%);
+  /* 设计系统薄荷渐变（深色版）：深青薄荷 → 泡沫蓝 */
+  background: linear-gradient(135deg, #0E665B 0%, #0AA694 38%, #1E6AD6 100%);
   position: relative;
   overflow: hidden;
 }
 
-/* 背景装饰 */
+/* 背景装饰 - 泡泡光晕 */
 .login-container::before {
   content: '';
   position: absolute;
   inset: 0;
-  background: 
-    radial-gradient(circle at 20% 80%, rgba(255, 215, 0, 0.08) 0%, transparent 40%),
-    radial-gradient(circle at 80% 20%, rgba(255, 215, 0, 0.06) 0%, transparent 35%);
+  background:
+    radial-gradient(circle at 20% 80%, rgba(255, 255, 255, 0.10) 0%, transparent 40%),
+    radial-gradient(circle at 80% 20%, rgba(102, 224, 203, 0.12) 0%, transparent 35%);
   pointer-events: none;
 }
 
