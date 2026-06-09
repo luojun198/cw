@@ -1,3 +1,11 @@
+/* ============================================================
+   Design System Tokens - 财务洗头膏
+   ============================================================ */
+@import url('./styles/design-tokens/fonts.css');
+@import url('./styles/design-tokens/colors.css');
+@import url('./styles/design-tokens/typography.css');
+@import url('./styles/design-tokens/spacing.css');
+
 * {
   margin: 0;
   padding: 0;
@@ -9,9 +17,9 @@ body,
 #app {
   width: 100%;
   height: 100%;
-  font-family: var(--cw-font-body);
-  font-size: var(--cw-text-base);
-  color: var(--cw-text-primary);
+  font-family: var(--cw-font-body, var(--font-sans));
+  font-size: var(--cw-text-base, 14px);
+  color: var(--cw-text-primary, var(--text-strong));
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -27,7 +35,7 @@ body,
 }
 
 body {
-  background-color: var(--cw-bg-base);
+  background-color: var(--surface-canvas, var(--cw-bg-base));
 }
 
 a {
@@ -54,23 +62,23 @@ a {
 @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&display=swap');
 
 :root {
-  /* Element Plus 原有变量 - 中国红主题 */
-  --el-color-primary: #C8102E;
-  --el-color-primary-light-3: #d94356;
-  --el-color-primary-light-5: #e57682;
-  --el-color-primary-light-7: #f0a9ae;
-  --el-color-primary-light-8: #f5c4c7;
-  --el-color-primary-light-9: #fae0e1;
-  --el-color-primary-dark-2: #a00d25;
+  /* Element Plus 主题色 - 使用设计系统薄荷绿 */
+  --el-color-primary: var(--mint-500, #12C7AE);
+  --el-color-primary-light-3: var(--mint-400, #2DCFB5);
+  --el-color-primary-light-5: var(--mint-300, #66E0CB);
+  --el-color-primary-light-7: var(--mint-200, #9FEDDF);
+  --el-color-primary-light-8: var(--mint-100, #CFF6EF);
+  --el-color-primary-light-9: var(--mint-50, #E8FBF7);
+  --el-color-primary-dark-2: var(--mint-700, #0A8576);
 
   /* 表格选中行底色 */
-  --el-table-current-row-bg-color: rgba(200, 16, 46, 0.08);
-  --el-color-success: #52C41A;
-  --el-color-warning: #FAAD14;
-  --el-color-danger: #FF4D4F;
-  --el-color-info: #8C8C8C;
-  --el-border-radius-base: 8px;
-  --el-border-radius-small: 6px;
+  --el-table-current-row-bg-color: rgba(18, 199, 174, 0.08);
+  --el-color-success: var(--success, #0FB57E);
+  --el-color-warning: var(--warning, #F4A52E);
+  --el-color-danger: var(--danger, #F2545B);
+  --el-color-info: var(--info, #2E84F5);
+  --el-border-radius-base: var(--radius-md, 14px);
+  --el-border-radius-small: var(--radius-sm, 10px);
 
   /* ========== CW Finance 专用色彩系统 - 现代中国风 ========== */
 

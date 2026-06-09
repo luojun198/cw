@@ -24,7 +24,16 @@
       "Bash(git add *)",
       "Bash(git commit -m ' *)",
       "Bash(git remote *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(git push *)",
+      "Bash(Expand-Archive -Path \"财务 Design System.zip\" -DestinationPath \"design-system\" -Force)",
+      "Bash(Get-ChildItem -Path \"design-system\" -Recurse -Depth 2)",
+      "Bash(Select-Object FullName)",
+      "Bash(npm run *)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:3005/api/license/status)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:5175/)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://localhost:5175/)"
     ],
     "deny": [],
     "ask": []
