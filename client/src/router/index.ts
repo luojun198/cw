@@ -323,6 +323,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '物料档案', icon: 'Goods', parent: '供应链' },
       },
       {
+        path: 'scm/item-types',
+        name: 'ScmItemTypeList',
+        component: () => import('@/views/scm/ItemTypeList.vue'),
+        meta: { title: '物料属性', icon: 'PriceTag', parent: '供应链' },
+      },
+      {
         path: 'scm/partners',
         name: 'ScmPartnerList',
         component: () => import('@/views/scm/PartnerList.vue'),

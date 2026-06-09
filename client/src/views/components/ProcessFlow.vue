@@ -1,87 +1,90 @@
 <template>
-  <div class="process-flow-container">
-    <div class="flow-diagram">
-      <div class="flow-main-track">
-        <template v-for="(node, index) in config.mainNodes" :key="node.id">
-          <!-- 节点块 -->
-          <div class="flow-step">
-            <!-- 主节点 -->
-            <router-link
-              :to="getRoutePath(node)"
-              class="flow-card main-card"
-              :class="[`theme-${node.color || 'blue'}`, { 'is-disabled': !canAccess(node) }]"
-              @click.prevent="!canAccess(node) && $event.preventDefault()"
-            >
-              <div class="flow-card-art">
-                <NavCardArt
-                  :palette="nodeArt(node, index).palette"
-                  :variant="nodeArt(node, index).variant"
-                  :icon="getIcon(node)"
-                />
-              </div>
-              <div class="flow-card-body">
-                <span class="card-title">{{ getTitle(node) }}</span>
-              </div>
-            </router-link>
+  <div class="unified-track-container">
+    <div class="unified-card">
+      <div class="track-header">
+        <div class="track-header-left">
+          <h3 class="track-title">核心业务流程</h3>
+          <span class="track-subtitle">按标准步骤完成日常业务流转</span>
+        </div>
+      </div>
 
-            <!-- 分支节点 -->
-            <div v-if="node.branches && node.branches.length > 0" class="flow-branches">
-              <div class="branch-vertical-line"></div>
+      <div class="track-body">
+        <div class="flow-main-track">
+          <template v-for="(node, index) in config.mainNodes" :key="node.id">
+            <!-- 节点 -->
+            <div class="flow-step">
               <router-link
-                v-for="(branch, bIndex) in node.branches"
-                :key="branch.id"
-                :to="getRoutePath(branch)"
-                class="flow-card branch-card"
-                :class="[`theme-${branch.color || 'orange'}`, { 'is-disabled': !canAccess(branch) }]"
-                @click.prevent="!canAccess(branch) && $event.preventDefault()"
+                :to="getRoutePath(node)"
+                class="node-action"
+                :class="[{ 'is-disabled': !canAccess(node) }]"
+                @click.prevent="!canAccess(node) && $event.preventDefault()"
               >
-                <div class="flow-card-art">
-                  <NavCardArt
-                    :palette="nodeArt(branch, index * 10 + bIndex + 3).palette"
-                    :variant="nodeArt(branch, index * 10 + bIndex + 3).variant"
-                    :icon="getIcon(branch)"
-                  />
+                <div class="node-icon-wrapper" :class="`bg-${node.color || 'blue'}`">
+                  <el-icon class="node-icon" :class="`text-${node.color || 'blue'}`">
+                    <component :is="getIcon(node)" />
+                  </el-icon>
                 </div>
-                <div class="flow-card-body">
-                  <span class="card-title">{{ getTitle(branch) }}</span>
+                <div class="node-info">
+                  <span class="node-title">{{ getTitle(node) }}</span>
                 </div>
               </router-link>
-            </div>
-          </div>
 
-          <!-- 连接箭头 (如果有 next，或者是主链路除了最后一个之外都有连接线) -->
-          <div class="flow-arrow" v-if="index < (config.mainNodes?.length || 0) - 1">
-            <div class="arrow-line">
-              <div class="arrow-light"></div>
+              <!-- 分支节点 -->
+              <div v-if="node.branches && node.branches.length > 0" class="branch-container">
+                <div class="branch-line"></div>
+                <router-link
+                  v-for="branch in node.branches"
+                  :key="branch.id"
+                  :to="getRoutePath(branch)"
+                  class="node-action branch-action"
+                  :class="[{ 'is-disabled': !canAccess(branch) }]"
+                  @click.prevent="!canAccess(branch) && $event.preventDefault()"
+                >
+                  <div class="node-icon-wrapper" :class="`bg-${branch.color || 'orange'}`">
+                    <el-icon class="node-icon" :class="`text-${branch.color || 'orange'}`">
+                      <component :is="getIcon(branch)" />
+                    </el-icon>
+                  </div>
+                  <div class="node-info">
+                    <span class="node-title">{{ getTitle(branch) }}</span>
+                  </div>
+                </router-link>
+              </div>
             </div>
-            <div class="arrow-head"></div>
-          </div>
-        </template>
+
+            <!-- 连接线 (除了最后一个节点) -->
+            <div class="flow-connector" v-if="index < (config.mainNodes?.length || 0) - 1">
+              <div class="connector-line">
+                <div class="connector-light"></div>
+              </div>
+              <el-icon class="connector-arrow"><ArrowRight /></el-icon>
+            </div>
+          </template>
+        </div>
       </div>
     </div>
 
-    <!-- 辅助节点区 -->
-    <div class="flow-aux-track" v-if="config.auxNodes && config.auxNodes.length > 0">
-      <h3 class="aux-title">辅助功能</h3>
-      <div class="aux-grid">
+    <!-- 辅助节点区使用 Bento 风格 -->
+    <div class="aux-track" v-if="config.auxNodes && config.auxNodes.length > 0">
+      <h3 class="section-title">辅助操作</h3>
+      <div class="bento-grid">
         <router-link
-          v-for="(aux, auxIndex) in config.auxNodes"
+          v-for="aux in config.auxNodes"
           :key="aux.id"
           :to="getRoutePath(aux)"
-          class="flow-card aux-card"
-          :class="[`theme-${aux.color || 'cyan'}`, { 'is-disabled': !canAccess(aux) }]"
+          class="bento-card"
+          :class="[{ 'is-disabled': !canAccess(aux) }]"
           @click.prevent="!canAccess(aux) && $event.preventDefault()"
         >
-          <div class="flow-card-art">
-            <NavCardArt
-              :palette="nodeArt(aux, auxIndex + 5).palette"
-              :variant="nodeArt(aux, auxIndex + 5).variant"
-              :icon="getIcon(aux)"
-            />
+          <div class="bento-icon-wrapper" :class="`bg-${aux.color || 'cyan'}`">
+            <el-icon class="bento-icon" :class="`text-${aux.color || 'cyan'}`">
+              <component :is="getIcon(aux)" />
+            </el-icon>
           </div>
-          <div class="flow-card-body">
-            <span class="card-title">{{ getTitle(aux) }}</span>
+          <div class="bento-info">
+            <span class="bento-title">{{ getTitle(aux) }}</span>
           </div>
+          <el-icon class="bento-action-icon"><Right /></el-icon>
         </router-link>
       </div>
     </div>
@@ -89,9 +92,8 @@
 </template>
 
 <script setup lang="ts">
+import { ArrowRight, Right } from '@element-plus/icons-vue'
 import type { ModuleFlowConfig, FlowNode } from '@/config/flowConfig'
-import { getFlowArt, type NavArt } from '@/config/navArt'
-import NavCardArt from './NavCardArt.vue'
 
 const props = defineProps<{
   config: ModuleFlowConfig
@@ -123,24 +125,47 @@ function getIcon(node: FlowNode) {
   const item = findMenuItem(node)
   return item ? props.iconResolver(item.path) : 'Menu'
 }
-
-// 依据 FlowNode.color 取淡彩插画配置
-function nodeArt(node: FlowNode, index: number): NavArt {
-  return getFlowArt(node.color, index)
-}
 </script>
 
 <style scoped>
-.process-flow-container {
-  padding: 24px 0;
+.unified-track-container {
   display: flex;
   flex-direction: column;
-  gap: 48px;
+  gap: 32px;
 }
 
-.flow-diagram {
+/* 统一进度轨主卡片 */
+.unified-card {
+  background: #ffffff;
+  border-radius: 20px;
+  border: 1px solid #f0f2f5;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.03);
+  padding: 32px;
+}
+
+.track-header {
+  margin-bottom: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.track-title {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1d1d1f;
+  margin: 0 0 4px 0;
+}
+
+.track-subtitle {
+  font-size: 13px;
+  color: #86868b;
+}
+
+/* 轨道主体 */
+.track-body {
   overflow-x: auto;
-  padding: 20px 10px;
+  padding-bottom: 20px;
 }
 
 .flow-main-track {
@@ -151,179 +176,221 @@ function nodeArt(node: FlowNode, index: number): NavArt {
 
 /* 节点容器 */
 .flow-step {
+  position: relative;
   display: flex;
   flex-direction: column;
   align-items: center;
-  position: relative;
 }
 
-/* 卡片基础样式 */
-.flow-card {
+.node-action {
   display: flex;
   flex-direction: column;
-  width: 150px;
-  height: 140px;
-  background: #ffffff;
-  border: 1px solid #ebeef5;
-  border-radius: 16px;
+  align-items: center;
+  gap: 16px;
   text-decoration: none;
-  overflow: hidden;
+  cursor: pointer;
+  padding: 16px 24px;
+  border-radius: 16px;
   transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
-  position: relative;
-  z-index: 2;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
 }
 
-.flow-card:hover:not(.is-disabled) {
-  transform: translateY(-5px);
-  border-color: #dcdfe6;
-  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.12);
+.node-action:hover:not(.is-disabled) {
+  background: rgba(0, 0, 0, 0.02);
+  transform: translateY(-4px);
 }
 
-.flow-card.is-disabled {
-  opacity: 0.5;
+.node-action.is-disabled {
+  opacity: 0.4;
   cursor: not-allowed;
   filter: grayscale(1);
-  background: #f5f7fa;
 }
 
-/* 插画区：节点主体视觉 */
-.flow-card-art {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  transition: transform 0.3s ease;
-}
-
-.flow-card:hover:not(.is-disabled) .flow-card-art {
-  transform: scale(1.07);
-}
-
-/* 标题（完整显示，无"进入"与箭头） */
-.flow-card-body {
-  flex-shrink: 0;
-  min-height: 42px;
-  padding: 4px 8px;
+/* 微高光图标底座 */
+.node-icon-wrapper {
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #ffffff;
-  border-top: 1px solid #f2f3f5;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.6), 0 4px 12px rgba(0, 0, 0, 0.04);
 }
 
-.card-title {
-  width: 100%;
-  color: #303133;
-  font-size: 14px;
-  font-weight: 500;
-  line-height: 1.25;
+.node-icon {
+  font-size: 24px;
+}
+
+.node-info {
   text-align: center;
-  /* 短标题单行、超长标题最多两行，均完整显示 */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
-/* 连接箭头 */
-.flow-arrow {
-  width: 60px;
-  height: 140px;
+.node-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+  white-space: nowrap;
+}
+
+/* 连接器 */
+.flow-connector {
   display: flex;
   align-items: center;
-  justify-content: center;
+  margin: 40px 16px 0;
+  width: 80px;
   position: relative;
-  margin: 0 10px;
 }
 
-.arrow-line {
+.connector-line {
   flex: 1;
   height: 2px;
-  background: #dcdfe6;
+  background: #e5e5ea;
+  border-radius: 1px;
   position: relative;
   overflow: hidden;
 }
 
-.arrow-light {
+.connector-light {
   position: absolute;
   top: 0;
   left: -100%;
   width: 50%;
   height: 100%;
-  background: linear-gradient(90deg, transparent, #409eff, transparent);
-  animation: flowLight 2s infinite linear;
+  background: linear-gradient(90deg, transparent, rgba(0, 122, 255, 0.5), transparent);
+  animation: light-sweep 2s infinite linear;
 }
 
-@keyframes flowLight {
+@keyframes light-sweep {
   0% { left: -100%; }
   100% { left: 200%; }
 }
 
-.arrow-head {
-  width: 0;
-  height: 0;
-  border-top: 6px solid transparent;
-  border-bottom: 6px solid transparent;
-  border-left: 8px solid #dcdfe6;
+.connector-arrow {
+  color: #c7c7cc;
+  font-size: 14px;
   margin-left: 2px;
 }
 
-/* 分支节点 */
-.flow-branches {
+/* 分支 */
+.branch-container {
   display: flex;
   flex-direction: column;
   align-items: center;
-  margin-top: 30px;
-  gap: 20px;
+  gap: 16px;
+  margin-top: 16px;
   position: relative;
 }
 
-.branch-vertical-line {
+.branch-line {
   position: absolute;
-  top: -30px;
+  top: -24px;
   left: 50%;
   width: 2px;
-  height: 30px;
-  background: #dcdfe6;
+  height: 24px;
+  background: #e5e5ea;
   transform: translateX(-50%);
-  z-index: 1;
 }
 
-.branch-card {
-  height: 120px;
+.branch-action {
+  padding: 12px 16px;
+}
+.branch-action .node-icon-wrapper {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+}
+.branch-action .node-icon {
+  font-size: 20px;
+}
+.branch-action .node-title {
+  font-size: 13px;
 }
 
-/* 辅助区 */
-.flow-aux-track {
-  background: #f9fafc;
-  border-radius: 20px;
-  padding: 24px;
-  border: 1px solid #ebeef5;
+/* === Bento 辅助区 === */
+.aux-track {
+  margin-top: 8px;
 }
 
-.aux-title {
-  font-size: 16px;
-  color: #909399;
-  margin: 0 0 20px 0;
-  font-weight: 500;
+.section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #86868b;
+  margin-bottom: 20px;
 }
 
-.aux-grid {
-  display: flex;
-  flex-wrap: wrap;
+.bento-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 20px;
 }
 
-.aux-card {
-  width: 130px;
-  height: 120px;
+.bento-card {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: #ffffff;
+  border: 1px solid #f0f2f5;
+  border-radius: 16px;
+  padding: 16px;
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  transition: all 0.25s ease;
 }
 
-/* 主题色 hover 光晕（沿用语义色） */
-.theme-blue:hover:not(.is-disabled) { box-shadow: 0 12px 26px rgba(64, 158, 255, 0.22); border-color: #8cc5ff; }
-.theme-green:hover:not(.is-disabled) { box-shadow: 0 12px 26px rgba(103, 194, 58, 0.22); border-color: #a4da89; }
-.theme-orange:hover:not(.is-disabled) { box-shadow: 0 12px 26px rgba(230, 162, 60, 0.22); border-color: #f3d19e; }
-.theme-purple:hover:not(.is-disabled) { box-shadow: 0 12px 26px rgba(156, 39, 176, 0.22); border-color: #d199df; }
-.theme-red:hover:not(.is-disabled) { box-shadow: 0 12px 26px rgba(245, 108, 108, 0.22); border-color: #fab6b6; }
-.theme-cyan:hover:not(.is-disabled) { box-shadow: 0 12px 26px rgba(0, 188, 212, 0.22); border-color: #8be5f0; }
+.bento-card:hover:not(.is-disabled) {
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  border-color: #e5e5ea;
+}
+
+.bento-card.is-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(1);
+}
+
+.bento-icon-wrapper {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.bento-icon {
+  font-size: 18px;
+}
+
+.bento-info {
+  flex: 1;
+  min-width: 0;
+}
+
+.bento-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1d1d1f;
+  display: block;
+}
+
+.bento-action-icon {
+  color: #c7c7cc;
+  font-size: 16px;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.bento-card:hover .bento-action-icon {
+  transform: translateX(2px);
+  color: #007AFF;
+}
+
+/* === 颜色变体 (Mac风格马卡龙色系) === */
+.bg-blue { background: #eaf2ff; } .text-blue { color: #007AFF; }
+.bg-cyan { background: #e4f8f9; } .text-cyan { color: #32ADE6; }
+.bg-purple { background: #f2eaff; } .text-purple { color: #AF52DE; }
+.bg-pink { background: #ffeaef; } .text-pink { color: #FF2D55; }
+.bg-orange { background: #ffefe1; } .text-orange { color: #FF9500; }
+.bg-green { background: #e8f8ec; } .text-green { color: #34C759; }
+.bg-yellow { background: #fff8d6; } .text-yellow { color: #FFCC00; }
+.bg-indigo { background: #eaebff; } .text-indigo { color: #5856D6; }
 </style>

@@ -21,7 +21,10 @@
       "mcp__Claude_in_Chrome__tabs_context_mcp",
       "Bash(xargs grep -l \"el-table\")",
       "Bash(PowerShell -Command \"Select-String -Path 'D:\\\\BDKF\\\\cw0523\\\\client\\\\src\\\\views\\\\ledger\\\\Detail.vue' -Pattern 'const.*colWidth|function.*colWidth' | Select-Object -First 1\")",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git remote *)",
+      "Bash(git commit *)"
     ],
     "deny": [],
     "ask": []

@@ -159,6 +159,14 @@ import {
   up as addScmItemTreeUp,
   down as addScmItemTreeDown,
 } from './migrations/20260608_add_scm_item_tree.js'
+import {
+  up as addScmItemNatureUp,
+  down as addScmItemNatureDown,
+} from './migrations/20260609_add_scm_item_nature.js'
+import {
+  up as addScmItemCustomFieldsUp,
+  down as addScmItemCustomFieldsDown,
+} from './migrations/20260609_add_scm_item_custom_fields.js'
 
 /**
  * 迁移示例：添加新字段
@@ -1442,5 +1450,17 @@ export const migrations: Migration[] = [
     name: 'add_scm_item_tree',
     up: addScmItemTreeUp,
     down: addScmItemTreeDown,
+  },
+  {
+    version: 60,
+    name: 'add_scm_item_nature',
+    up: addScmItemNatureUp,
+    down: addScmItemNatureDown,
+  },
+  {
+    version: 61,
+    name: 'add_scm_item_custom_fields',
+    up: addScmItemCustomFieldsUp,
+    down: addScmItemCustomFieldsDown,
   },
   ]

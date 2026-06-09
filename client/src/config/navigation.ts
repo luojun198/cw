@@ -72,6 +72,7 @@ const ROUTE_PERMISSION_MAP: Record<string, string | string[]> = {
   '/asset/inventory': 'asset:edit',
   '/asset/dict': 'asset:dict',
   '/scm/items': 'scm:item',
+  '/scm/item-types': 'scm:item',
   '/scm/units': 'scm:item',
   '/scm/partners': 'scm:partner',
   '/scm/suppliers': 'scm:partner',
@@ -283,6 +284,7 @@ function getStaticMenuGroups(enableCashFlow: boolean): NavGroup[] {
         { label: '资产', items: baseAssetChildren },
         { label: '供应链', items: [
           { path: '/scm/items', title: '物料档案' },
+          { path: '/scm/item-types', title: '物料属性' },
           { path: '/scm/units', title: '计量单位' },
           { path: '/scm/suppliers?partner_type=supplier', title: '供应商' },
           { path: '/scm/customers?partner_type=customer', title: '客户' },

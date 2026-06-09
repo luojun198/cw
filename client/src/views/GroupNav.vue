@@ -81,33 +81,41 @@ function getIcon(path: string) {
 </script>
 
 <style scoped>
-/* 浅色系渐变背景 + 极淡装饰图案，整页不再纯白 */
+/* 浅灰蓝背景叠加微光晕 */
 .group-nav-container {
   position: relative;
   padding: 40px;
   min-height: 100vh;
   box-sizing: border-box;
-  background:
-    radial-gradient(1100px 520px at 12% -8%, rgba(64, 158, 255, 0.10), transparent 60%),
-    radial-gradient(900px 480px at 92% 4%, rgba(156, 106, 222, 0.09), transparent 60%),
-    radial-gradient(800px 600px at 78% 102%, rgba(20, 184, 166, 0.08), transparent 60%),
-    linear-gradient(135deg, #fbfdff 0%, #f4f7fb 100%);
+  background-color: #f8fafc;
+  overflow: hidden;
 }
 
-/* 极淡圆点纹理叠加层 */
+/* 光晕效果 (弥散阴影) */
 .group-nav-container::before {
   content: '';
   position: absolute;
-  inset: 0;
+  top: -20%;
+  left: -10%;
+  width: 60%;
+  height: 60%;
+  background: radial-gradient(circle, rgba(59, 130, 246, 0.08) 0%, transparent 70%);
   pointer-events: none;
-  background-image: radial-gradient(rgba(64, 110, 180, 0.05) 1.5px, transparent 1.5px);
-  background-size: 26px 26px;
+  z-index: 0;
 }
 
-/* 内容区限宽居中并置于纹理之上
-   注意：.main-view > * 全局规则把本容器变成了 flex 纵列，
-   若仅用 margin:0 auto 会让子项收缩成内容宽度（导致 bento 网格塌成单列），
-   故显式 width:100% 占满，再用 max-width + margin 居中。 */
+.group-nav-container::after {
+  content: '';
+  position: absolute;
+  bottom: -20%;
+  right: -10%;
+  width: 50%;
+  height: 50%;
+  background: radial-gradient(circle, rgba(168, 85, 247, 0.06) 0%, transparent 70%);
+  pointer-events: none;
+  z-index: 0;
+}
+
 .group-nav-container > div {
   position: relative;
   z-index: 1;
@@ -117,23 +125,23 @@ function getIcon(path: string) {
 }
 
 .group-nav-header {
-  margin-bottom: 20px;
+  margin-bottom: 32px;
 }
 
 .group-nav-title {
-  font-size: 32px;
+  font-size: 28px;
   font-weight: 700;
-  color: #303133;
+  color: #1d1d1f;
   display: flex;
   align-items: center;
-  gap: 16px;
-  letter-spacing: 1px;
+  gap: 12px;
+  letter-spacing: -0.5px;
 }
 
 .group-nav-icon {
-  width: 36px;
-  height: 36px;
-  color: #409eff;
+  width: 32px;
+  height: 32px;
+  color: #007AFF;
 }
 
 .group-nav-empty {

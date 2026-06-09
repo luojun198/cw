@@ -1,25 +1,24 @@
 <template>
   <div class="bento-grid-container">
     <template v-if="group.subGroups && group.subGroups.length > 0">
-      <div v-for="(sg, sgIndex) in group.subGroups" :key="sg.label" class="bento-section">
-        <h2 class="bento-subtitle">{{ sg.label }}</h2>
+      <div v-for="(sg, index) in group.subGroups" :key="sg.label" class="bento-section">
+        <h2 class="section-title">{{ sg.label }}</h2>
         <div class="bento-grid">
           <router-link
-            v-for="(item, index) in sg.items"
+            v-for="(item, i) in sg.items"
             :key="item.path"
             :to="item.path"
             class="bento-card"
           >
-            <div class="bento-art">
-              <NavCardArt
-                :palette="subGroupArts[sgIndex][index].palette"
-                :variant="subGroupArts[sgIndex][index].variant"
-                :icon="iconResolver(item.path)"
-              />
+            <div class="bento-icon-wrapper" :class="getColorClass(index * 7 + i)">
+              <el-icon class="bento-icon" :class="getTextColorClass(index * 7 + i)">
+                <component :is="iconResolver(item.path)" />
+              </el-icon>
             </div>
-            <div class="bento-body">
+            <div class="bento-info">
               <span class="bento-title">{{ item.title }}</span>
             </div>
+            <el-icon class="bento-action-icon"><Right /></el-icon>
           </router-link>
         </div>
       </div>
@@ -28,21 +27,20 @@
       <div class="bento-section">
         <div class="bento-grid">
           <router-link
-            v-for="(item, index) in group.children"
+            v-for="(item, i) in group.children"
             :key="item.path"
             :to="item.path"
             class="bento-card"
           >
-            <div class="bento-art">
-              <NavCardArt
-                :palette="childrenArts[index].palette"
-                :variant="childrenArts[index].variant"
-                :icon="iconResolver(item.path)"
-              />
+            <div class="bento-icon-wrapper" :class="getColorClass(i)">
+              <el-icon class="bento-icon" :class="getTextColorClass(i)">
+                <component :is="iconResolver(item.path)" />
+              </el-icon>
             </div>
-            <div class="bento-body">
+            <div class="bento-info">
               <span class="bento-title">{{ item.title }}</span>
             </div>
+            <el-icon class="bento-action-icon"><Right /></el-icon>
           </router-link>
         </div>
       </div>
@@ -51,117 +49,108 @@
 </template>
 
 <script setup lang="ts">
-import { computed } from 'vue'
-import { getNavArt, type NavArt } from '@/config/navArt'
-import NavCardArt from './NavCardArt.vue'
+import { Right } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   group: any
   iconResolver: (path: string) => string
 }>()
 
-// 预计算每张卡片的插画配置（相邻卡片不同形状/色板，营造多风格）
-const childrenArts = computed<NavArt[]>(() =>
-  (props.group.children || []).map((_: any, i: number) => getNavArt(props.group.title, i))
-)
+const colors = ['blue', 'cyan', 'purple', 'orange', 'green', 'indigo', 'pink', 'yellow']
 
-const subGroupArts = computed<NavArt[][]>(() =>
-  (props.group.subGroups || []).map((sg: any, sgi: number) =>
-    sg.items.map((_: any, i: number) => getNavArt(props.group.title, sgi * 7 + i))
-  )
-)
+function getColorClass(index: number) {
+  return `bg-${colors[index % colors.length]}`
+}
+
+function getTextColorClass(index: number) {
+  return `text-${colors[index % colors.length]}`
+}
 </script>
 
 <style scoped>
 .bento-grid-container {
-  padding: 6px 0;
+  padding: 8px 0;
 }
 
 .bento-section {
-  margin-bottom: 28px;
+  margin-bottom: 32px;
 }
 
-.bento-subtitle {
+.section-title {
   font-size: 16px;
   font-weight: 600;
-  color: #303133;
-  margin-bottom: 16px;
-  display: flex;
-  align-items: center;
+  color: #1d1d1f;
+  margin-bottom: 20px;
 }
 
-.bento-subtitle::before {
-  content: '';
-  display: inline-block;
-  width: 4px;
-  height: 16px;
-  background: #ffd700;
-  border-radius: 2px;
-  margin-right: 10px;
-}
-
-/* 与凭证管理（ProcessFlow）卡片完全一致的方形卡，横向多列密排 */
 .bento-grid {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
   gap: 20px;
 }
 
 .bento-card {
   display: flex;
-  flex-direction: column;
-  width: 150px;
-  height: 140px;
+  align-items: center;
+  gap: 16px;
   background: #ffffff;
-  border: 1px solid #ebeef5;
+  border: 1px solid #f0f2f5;
   border-radius: 16px;
+  padding: 16px;
   text-decoration: none;
-  overflow: hidden;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+  transition: all 0.25s ease;
 }
 
 .bento-card:hover {
-  transform: translateY(-5px);
-  border-color: #dcdfe6;
-  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.12);
+  transform: translateY(-3px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.06);
+  border-color: #e5e5ea;
 }
 
-/* 插画区：卡片主体视觉 */
-.bento-art {
-  position: relative;
-  flex: 1;
-  min-height: 0;
-  transition: transform 0.3s ease;
-}
-
-.bento-card:hover .bento-art {
-  transform: scale(1.07);
-}
-
-/* 底部：标题（完整显示，无"进入"与箭头） */
-.bento-body {
-  flex-shrink: 0;
-  min-height: 44px;
-  padding: 4px 8px;
+.bento-icon-wrapper {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: #ffffff;
-  border-top: 1px solid #f2f3f5;
+}
+
+.bento-icon {
+  font-size: 18px;
+}
+
+.bento-info {
+  flex: 1;
+  min-width: 0;
 }
 
 .bento-title {
-  width: 100%;
   font-size: 14px;
-  font-weight: 500;
-  color: #303133;
-  line-height: 1.25;
-  text-align: center;
-  /* 短标题单行、超长标题最多两行，均完整显示 */
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
+  font-weight: 600;
+  color: #1d1d1f;
+  display: block;
 }
+
+.bento-action-icon {
+  color: #c7c7cc;
+  font-size: 16px;
+  transition: transform 0.2s ease, color 0.2s ease;
+}
+
+.bento-card:hover .bento-action-icon {
+  transform: translateX(2px);
+  color: #007AFF;
+}
+
+/* === 颜色变体 (Mac风格马卡龙色系) === */
+.bg-blue { background: #eaf2ff; } .text-blue { color: #007AFF; }
+.bg-cyan { background: #e4f8f9; } .text-cyan { color: #32ADE6; }
+.bg-purple { background: #f2eaff; } .text-purple { color: #AF52DE; }
+.bg-pink { background: #ffeaef; } .text-pink { color: #FF2D55; }
+.bg-orange { background: #ffefe1; } .text-orange { color: #FF9500; }
+.bg-green { background: #e8f8ec; } .text-green { color: #34C759; }
+.bg-yellow { background: #fff8d6; } .text-yellow { color: #FFCC00; }
+.bg-indigo { background: #eaebff; } .text-indigo { color: #5856D6; }
 </style>

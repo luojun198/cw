@@ -326,8 +326,18 @@
                   </el-col>
                   <el-col :span="12">
                     <el-form-item label="每级编码长度">
-                      <el-input v-model="scmForm.item_code_lengths" placeholder="2,2,2,2" style="width:180px" />
-                      <span style="margin-left:8px;font-size:12px;color:#909399">逗号分隔，默认 2,2,2,2</span>
+                      <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 4px;">
+                        <template v-for="(_, index) in Array(scmForm.item_levels || 4)" :key="index">
+                          <span v-if="index > 0" style="color: var(--el-text-color-secondary); font-size: 12px;">-</span>
+                          <el-input-number
+                            v-model="scmForm.item_code_lengths[index]"
+                            :min="1"
+                            :max="10"
+                            :controls="false"
+                            style="width: 52px;"
+                          />
+                        </template>
+                      </div>
                     </el-form-item>
                   </el-col>
                 </el-row>
@@ -434,7 +444,7 @@ interface VoucherType { id: string; code: string; name: string }
 const voucherTypes = ref<VoucherType[]>([])
 const cashierForm = ref({ default_voucher_type_id: '' })
 const assetForm = ref({ depr_voucher_type_id: '', purchase_voucher_type_id: '', depr_start_period: '', inventory_surplus_account: '', inventory_deficit_account: '' })
-const scmForm = ref({ costing_method: '', acc_ap: '', acc_ar: '', acc_revenue: '', acc_cost: '', acc_production: '', acc_other: '', acc_tax_input: '', acc_tax_output: '', item_levels: 4, item_code_lengths: '2,2,2,2' })
+const scmForm = ref({ costing_method: '', acc_ap: '', acc_ar: '', acc_revenue: '', acc_cost: '', acc_production: '', acc_other: '', acc_tax_input: '', acc_tax_output: '', item_levels: 4, item_code_lengths: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2] })
 const SCM_COSTING: Record<string, string> = { moving_avg: '移动加权平均', month_avg: '全月平均', fifo: '先进先出', lifo: '后进先出', specified: '指定成本' }
 const SCM_ACC_KEYS = ['acc_ap','acc_ar','acc_revenue','acc_cost','acc_production','acc_other','acc_tax_input','acc_tax_output'] as const
 
@@ -688,7 +698,8 @@ async function fetchData() {
       } else if (p.param_key === 'scm:item_levels') {
         scmForm.value.item_levels = parseInt(p.param_value) || 4
       } else if (p.param_key === 'scm:item_code_lengths') {
-        scmForm.value.item_code_lengths = p.param_value || '2,2,2,2'
+        const lengths = (p.param_value || '2,2,2,2').split(',').map(n => parseInt(n) || 2)
+        lengths.forEach((len, i) => { if (i < 10) scmForm.value.item_code_lengths[i] = len })
       } else if (p.param_key.startsWith('scm:acc_')) {
         const k = p.param_key.slice('scm:'.length) as keyof typeof scmForm.value
         if (k in scmForm.value) (scmForm.value as any)[k] = p.param_value || ''
@@ -781,7 +792,7 @@ async function handleSaveScm() {
       { param_key: 'scm:costing_method', param_value: scmForm.value.costing_method || '' },
       ...SCM_ACC_KEYS.map(k => ({ param_key: `scm:${k}`, param_value: (scmForm.value as any)[k] || '' })),
       { param_key: 'scm:item_levels', param_value: String(scmForm.value.item_levels || 4) },
-      { param_key: 'scm:item_code_lengths', param_value: scmForm.value.item_code_lengths || '2,2,2,2' },
+      { param_key: 'scm:item_code_lengths', param_value: scmForm.value.item_code_lengths.slice(0, scmForm.value.item_levels || 4).join(',') },
     ]
     await request.put('/scm/params', { params })
     showSuccess('保存成功')

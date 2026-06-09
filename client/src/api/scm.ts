@@ -1,5 +1,15 @@
 import request from './request'
 
+export interface ScmItemFieldDef {
+  id?: string
+  field_key: string
+  field_name: string
+  field_type: 'text' | 'number' | 'date' | 'select'
+  options_json?: string
+  sort_order?: number
+  is_enabled?: number
+}
+
 export interface ScmItem {
   id: string
   code: string
@@ -22,6 +32,8 @@ export interface ScmItem {
   sale_account?: string
   batch_flag?: number
   is_asset?: number
+  is_leaf?: number
+  field_values?: Record<string, any>
   supplier_code?: string
   remark?: string
   enabled?: number
@@ -97,6 +109,9 @@ export const scmApi = {
   getItems: (params?: { keyword?: string; category_code?: string; item_type?: string; page?: number; page_size?: number }) =>
     request.get<{ list: ScmItem[]; total: number; page: number; page_size: number }>('/scm/items', { params }),
   createItem: (data: Partial<ScmItem>) => request.post<{ id: string }>('/scm/items', data),
+  // 物料自定义字段定义
+  getItemFieldDefs: () => request.get<ScmItemFieldDef[]>('/scm/item-fields'),
+  saveItemFieldDefs: (fields: ScmItemFieldDef[]) => request.post('/scm/item-fields', { fields }),
   updateItem: (id: string, data: Partial<ScmItem>) => request.put(`/scm/items/${id}`, data),
   deleteItem: (id: string) => request.delete(`/scm/items/${id}`),
 

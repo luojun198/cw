@@ -34,7 +34,7 @@ const SCM_PARAM_KEYS = [
   'scm:costing_method',
   'scm:acc_ap', 'scm:acc_ar', 'scm:acc_revenue', 'scm:acc_cost',
   'scm:acc_production', 'scm:acc_other', 'scm:acc_tax_input', 'scm:acc_tax_output',
-  'scm:item_levels', 'scm:item_code_lengths',
+  'scm:item_levels', 'scm:item_code_lengths', 'scm:item_types',
 ]
 router.get('/scm/params', (req: AuthRequest, res) => {
   const db = getDb()
@@ -96,6 +96,54 @@ function appendItemUnits(db: ReturnType<typeof getDb>, aid: string, list: any[])
   }
 }
 
+// ── 物料自定义字段定义 ────────────────────────────────────────────────────
+router.get('/scm/item-fields', (req: AuthRequest, res) => {
+  const db = getDb()
+  const rows = db.prepare(
+    'SELECT * FROM scm_item_field_defs WHERE account_set_id=? AND is_enabled=1 ORDER BY sort_order, created_at'
+  ).all(asid(req))
+  res.json({ code: 0, data: rows })
+})
+
+router.post('/scm/item-fields', operationLog('保存物料字段配置', '供应链'), (req: AuthRequest, res) => {
+  const { fields } = req.body
+  if (!Array.isArray(fields)) return res.status(400).json({ code: 400, message: 'fields 必须为数组' })
+  const db = getDb()
+  const aid = asid(req)
+
+  const existing = db.prepare('SELECT id, field_key FROM scm_item_field_defs WHERE account_set_id=?').all(aid) as any[]
+  const existingMap = new Map(existing.map((f: any) => [f.field_key, f.id]))
+  const newKeys = new Set(fields.filter((f: any) => f.field_key).map((f: any) => f.field_key))
+
+  db.transaction(() => {
+    // 禁用不在新列表中的旧字段
+    for (const ef of existing) {
+      if (!newKeys.has(ef.field_key)) {
+        db.prepare("UPDATE scm_item_field_defs SET is_enabled=0, updated_at=datetime('now') WHERE id=?").run(ef.id)
+      }
+    }
+    // Upsert
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i]
+      if (!f.field_key || !f.field_name) continue
+      const optJson = Array.isArray(f.options_json)
+        ? JSON.stringify(f.options_json)
+        : (f.options_json ?? null)
+      if (existingMap.has(f.field_key)) {
+        db.prepare(
+          "UPDATE scm_item_field_defs SET field_name=?, field_type=?, options_json=?, sort_order=?, is_enabled=1, updated_at=datetime('now') WHERE id=?"
+        ).run(f.field_name, f.field_type || 'text', optJson, f.sort_order ?? i, existingMap.get(f.field_key))
+      } else {
+        db.prepare(
+          'INSERT INTO scm_item_field_defs (id, account_set_id, field_key, field_name, field_type, options_json, sort_order, is_enabled) VALUES (?,?,?,?,?,?,?,1)'
+        ).run(uuidv4(), aid, f.field_key, f.field_name, f.field_type || 'text', optJson, f.sort_order ?? i)
+      }
+    }
+  })()
+
+  res.json({ code: 0, message: '保存成功' })
+})
+
 // ── 物料档案 ────────────────────────────────────────────────────────────
 router.get('/scm/items/next-no', (req: AuthRequest, res) => {
   res.json({ code: 0, data: { next_no: nextCode(getDb(), 'scm_item', asid(req), 'WL') } })
@@ -116,10 +164,21 @@ router.get('/scm/items', (req: AuthRequest, res) => {
   // hasChildren 子查询
   const selectCols = `i.*, (SELECT COUNT(*) FROM scm_item c WHERE c.parent_id=i.id AND c.account_set_id=i.account_set_id) > 0 AS hasChildren`
 
+  // field_values 字符串转对象
+  function parseFieldValues(list: any[]) {
+    for (const item of list) {
+      if (typeof item.field_values === 'string') {
+        try { item.field_values = JSON.parse(item.field_values) } catch { item.field_values = {} }
+      }
+      item.field_values = item.field_values || {}
+    }
+  }
+
   // all=1 返回全量（树形模式，不分页）
   if (all === '1') {
     const list = db.prepare(`SELECT ${selectCols} FROM scm_item i WHERE ${where} ORDER BY i.code`).all(...params) as any[]
     appendItemUnits(db, asid(req), list)
+    parseFieldValues(list)
     return res.json({ code: 0, data: { list, total: list.length } })
   }
 
@@ -127,6 +186,7 @@ router.get('/scm/items', (req: AuthRequest, res) => {
   const offset = (parseInt(page) - 1) * parseInt(page_size)
   const list = db.prepare(`SELECT ${selectCols} FROM scm_item i WHERE ${where} ORDER BY i.code LIMIT ? OFFSET ?`).all(...params, parseInt(page_size), offset) as any[]
   appendItemUnits(db, asid(req), list)
+  parseFieldValues(list)
 
   res.json({ code: 0, data: { list, total, page: parseInt(page), page_size: parseInt(page_size) } })
 })
@@ -183,15 +243,17 @@ router.post('/scm/items', operationLog('物料新增', '供应链'), (req: AuthR
   }
 
   const id = uuidv4()
+  const fieldValuesJson = JSON.stringify(b.field_values && typeof b.field_values === 'object' ? b.field_values : {})
   db.prepare(`INSERT INTO scm_item
     (id,account_set_id,code,name,spec,barcode,short_code,unit,category_code,subcategory_code,item_type,
-     purchase_price,sale_price,ref_cost,fixed_cost,inv_account,sale_account,batch_flag,is_asset,supplier_code,remark,enabled,parent_id,level)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+     purchase_price,sale_price,ref_cost,fixed_cost,inv_account,sale_account,batch_flag,is_asset,supplier_code,remark,enabled,parent_id,level,is_leaf,field_values)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     id, aid, b.code, b.name, b.spec ?? null, b.barcode ?? null, b.short_code ?? null, unitName,
     b.category_code ?? null, b.subcategory_code ?? null, b.item_type ?? null,
     Number(b.purchase_price) || 0, Number(b.sale_price) || 0, Number(b.ref_cost) || 0, Number(b.fixed_cost) || 0,
     b.inv_account ?? null, b.sale_account ?? null, b.batch_flag ? 1 : 0, b.is_asset ? 1 : 0,
-    b.supplier_code ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1, parentId, level
+    b.supplier_code ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1, parentId, level,
+    b.is_leaf !== undefined ? (b.is_leaf ? 1 : 0) : 1, fieldValuesJson
   )
   // 同步主/副单位关联
   if (primaryUnitCode) syncItemUnits(db, aid, b.code, primaryUnitCode, b.secondary_units)
@@ -231,12 +293,13 @@ router.put('/scm/items/:id', operationLog('物料修改', '供应链'), (req: Au
     level = 1
   }
 
+  const fieldValuesJson = JSON.stringify(b.field_values && typeof b.field_values === 'object' ? b.field_values : {})
   const fields = `name=?,spec=?,barcode=?,short_code=?,unit=?,category_code=?,subcategory_code=?,item_type=?,
-    purchase_price=?,sale_price=?,ref_cost=?,fixed_cost=?,inv_account=?,sale_account=?,batch_flag=?,is_asset=?,supplier_code=?,remark=?,enabled=?,updated_at=datetime('now')`
+    purchase_price=?,sale_price=?,ref_cost=?,fixed_cost=?,inv_account=?,sale_account=?,batch_flag=?,is_asset=?,supplier_code=?,remark=?,enabled=?,is_leaf=?,field_values=?,updated_at=datetime('now')`
   const vals: any[] = [b.name, b.spec ?? null, b.barcode ?? null, b.short_code ?? null, unitName, b.category_code ?? null, b.subcategory_code ?? null, b.item_type ?? null,
     Number(b.purchase_price) || 0, Number(b.sale_price) || 0, Number(b.ref_cost) || 0, Number(b.fixed_cost) || 0,
     b.inv_account ?? null, b.sale_account ?? null, b.batch_flag ? 1 : 0, b.is_asset ? 1 : 0, b.supplier_code ?? null, b.remark ?? null,
-    b.enabled === 0 ? 0 : 1]
+    b.enabled === 0 ? 0 : 1, b.is_leaf !== undefined ? (b.is_leaf ? 1 : 0) : 1, fieldValuesJson]
 
   if (parentId !== undefined) {
     db.prepare(`UPDATE scm_item SET ${fields}, parent_id=?, level=? WHERE id=?`).run(...vals, parentId, level, req.params.id)
