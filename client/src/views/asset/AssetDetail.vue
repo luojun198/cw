@@ -1,11 +1,6 @@
 <template>
   <div class="page page-asset-detail">
-    <div class="page-header">
-      <el-button @click="$router.back()" text><el-icon><ArrowLeft /></el-icon>返回</el-button>
-      <h3>资产明细账</h3>
-      <el-button type="primary" size="small" @click="$router.push('/asset/list')">资产列表</el-button>
-    </div>
-
+    
     <div v-loading="loading" class="detail-body">
       <template v-if="ledger">
         <!-- 资产基本信息卡片 -->
@@ -125,8 +120,6 @@ onMounted(async () => {
 
 <style scoped>
 .page-asset-detail { display: flex; flex-direction: column; height: 100%; overflow: auto; }
-.page-header { display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0; flex: 1; font-size: 15px; }
 .detail-body { padding: 16px; flex: 1; overflow: auto; }
 .info-card { margin-bottom: 16px; }
 .ledger-section { margin-bottom: 16px; }

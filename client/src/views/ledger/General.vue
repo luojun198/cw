@@ -1,77 +1,6 @@
 <template>
   <div class="page page-ledger">
-    <div class="page-header">
-      <h3>科目余额表</h3>
-      <div class="filter-row">
-        <el-date-picker
-          v-model="filters.start_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="开始日期"
-          class="filter-ctl--md"
-          @change="fetchData"
-        />
-        <el-date-picker
-          v-model="filters.end_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="结束日期"
-          class="filter-ctl--md"
-          @change="fetchData"
-        />
-        <el-input
-          v-model="filters.account_code"
-          placeholder="科目编码"
-          clearable
-          class="filter-ctl--sm"
-          @clear="fetchData"
-          @keyup.enter="fetchData"
-        />
-        <el-select
-          v-model="filters.account_level"
-          placeholder="科目级次"
-          clearable
-          class="filter-ctl--xs"
-          @change="fetchData"
-        >
-          <el-option label="展开到1级" :value="1" />
-          <el-option label="展开到2级" :value="2" />
-          <el-option label="展开到3级" :value="3" />
-          <el-option label="展开到4级" :value="4" />
-        </el-select>
-        <el-divider direction="vertical" />
-        <el-checkbox-group v-model="filters.filter_types" size="small" @change="fetchData">
-          <el-checkbox value="init_balance">有期初</el-checkbox>
-          <el-checkbox value="has_amount">有发生额</el-checkbox>
-          <el-checkbox value="has_balance">有余额</el-checkbox>
-        </el-checkbox-group>
-        <el-divider direction="vertical" />
-        <el-checkbox v-model="filters.include_unposted" @change="fetchData">
-          统计未记账凭证
-        </el-checkbox>
-        <el-divider direction="vertical" />
-        <el-button type="primary" @click="fetchData">
-          <el-icon><Search /></el-icon>
-          查询
-        </el-button>
-
-        <el-divider direction="vertical" />
-
-        <el-button plain @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出 Excel
-        </el-button>
-        <el-button plain @click="printPage">
-          <el-icon><Printer /></el-icon>
-          打印
-        </el-button>
-        <el-button plain @click="hiprintVisible = true">
-          <el-icon><Printer /></el-icon>
-          套打
-        </el-button>
-      </div>
-    </div>
-
+    
     <AccountScopeAlert />
 
     <div class="print-title-row">
@@ -528,13 +457,11 @@ onMounted(() => {
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
-.page-header h3 {
   margin: 0;
 }
 
@@ -564,7 +491,6 @@ onMounted(() => {
   }
 
   /* 隐藏筛选栏、按钮、分页等非打印元素 */
-  .page-header,
   .filter-row,
   .pagination,
   .el-button,

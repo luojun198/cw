@@ -1,72 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-header">
-      <div class="header-left">
-        <el-button link type="primary" size="small" @click="goBack">
-          <el-icon><ArrowLeft /></el-icon>
-          返回期初余额
-        </el-button>
-        <h3 v-if="currentAccount">
-          辅助期初 — {{ currentAccount.code }} {{ currentAccount.name }}
-          <el-tag
-            :type="currentAccount.direction === 'debit' ? 'primary' : 'warning'"
-            size="small"
-            style="margin-left: 8px"
-          >
-            {{ currentAccount.direction === 'debit' ? '借' : '贷' }}
-          </el-tag>
-        </h3>
-        <h3 v-else>辅助期初录入</h3>
-      </div>
-      <div class="header-actions">
-        <el-select v-model="year" style="width: 112px" size="small" :disabled="loading" @change="onYearChange">
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <span v-if="isMidYear" class="mid-year-hint">（年中开账）</span>
-        <el-input
-          v-model="keyword"
-          placeholder="编号 / 名称 / 自定义字段"
-          clearable
-          class="search-input"
-          size="small"
-          :disabled="loading"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <el-checkbox v-model="showZeroValue" size="small" class="zero-filter-checkbox">
-          零值显示
-        </el-checkbox>
-        <el-button size="small" :disabled="loading" @click="refresh(true)">刷新</el-button>
-        <el-button plain size="small" :disabled="loading" @click="downloadTemplate">
-          <el-icon><Download /></el-icon>
-          下载模板
-        </el-button>
-        <el-button
-          plain
-          size="small"
-          :disabled="loading || displayTotal === 0"
-          @click="exportData"
-        >
-          <el-icon><Download /></el-icon>
-          导出
-        </el-button>
-        <el-button size="small" :disabled="locked || loading" @click="openImportDialog">导入</el-button>
-        <el-button
-          type="danger"
-          plain
-          size="small"
-          :disabled="locked || loading"
-          @click="openClearDialog"
-        >
-          批量清理
-        </el-button>
-        <el-button type="primary" size="small" :loading="saving" :disabled="locked" @click="handleSaveAll">
-          保存全部
-        </el-button>
-      </div>
-    </div>
+    
 
     <el-alert v-if="locked" type="warning" show-icon :closable="false" style="margin-bottom: 12px">
       {{ lockReason }}
@@ -1605,7 +1539,6 @@ watch(keyword, () => {
   background: var(--el-fill-color-lighter);
   box-sizing: border-box;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;

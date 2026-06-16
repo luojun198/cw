@@ -1,23 +1,16 @@
 <template>
   <div class="page scm-unit-page">
-    <div class="page-header">
-      <h3>计量单位</h3>
-      <div class="filter-row">
-        <el-button type="success" @click="openAdd"><el-icon><Plus /></el-icon>新增计量单位</el-button>
-        <span class="total-hint">共 {{ list.length }} 条</span>
-      </div>
-    </div>
-    <el-table :data="list" v-loading="loading" border stripe size="small" max-height="560" class="compact-data-table">
-      <el-table-column label="编号" prop="code" width="120" />
-      <el-table-column label="名称" prop="name" min-width="160" />
-      <el-table-column label="状态" width="80" align="center">
+        <el-table ref="tableRef" :data="list" v-loading="loading" border stripe size="small" max-height="560" class="compact-data-table" @header-dragend="onDragEnd">
+      <el-table-column label="编号" prop="code" :width="cw('code', 120)" />
+      <el-table-column label="名称" prop="name" min-width="160" :width="widths.name" />
+      <el-table-column label="状态" column-key="status" :width="cw('status', 80)" align="center">
         <template #default="{ row }">
           <el-tag :type="row.enabled ? 'success' : 'info'" size="small">
             {{ row.enabled ? '启用' : '停用' }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="备注" prop="remark" min-width="160" show-overflow-tooltip />
+      <el-table-column label="备注" prop="remark" min-width="160" :width="widths.remark" show-overflow-tooltip />
       <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button>
@@ -57,6 +50,10 @@ import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { scmApi, type ScmUnit } from '@/api/scm'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, colWidth, onDragEnd, widths } = useListColumnWidth('scm_unit')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 const list = ref<ScmUnit[]>([])
 const loading = ref(false)
@@ -121,7 +118,5 @@ onMounted(load)
 
 <style scoped>
 .scm-unit-page { padding: 12px 16px; }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-.total-hint { font-size: 13px; color: var(--el-text-color-secondary); margin-left: auto; }
 </style>

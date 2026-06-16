@@ -445,21 +445,4 @@ a {
   scrollbar-width: thin;
 }
 
-/* 按钮增强 - 中国红主题 */
-.el-button--primary {
-  background: linear-gradient(135deg, var(--cw-red-primary) 0%, var(--cw-red-dark) 100%);
-  border: none;
-  box-shadow: var(--cw-shadow-red);
-  transition: all 0.3s cubic-bezier(0.25, 0.1, 0.25, 1);
-}
-
-.el-button--primary:hover {
-  background: linear-gradient(135deg, var(--cw-red-light) 0%, var(--cw-red-primary) 100%);
-  box-shadow: 0 6px 20px rgba(18, 199, 174, 0.25);
-  transform: translateY(-1px);
-}
-
-.el-button--primary:active {
-  transform: translateY(0);
-  box-shadow: var(--cw-shadow-red);
-}
+/* 按钮样式已由 apple-element-override.css 统一接管 */

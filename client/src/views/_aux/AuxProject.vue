@@ -1,19 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-header">
-      <h3>项目核算</h3>
-      <div>
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索编码、名称..."
-          clearable
-          style="width: 200px; margin-right: 12px"
-          prefix-icon="Search"
-        />
-        <el-button type="primary" @click="openDialog('add')">新增项目</el-button>
-      </div>
-    </div>
-    <el-table
+        <el-table
       ref="tableRef"
       :data="filteredData"
       stripe
@@ -138,13 +125,11 @@ onMounted(fetchData)
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
-.page-header h3 {
   margin: 0;
 }
 </style>

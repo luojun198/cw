@@ -1,5 +1,5 @@
 <template>
-  <div class="dashboard apple-dashboard">
+  <div class="dashboard mint-dashboard">
     <!-- 登录安全提示卡片 -->
     <transition name="security-notice">
       <div v-if="loginSecurityNotice.visible" class="security-notice">
@@ -24,11 +24,13 @@
       </div>
     </transition>
 
-    <!-- Hero 区域 - 苹果风格毛玻璃效果 -->
+    <!-- Hero 区域 - 薄荷泡泡渐变横幅 -->
     <section class="hero-section">
       <div class="hero-bg">
         <div class="hero-gradient"></div>
-        <div class="hero-pattern"></div>
+        <div class="hero-bubble hero-bubble--1"></div>
+        <div class="hero-bubble hero-bubble--2"></div>
+        <div class="hero-bubble hero-bubble--3"></div>
       </div>
       <div class="hero-content">
         <div class="hero-header">
@@ -61,7 +63,7 @@
         </div>
         <div v-if="visibleHeroShortcuts.length" class="hero-shortcuts">
           <button v-for="item in visibleHeroShortcuts" :key="item.label" class="shortcut-card" @click="router.push(item.path)">
-            <div class="shortcut-icon" :style="{ background: item.bg }">
+            <div class="shortcut-icon" :style="{ background: item.bg, color: item.color }">
               <el-icon><component :is="item.icon" /></el-icon>
             </div>
             <div class="shortcut-content">
@@ -76,7 +78,7 @@
       </div>
     </section>
 
-    <!-- 统计指标卡片 - 苹果风格 -->
+    <!-- 统计指标卡片 -->
     <section v-if="visibleStatCards.length" class="metrics-section">
       <div class="metrics-grid">
         <button v-for="card in visibleStatCards" :key="card.label" class="metric-card" @click="goMetric(card.path)">
@@ -93,7 +95,7 @@
       </div>
     </section>
 
-    <!-- 主内容区域 -->
+    <!-- 主内容：趋势图 + 右侧栏（风险 / 活跃度） -->
     <section class="content-section">
       <!-- 趋势分析 -->
       <div class="content-panel panel-trend">
@@ -128,30 +130,77 @@
         <div ref="trendChartRef" class="chart-container"></div>
       </div>
 
-      <!-- 待办风险 -->
-      <div class="content-panel panel-todo">
-        <div class="panel-header">
-          <div class="panel-title">
-            <div class="panel-icon todo-icon" :class="{ 'has-warning': riskSummaryCount > 0 }">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+      <!-- 右侧栏 -->
+      <div class="side-column">
+        <!-- 待办风险 -->
+        <div class="content-panel panel-todo">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-icon todo-icon" :class="{ 'has-warning': riskSummaryCount > 0 }">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                </svg>
+              </div>
+              <div><span class="panel-eyebrow">待办风险</span><h3>处理提醒</h3></div>
+            </div>
+            <span class="risk-badge" :class="riskSummaryType">{{ riskSummaryText }}</span>
+          </div>
+          <div class="risk-list">
+            <component
+              v-for="item in insights.riskItems"
+              :key="item.key"
+              :is="isAccessiblePath(item.actionPath) ? 'button' : 'div'"
+              class="risk-item"
+              :class="[`risk-${item.level}`, { 'risk-clickable': isAccessiblePath(item.actionPath) }]"
+              @click="goRisk(item)"
+            >
+              <span class="risk-status"></span>
+              <span class="risk-name">{{ item.title }}</span>
+              <span class="risk-count">{{ item.count }}</span>
+            </component>
+            <div v-if="!insights.riskItems.length" class="empty-state">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                 <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
               </svg>
+              <span>暂无待办提醒</span>
             </div>
-            <div><span class="panel-eyebrow">待办风险</span><h3>处理提醒</h3></div>
           </div>
-          <span class="risk-badge" :class="riskSummaryType">{{ riskSummaryText }}</span>
         </div>
-        <div class="risk-list">
-          <div v-for="item in insights.riskItems" :key="item.key" class="risk-item" :class="`risk-${item.level}`">
-            <span class="risk-status"></span>
-            <span class="risk-name">{{ item.title }}</span>
-            <span class="risk-count">{{ item.count }}</span>
+
+        <!-- 科目活跃度 -->
+        <div class="content-panel panel-activity">
+          <div class="panel-header">
+            <div class="panel-title">
+              <div class="panel-icon activity-icon">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
+                </svg>
+              </div>
+              <div><span class="panel-eyebrow">科目活跃度</span><h3>本期发生额 Top 5</h3></div>
+            </div>
+          </div>
+          <div class="activity-list">
+            <div v-for="item in activityTopWithRatio" :key="item.code" class="activity-item">
+              <div class="activity-header">
+                <span class="activity-name">{{ item.code }} {{ item.name }}</span>
+                <span class="activity-amount">{{ formatMoney(item.amount) }}</span>
+              </div>
+              <div class="activity-bar">
+                <span class="activity-bar-fill" :style="{ width: `${item.ratio}%` }"></span>
+              </div>
+            </div>
+            <div v-if="!activityTopWithRatio.length" class="empty-state">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
+              </svg>
+              <span>暂无本期发生额数据</span>
+            </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- 底部三栏 -->
+    <!-- 底部两栏：近期凭证 + 现金银行结构 -->
     <section class="bottom-section">
       <!-- 近期凭证 -->
       <div class="content-panel panel-recent">
@@ -246,37 +295,6 @@
           </div>
         </div>
       </div>
-
-      <!-- 科目活跃度 -->
-      <div class="content-panel panel-activity">
-        <div class="panel-header">
-          <div class="panel-title">
-            <div class="panel-icon activity-icon">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
-              </svg>
-            </div>
-            <div><span class="panel-eyebrow">科目活跃度</span><h3>本期发生额 Top 5</h3></div>
-          </div>
-        </div>
-        <div class="activity-list">
-          <div v-for="item in activityTopWithRatio" :key="item.code" class="activity-item">
-            <div class="activity-header">
-              <span class="activity-name">{{ item.code }} {{ item.name }}</span>
-              <span class="activity-amount">{{ formatMoney(item.amount) }}</span>
-            </div>
-            <div class="activity-bar">
-              <span class="activity-bar-fill" :style="{ width: `${item.ratio}%` }"></span>
-            </div>
-          </div>
-          <div v-if="!activityTopWithRatio.length" class="empty-state">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-              <path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>
-            </svg>
-            <span>暂无本期发生额数据</span>
-          </div>
-        </div>
-      </div>
     </section>
 
     <!-- 底部装饰 -->
@@ -343,8 +361,8 @@ const recentVouchers = ref<any[]>([])
 const trend = ref<TrendItem[]>([])
 const insights = ref({ riskItems: [] as RiskItem[], cashStructure: [] as CashStructureItem[], activityTop: [] as ActivityTopItem[] })
 const loginSecurityNotice = ref({ visible: false, time: '', ip: '' })
-let loginSecurityNoticeTimer: ReturnType<typeof window.setTimeout> | null = null
-let clockTimer: ReturnType<typeof window.setInterval> | null = null
+let loginSecurityNoticeTimer: number | null = null
+let clockTimer: number | null = null
 
 const trendChartRef = ref<HTMLElement>()
 const cashPieRefs = new Map<string, HTMLElement>()
@@ -382,24 +400,26 @@ function isAccessiblePath(path?: string) {
   return canAccessRoute(path.split('?')[0], userStore.permissions)
 }
 
+/* 快捷入口配色 — 财务洗头膏设计令牌（薄荷 / 泡沫蓝 / 虹彩淡紫 / 暖橙） */
 const heroShortcutsBase = [
-  { label: '凭证录入', desc: '新增凭证', path: '/voucher/entry?action=add', icon: EditPen, color: '#007AFF', bg: 'rgba(0, 122, 255, 0.15)' },
-  { label: '凭证管理', desc: '审核与记账', path: '/voucher/audit', icon: CircleCheck, color: '#34C759', bg: 'rgba(52, 199, 89, 0.15)' },
-  { label: '余额表', desc: '打开科目余额表', path: '/ledger/general', icon: DataAnalysis, color: '#FF9500', bg: 'rgba(255, 149, 0, 0.15)' },
-  { label: '日记账', desc: '现金银行流水', path: '/ledger/cash-journal', icon: List, color: '#5856D6', bg: 'rgba(88, 86, 214, 0.15)' },
+  { label: '凭证录入', desc: '新增凭证', path: '/voucher/entry?action=add', icon: EditPen, color: '#0A8576', bg: 'rgba(159, 237, 223, 0.9)' },
+  { label: '凭证管理', desc: '审核与记账', path: '/voucher/audit', icon: CircleCheck, color: '#1A54A8', bg: 'rgba(169, 208, 255, 0.9)' },
+  { label: '余额表', desc: '打开科目余额表', path: '/ledger/general', icon: DataAnalysis, color: '#6F5FD8', bg: 'rgba(212, 204, 255, 0.9)' },
+  { label: '日记账', desc: '现金银行流水', path: '/ledger/cash-journal', icon: List, color: '#9A6311', bg: 'rgba(252, 239, 215, 0.95)' },
 ]
 
 const visibleHeroShortcuts = computed(() =>
   heroShortcutsBase.filter(item => isAccessiblePath(item.path))
 )
 
+/* 指标卡配色 — 语义化令牌 */
 const statCards = computed(() => [
-  { label: '本月凭证', value: stats.value.voucherCount, hint: `${currentYear.value} 年第 ${currentPeriod.value} 期`, color: '#007AFF', bg: 'rgba(0, 122, 255, 0.12)', icon: Tickets, path: '/voucher/query' },
-  { label: '未记账凭证', value: stats.value.unpostedVoucherCount, hint: '草稿 + 已审核', color: '#FF3B30', bg: 'rgba(255, 59, 48, 0.12)', icon: Document, path: '/voucher/audit', badge: stats.value.unpostedVoucherCount > 0 ? `${stats.value.unpostedVoucherCount}` : undefined },
-  { label: '货币资金', value: formatMoney(stats.value.cashBalance), hint: '现金与银行余额', color: '#34C759', bg: 'rgba(52, 199, 89, 0.12)', icon: Wallet, path: '/ledger/cash-journal' },
-  { label: '本月收入', value: formatMoney(stats.value.monthlyIncome), hint: '收入类发生额', color: '#5856D6', bg: 'rgba(88, 86, 214, 0.12)', icon: Money, path: '/ledger/detail' },
-  { label: '本月支出', value: formatMoney(stats.value.monthlyExpense), hint: '支出费用发生额', color: '#FF9500', bg: 'rgba(255, 149, 0, 0.12)', icon: DataAnalysis, path: '/ledger/detail' },
-  { label: '本月结余', value: formatMoney(stats.value.monthlySurplus), hint: stats.value.monthlySurplus >= 0 ? '收支结余为正' : '支出大于收入', color: stats.value.monthlySurplus >= 0 ? '#34C759' : '#FF3B30', bg: stats.value.monthlySurplus >= 0 ? 'rgba(52, 199, 89, 0.12)' : 'rgba(255, 59, 48, 0.12)', icon: CircleCheck, path: '/report/run/2' },
+  { label: '本月凭证', value: stats.value.voucherCount, hint: `${currentYear.value} 年第 ${currentPeriod.value} 期`, color: '#0AA694', bg: 'rgba(18, 199, 174, 0.14)', icon: Tickets, path: '/voucher/query' },
+  { label: '未记账凭证', value: stats.value.unpostedVoucherCount, hint: '草稿 + 已审核', color: '#F2545B', bg: 'rgba(242, 84, 91, 0.12)', icon: Document, path: '/voucher/audit', badge: stats.value.unpostedVoucherCount > 0 ? `${stats.value.unpostedVoucherCount}` : undefined },
+  { label: '货币资金', value: formatMoney(stats.value.cashBalance), hint: '现金与银行余额', color: '#2E84F5', bg: 'rgba(46, 132, 245, 0.12)', icon: Wallet, path: '/ledger/cash-journal' },
+  { label: '本月收入', value: formatMoney(stats.value.monthlyIncome), hint: '收入类发生额', color: '#0FB57E', bg: 'rgba(15, 181, 126, 0.12)', icon: Money, path: '/ledger/detail' },
+  { label: '本月支出', value: formatMoney(stats.value.monthlyExpense), hint: '支出费用发生额', color: '#F4A52E', bg: 'rgba(244, 165, 46, 0.14)', icon: DataAnalysis, path: '/ledger/detail' },
+  { label: '本月结余', value: formatMoney(stats.value.monthlySurplus), hint: stats.value.monthlySurplus >= 0 ? '收支结余为正' : '支出大于收入', color: stats.value.monthlySurplus >= 0 ? '#0AA694' : '#F2545B', bg: stats.value.monthlySurplus >= 0 ? 'rgba(18, 199, 174, 0.14)' : 'rgba(242, 84, 91, 0.12)', icon: CircleCheck, path: '/report/run/2' },
 ])
 
 const visibleStatCards = computed(() =>
@@ -408,7 +428,8 @@ const visibleStatCards = computed(() =>
 
 const cashStructure = computed(() => insights.value.cashStructure)
 const cashStructureWithRatio = computed<CashStructureDisplayItem[]>(() => {
-  const palettes = [['#007AFF', '#5856D6', '#34C759', '#FF9500', '#FF3B30', '#AF52DE'], ['#5856D6', '#007AFF', '#34C759', '#FF9500', '#FF3B30', '#AF52DE']]
+  /* 饼图色板 — 薄荷 / 泡沫蓝 / 虹彩淡紫为主，语义色补充 */
+  const palettes = [['#12C7AE', '#2E84F5', '#9C8FF5', '#F4A52E', '#F2545B', '#66E0CB'], ['#2E84F5', '#12C7AE', '#B8AEFF', '#F4A52E', '#F2545B', '#79B4FF']]
   return cashStructure.value.map((group, gi) => {
     const palette = palettes[gi % palettes.length]
     const totalAbs = group.children.reduce((s, c) => s + Math.abs(c.balance || 0), 0)
@@ -426,9 +447,10 @@ const riskSummaryType = computed(() => riskSummaryCount.value > 0 ? 'warning' : 
 const riskSummaryText = computed(() => riskSummaryCount.value > 0 ? `${riskSummaryCount.value} 项需关注` : '运行平稳')
 
 function goMetric(path?: string) { if (path) router.push(path) }
+function goRisk(item: RiskItem) { if (isAccessiblePath(item.actionPath)) router.push(item.actionPath) }
 function formatMoney(val: number) { return '¥' + formatAmount(val || 0) }
 function formatSignedPercent(v: number) { if (!v) return '0%'; const a = `${Math.round(Math.abs(v) * 1000) / 10}%`; return v < 0 ? `-${a}` : a }
-function setCashPieRef(el: Element | null, name: string) { if (el instanceof HTMLElement) cashPieRefs.set(name, el); else cashPieRefs.delete(name) }
+function setCashPieRef(el: unknown, name: string) { if (el instanceof HTMLElement) cashPieRefs.set(name, el); else cashPieRefs.delete(name) }
 function formatShortDate(d?: string) { return d ? d.slice(5) : '--' }
 function getStatusText(s: string) { return ({ draft: '草稿', audited: '已审核', posted: '已记账' } as any)[s] || s }
 
@@ -457,15 +479,16 @@ function renderTrendChart() {
   if (!trendChartRef.value) return
   if (!trendChart) trendChart = echarts.init(trendChartRef.value)
   trendChart.setOption({
-    color: ['#34C759', '#FF9500', '#FF3B30', '#5856D6', '#007AFF'],
+    /* 收入薄荷 / 支出暖橙 / 费用珊瑚 / 成本淡紫 / 结余泡沫蓝 */
+    color: ['#12C7AE', '#F4A52E', '#F2545B', '#9C8FF5', '#2E84F5'],
     tooltip: {
       trigger: 'axis',
-      backgroundColor: 'rgba(255,255,255,0.95)',
-      borderColor: 'rgba(0,0,0,0.1)',
+      backgroundColor: 'rgba(255,255,255,0.96)',
+      borderColor: 'rgba(12,42,46,0.08)',
       borderWidth: 1,
       borderRadius: 12,
       padding: [12, 16],
-      textStyle: { color: '#1d1d1f', fontSize: 13 },
+      textStyle: { color: '#0C2A2E', fontSize: 13 },
       formatter: (params: any) => {
         const items = Array.isArray(params) ? params : [params]
         const lines = items.map((item: any) => `${item.marker}${item.seriesName}：${formatMoney(item.value)}`)
@@ -485,18 +508,18 @@ function renderTrendChart() {
     xAxis: {
       type: 'category',
       data: trend.value.map(i => i.month.slice(5) + '期'),
-      axisLine: { lineStyle: { color: 'rgba(0,0,0,0.08)' } },
-      axisLabel: { color: '#86868b', fontSize: 12 },
+      axisLine: { lineStyle: { color: 'rgba(12,42,46,0.10)' } },
+      axisLabel: { color: '#62858A', fontSize: 12 },
       axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
       axisLabel: {
-        color: '#86868b',
+        color: '#62858A',
         fontSize: 12,
         formatter: (v: number) => `${Math.round(v / 10000)}万`,
       },
-      splitLine: { lineStyle: { color: 'rgba(0,0,0,0.06)', type: 'dashed' } },
+      splitLine: { lineStyle: { color: 'rgba(12,42,46,0.06)', type: 'dashed' } },
       axisTick: { show: false },
       axisLine: { show: false },
     },
@@ -538,8 +561,8 @@ function renderTrendChart() {
         lineStyle: { width: 3, type: 'dashed' },
         areaStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: 'rgba(0,122,255,0.12)' },
-            { offset: 1, color: 'rgba(0,122,255,0)' },
+            { offset: 0, color: 'rgba(46,132,245,0.12)' },
+            { offset: 1, color: 'rgba(46,132,245,0)' },
           ]),
         },
       },
@@ -556,9 +579,9 @@ function renderCashPieCharts() {
     const data = group.children.filter(c => Math.abs(c.balance) > 0).map(c => ({ name: `${c.code} ${c.name}`, value: Math.abs(c.balance), rawBalance: c.balance, signedRatio: c.ratio, itemStyle: { color: c.color } }))
     chart.setOption({
       color: group.palette,
-      tooltip: { trigger: 'item', backgroundColor: 'rgba(255,255,255,0.95)', borderColor: 'rgba(0,0,0,0.1)', borderWidth: 1, borderRadius: 12, padding: [10, 14], textStyle: { color: '#1d1d1f', fontSize: 12 }, formatter: (p: any) => `${p.name}<br/>${formatMoney(p.data?.rawBalance || 0)} · ${formatSignedPercent(p.data?.signedRatio || 0)}` },
-      title: { text: group.name, subtext: formatMoney(group.balance), left: 'center', top: 'center', textStyle: { color: '#1d1d1f', fontSize: 13, fontWeight: 600 }, subtextStyle: { color: '#86868b', fontSize: 11, fontWeight: 500 }, itemGap: 4 },
-      series: [{ type: 'pie', radius: ['60%', '80%'], center: ['50%', '50%'], minAngle: 6, avoidLabelOverlap: true, label: { show: false }, itemStyle: { borderColor: '#fff', borderWidth: 3, borderRadius: 8 }, emphasis: { scaleSize: 6, itemStyle: { shadowBlur: 20, shadowColor: 'rgba(0,0,0,0.15)' } }, data: data.length ? data : [{ name: '暂无数据', value: 1, itemStyle: { color: '#f5f5f7' } }] }],
+      tooltip: { trigger: 'item', backgroundColor: 'rgba(255,255,255,0.96)', borderColor: 'rgba(12,42,46,0.08)', borderWidth: 1, borderRadius: 12, padding: [10, 14], textStyle: { color: '#0C2A2E', fontSize: 12 }, formatter: (p: any) => `${p.name}<br/>${formatMoney(p.data?.rawBalance || 0)} · ${formatSignedPercent(p.data?.signedRatio || 0)}` },
+      title: { text: group.name, subtext: formatMoney(group.balance), left: 'center', top: 'center', textStyle: { color: '#0C2A2E', fontSize: 13, fontWeight: 600 }, subtextStyle: { color: '#62858A', fontSize: 11, fontWeight: 500 }, itemGap: 4 },
+      series: [{ type: 'pie', radius: ['60%', '80%'], center: ['50%', '50%'], minAngle: 6, avoidLabelOverlap: true, label: { show: false }, itemStyle: { borderColor: '#fff', borderWidth: 3, borderRadius: 8 }, emphasis: { scaleSize: 6, itemStyle: { shadowBlur: 20, shadowColor: 'rgba(12,42,46,0.18)' } }, data: data.length ? data : [{ name: '暂无数据', value: 1, itemStyle: { color: '#ECF6F4' } }] }],
     })
   })
 }

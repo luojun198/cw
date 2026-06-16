@@ -1,26 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-header">
-      <h3>快捷键维护</h3>
-      <div class="page-header-actions">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索模块、快捷键、功能..."
-          clearable
-          style="width: 280px"
-          @input="handleSearch"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <el-button type="warning" @click="handleReset">
-          <el-icon><RefreshLeft /></el-icon>
-          重置为默认
-        </el-button>
-      </div>
-    </div>
-
+    
     <el-table
       ref="tableRef"
       :data="filteredShortcuts"
@@ -405,20 +385,17 @@ onMounted(() => {
   padding: 16px;
 }
 
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
 
-.page-header h3 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
 }
 
-.page-header-actions {
   display: flex;
   gap: 12px;
   align-items: center;

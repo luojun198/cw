@@ -1,0 +1,229 @@
+<template>
+  <div class="page bom-form-page">
+    <!-- 顶部工具栏 -->
+    <div class="bom-form-header">
+      <div class="bom-form-header__left">
+        <el-button link size="small" @click="goBack"><el-icon><ArrowLeft /></el-icon>返回</el-button>
+        <span class="bom-form-header__sep">/</span>
+        <span class="bom-form-header__title">{{ pageTitle }}</span>
+      </div>
+      <div class="bom-form-header__right">
+        <el-button size="small" @click="goBack">取消</el-button>
+        <el-button type="primary" size="small" :loading="saving" @click="handleSave">保存</el-button>
+      </div>
+    </div>
+
+    <!-- 表单主体 -->
+    <div class="bom-form-body">
+      <el-form :model="form" label-width="80px" size="small">
+        <el-row :gutter="16">
+          <el-col :span="6">
+            <el-form-item label="BOM编码" required>
+              <el-input v-model="form.code" :disabled="!!editId" placeholder="BOM唯一编码" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="6">
+            <el-form-item label="BOM名称">
+              <el-input v-model="form.name" placeholder="选填名称" />
+            </el-form-item>
+          </el-col>
+          <el-col :span="6">
+            <el-form-item label="成品物料" required>
+              <ItemPicker v-model="form.item_code" placeholder="选择成品物料" @pick="(item:any) => { if(!form.name) form.name = item.name + ' BOM' }" />
+            </el-form-item>
+          </el-col>
+        </el-row>
+      </el-form>
+
+      <div class="bom-lines-toolbar">
+        <el-button size="small" type="primary" plain @click="addLine"><el-icon><Plus /></el-icon>添加组件物料</el-button>
+        <span class="bom-lines-summary">
+          共 {{ form.lines.length }} 个组件
+        </span>
+      </div>
+
+      <!-- 组件明细表格 -->
+      <el-table :data="form.lines" border size="small" :height="tableHeight" style="width:100%" @cell-click="handleCellClick" class="compact-data-table">
+        <el-table-column label="#" width="44" align="center">
+          <template #default="{ $index }">{{ $index + 1 }}</template>
+        </el-table-column>
+        <el-table-column label="组件物料" min-width="150" prop="item_code">
+          <template #default="{ row, $index }">
+            <ItemPicker v-if="isEditing($index, 'item_code')" v-model="row.item_code" auto-open @pick="(item:any) => { row.item_code = item.code; row.item_name = item.name; row.unit = item.unit; stopEdit() }" v-focus />
+            <div v-else class="editable-cell">{{ row.item_code }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="物料名称" min-width="180" prop="item_name">
+          <template #default="{ row }">
+            <div class="static-cell">{{ row.item_name }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="用量" width="120" align="right" prop="qty">
+          <template #default="{ row, $index }">
+            <el-input-number v-if="isEditing($index, 'qty')" v-model="row.qty" :min="0" :precision="4" size="small" :controls="false" style="width:100%" @blur="stopEdit" v-focus />
+            <div v-else class="editable-cell">{{ row.qty }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="单位" width="100" prop="unit">
+          <template #default="{ row, $index }">
+            <el-input v-if="isEditing($index, 'unit')" v-model="row.unit" size="small" @blur="stopEdit" v-focus />
+            <div v-else class="editable-cell">{{ row.unit }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="损耗率%" width="100" align="right" prop="scrap_rate">
+          <template #default="{ row, $index }">
+            <el-input-number v-if="isEditing($index, 'scrap_rate')" v-model="row.scrap_rate" :min="0" :max="100" :precision="2" size="small" :controls="false" style="width:100%" @blur="stopEdit" v-focus />
+            <div v-else class="editable-cell">{{ row.scrap_rate }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="备注" min-width="150" prop="remark">
+          <template #default="{ row, $index }">
+            <el-input v-if="isEditing($index, 'remark')" v-model="row.remark" size="small" @blur="stopEdit" v-focus />
+            <div v-else class="editable-cell">{{ row.remark }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="50" align="center">
+          <template #default="{ $index }">
+            <el-button link type="danger" size="small" @click="form.lines.splice($index, 1)">删</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
+import { ArrowLeft, Plus } from '@element-plus/icons-vue'
+import { scmApi } from '@/api/scm'
+import ItemPicker from '@/components/scm/ItemPicker.vue'
+
+const route = useRoute()
+const router = useRouter()
+
+const isNew = computed(() => route.name === 'ScmBomNew')
+const editId = computed(() => isNew.value ? null : (route.params.id as string))
+const pageTitle = computed(() => isNew.value ? '新增BOM' : '编辑BOM')
+const tableHeight = computed(() => 'calc(100vh - 220px)')
+
+const form = ref<Record<string, any>>({
+  code: '', name: '', item_code: '', lines: []
+})
+const saving = ref(false)
+
+const editingCell = ref<{rowIndex: number, field: string} | null>(null)
+const vFocus = {
+  mounted: (el: HTMLElement) => {
+    const input = (el.tagName === 'INPUT' ? el : el.querySelector('input')) as HTMLInputElement | null
+    if (input) {
+      input.focus()
+      input.select()
+    }
+  }
+}
+
+function isEditing(rowIndex: number, field: string) {
+  return editingCell.value?.rowIndex === rowIndex && editingCell.value?.field === field
+}
+
+function handleCellClick(row: any, column: any) {
+  const rowIndex = form.value.lines.indexOf(row)
+  const field = column.property
+  if (['item_code', 'qty', 'unit', 'scrap_rate', 'remark'].includes(field)) {
+    editingCell.value = { rowIndex, field }
+  }
+}
+
+function stopEdit() {
+  editingCell.value = null
+}
+
+onMounted(async () => {
+  if (editId.value) {
+    const r = await scmApi.getBom(editId.value)
+    if (r.code === 0) {
+      const d = r.data as any
+      form.value = {
+        code: d.code,
+        name: d.name,
+        item_code: d.item_code,
+        lines: d.lines || []
+      }
+    }
+  } else {
+    form.value.lines = [{ item_code: '', qty: 1, unit: '', scrap_rate: 0, remark: '' }]
+    try {
+      const r = await scmApi.getBomNextNo()
+      if (r.code === 0) form.value.code = r.data.next_no
+    } catch { }
+  }
+})
+
+function addLine() {
+  form.value.lines.push({ item_code: '', qty: 1, unit: '', scrap_rate: 0, remark: '' })
+}
+
+async function handleSave() {
+  if (!form.value.code || !form.value.item_code) return ElMessage.warning('编码和成品物料不能为空')
+  const cleanLines = form.value.lines.filter((l: any) => l.item_code && Number(l.qty) > 0)
+  if (!cleanLines.length) return ElMessage.warning('请添加至少一行有效组件物料')
+  
+  saving.value = true
+  try {
+    const payload = { ...form.value, lines: cleanLines }
+    if (editId.value) {
+      await scmApi.updateBom(editId.value, payload)
+    } else {
+      await scmApi.createBom(payload)
+    }
+    ElMessage.success('保存成功')
+    goBack()
+  } finally {
+    saving.value = false
+  }
+}
+
+function goBack() {
+  router.push('/scm/boms')
+}
+</script>
+
+<style scoped>
+.bom-form-page { display: flex; flex-direction: column; height: 100%; padding: 0; }
+.bom-form-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 10px 16px; border-bottom: 1px solid var(--el-border-color-light);
+  background: var(--el-bg-color); flex-shrink: 0;
+}
+.bom-form-header__left { display: flex; align-items: center; gap: 6px; font-size: 14px; }
+.bom-form-header__sep { color: var(--el-text-color-placeholder); }
+.bom-form-header__title { font-weight: 600; color: var(--el-text-color-primary); }
+.bom-form-header__right { display: flex; gap: 8px; }
+.bom-form-body { flex: 1; overflow: auto; padding: 14px 16px; }
+.bom-lines-toolbar {
+  display: flex; align-items: center; gap: 8px; margin: 10px 0 8px;
+}
+.bom-lines-summary { margin-left: auto; font-size: 13px; color: var(--el-text-color-secondary); }
+
+.compact-data-table :deep(.el-table__cell) {
+  padding: 0;
+}
+.compact-data-table :deep(.cell) {
+  padding: 0 4px;
+  line-height: 28px;
+}
+.editable-cell {
+  min-height: 28px;
+  cursor: pointer;
+  width: 100%;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.editable-cell:hover {
+  background-color: var(--el-fill-color-light);
+}
+</style>

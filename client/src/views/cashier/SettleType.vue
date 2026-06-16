@@ -1,8 +1,6 @@
 <template>
   <div class="page page-settle-type">
-    <div class="page-header">
-      <h3>结算方式维护</h3>
-    </div>
+    
 
     <div class="page-body">
       <div class="toolbar">
@@ -180,7 +178,5 @@ async function handleSave() {
 
 <style scoped>
 .page { padding: 16px; display: flex; flex-direction: column; height: 100%; box-sizing: border-box; }
-.page-header { margin-bottom: 16px; border-bottom: 1px solid var(--el-border-color-light); padding-bottom: 8px; }
-.page-header h3 { margin: 0; font-size: 16px; }
 .toolbar { margin-bottom: 12px; }
 </style>

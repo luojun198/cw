@@ -1,48 +1,12 @@
 <template>
   <div class="page page-cashier-initbal">
-    <div class="page-header">
-      <h3>出纳期初余额</h3>
-      <div class="filter-row">
-        <span class="label">期初日期：</span>
-        <el-date-picker
-          v-model="initDate"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="请选择期初日期"
-          style="width:150px"
-          :disabled="locked"
-          @change="markDateDirty"
-        />
-        <el-button type="primary" @click="handleSaveAll" :loading="saving" :disabled="locked">
-          <el-icon><Check /></el-icon>保存
-        </el-button>
-        <el-button plain @click="handleExport">
-          <el-icon><Download /></el-icon>导出
-        </el-button>
-        <el-button plain @click="handleDownloadTemplate">
-          <el-icon><Document /></el-icon>下载模版
-        </el-button>
-        <el-upload
-          :auto-upload="false"
-          :show-file-list="false"
-          accept=".xlsx,.xls"
-          :on-change="handleImport"
-          :disabled="locked"
-        >
-          <el-button plain :disabled="locked">
-            <el-icon><Upload /></el-icon>导入
-          </el-button>
-        </el-upload>
-        <el-tag v-if="locked" type="warning" size="small">已有对账单据，不可修改</el-tag>
-      </div>
-    </div>
-
+    
     <div ref="tableContainerRef" class="table-container">
-      <el-table ref="tableRef" :data="rows" :height="tableHeight" border size="small">
-        <el-table-column label="科目编码" prop="account_code" width="120" />
-        <el-table-column label="科目名称" prop="account_name" min-width="160" />
-        <el-table-column label="币别" prop="currency" width="80" />
-        <el-table-column label="期初余额" width="160" align="right">
+      <el-table ref="tableRef" :data="rows" :height="tableHeight" border size="small" @header-dragend="onDragEnd">
+        <el-table-column label="科目编码" prop="account_code" :width="cw('account_code', 120)" />
+        <el-table-column label="科目名称" prop="account_name" min-width="160" :width="widths.account_name" />
+        <el-table-column label="币别" prop="currency" :width="cw('currency', 80)" />
+        <el-table-column label="期初余额" column-key="balance" :width="cw('balance', 160)" align="right">
           <template #default="{ row }">
             <el-input-number
               v-model="row.balance"
@@ -67,8 +31,12 @@ import { Check, Download, Upload, Document } from '@element-plus/icons-vue'
 import * as XLSX from 'xlsx'
 import { cashierApi } from '@/api/cashier'
 import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
 
 const { tableRef, containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+const { colWidth, onDragEnd, widths, bindTable } = useColumnWidthMemory('cashier_init_balance')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
+bindTable(tableRef)
 
 interface Row {
   account_code: string
@@ -196,8 +164,6 @@ async function handleImport(file: any) {
 
 <style scoped>
 .page-cashier-initbal { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .label { font-size: 13px; color: var(--el-text-color-regular); }
 .table-container { flex: 1; overflow: hidden; padding: 0 16px 8px; }

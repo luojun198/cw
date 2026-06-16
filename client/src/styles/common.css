@@ -694,34 +694,7 @@
 }
 
 /* 按钮样式升级 */
-.el-button {
-  border-radius: 6px;
-  font-weight: var(--cw-font-medium);
-  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
-  box-shadow: var(--cw-shadow-sm);
-}
-
-.el-button:hover {
-  transform: translateY(-1px);
-  box-shadow: var(--cw-shadow-md);
-}
-
-.el-button:active {
-  transform: translateY(0);
-  box-shadow: var(--cw-shadow-sm);
-}
-
-/* 主按钮强调 */
-.el-button--primary {
-  background: linear-gradient(135deg, #1a4b8c 0%, #2e6bc4 100%);
-  border: none;
-  box-shadow: 0 4px 12px rgba(26, 75, 140, 0.3);
-}
-
-.el-button--primary:hover {
-  background: linear-gradient(135deg, #143c70 0%, #1a4b8c 100%);
-  box-shadow: 0 6px 16px rgba(26, 75, 140, 0.4);
-}
+/* 按钮样式已统一 */
 
 /* 卡片优化 - 庄重大气 */
 .el-card {
@@ -815,18 +788,6 @@
 }
 
 /* prev / next 按钮 */
-.pagination-bar .el-pagination button,
-.page .el-pagination button {
-  height: 24px !important;
-  width: 24px !important;
-  min-width: 24px !important;
-  padding: 0 !important;
-  display: flex !important;
-  align-items: center !important;
-  justify-content: center !important;
-}
-
-/* 页码 */
 .pagination-bar .el-pagination .el-pager li,
 .page .el-pagination .el-pager li {
   height: 24px !important;
@@ -980,12 +941,6 @@
 
   .el-dialog__footer {
     padding: 12px 16px;
-  }
-
-  /* 按钮 */
-  .el-button {
-    padding: 8px 12px;
-    font-size: var(--cw-text-sm);
   }
 
   /* 表单 */
@@ -1240,41 +1195,9 @@
   flex-shrink: 0;
 }
 
-.page-header-actions .el-button-group {
-  display: flex;
-}
-
 .page-header-actions .el-divider--vertical {
   margin: 0 8px;
   height: 20px;
-}
-
-/* 按钮图标间距 */
-.el-button .el-icon + span {
-  margin-left: 4px;
-}
-
-/* 危险操作按钮强化 */
-.el-button--danger:not(.is-plain) {
-  box-shadow: 0 2px 8px rgba(245, 108, 108, 0.3);
-}
-
-.el-button--danger:not(.is-plain):hover {
-  box-shadow: 0 4px 12px rgba(245, 108, 108, 0.4);
-}
-
-/* 主操作按钮强化 */
-.el-button--primary:not(.is-plain) {
-  box-shadow: 0 2px 8px rgba(26, 75, 140, 0.3);
-}
-
-.el-button--primary:not(.is-plain):hover {
-  box-shadow: 0 4px 12px rgba(26, 75, 140, 0.4);
-}
-
-/* 按钮组内按钮间距 */
-.el-button-group .el-button + .el-button {
-  margin-left: 0;
 }
 
 /* ========== 紧凑型数据表（对齐科目管理 Account.vue）========== */
@@ -1480,13 +1403,6 @@
   line-height: 20px;
 }
 
-.compact-data-table.el-table--small .el-button.is-link {
-  font-size: 12px;
-  padding: 3px 5px;
-  height: auto;
-  min-height: 22px;
-}
-
 /* 紧凑表表头：覆盖全局 .el-table__header 的大写/渐变感，与表体密度一致 */
 .compact-data-table.el-table--small thead .el-table__cell {
   background: var(--el-fill-color-light) !important;
@@ -1567,13 +1483,6 @@
   margin-bottom: 0;
 }
 
-.page:has(.compact-data-table) .page-header .el-button:not(.is-link),
-.page:has(.compact-data-table) .filter-row .el-button:not(.is-link) {
-  height: 28px !important;
-  padding: 0 10px !important;
-  font-size: 12px !important;
-}
-
 .page:has(.compact-data-table) .filter-row .el-input__wrapper,
 .page:has(.compact-data-table) .filter-row .el-select__wrapper,
 .page:has(.compact-data-table) .filter-row .el-date-editor .el-input__wrapper,
@@ -1603,9 +1512,7 @@
   height: 22px !important;
 }
 
-.page:has(.compact-data-table) .pagination-bar .el-pagination button,
-.page:has(.compact-data-table) .pagination-bar .el-pager li,
-.page:has(.compact-data-table) .el-pagination button,
+.page:has(.compact-data-table) .pagination-bar .el-pagination .el-pager li,
 .page:has(.compact-data-table) .el-pagination .el-pager li {
   min-width: 22px;
   height: 22px;

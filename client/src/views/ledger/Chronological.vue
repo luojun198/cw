@@ -1,107 +1,6 @@
 <template>
   <div class="page page-ledger">
-    <div class="page-header">
-      <h3>序时账</h3>
-      <div class="filter-row">
-        <el-select
-          v-model="filters.year"
-          placeholder="年份"
-          clearable
-          class="filter-ctl--xs"
-          @change="onYearPeriodChange"
-        >
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <el-select
-          v-model="filters.period"
-          placeholder="月份"
-          clearable
-          class="filter-ctl--xs"
-          @change="onYearPeriodChange"
-        >
-          <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
-        </el-select>
-        <el-date-picker
-          v-model="filters.start_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="开始日期"
-          class="filter-ctl--md"
-          clearable
-          @change="onDateRangeChange"
-        />
-        <el-date-picker
-          v-model="filters.end_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="结束日期"
-          class="filter-ctl--md"
-          clearable
-          @change="onDateRangeChange"
-        />
-        <el-checkbox
-          v-model="filters.include_unposted"
-          style="margin-left: 12px"
-          @change="fetchData"
-        >
-          统计未记账凭证
-        </el-checkbox>
-        <el-button type="primary" @click="fetchData">
-          <el-icon><Search /></el-icon>
-          查询
-        </el-button>
-
-        <el-divider direction="vertical" />
-
-        <el-button plain @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出 Excel
-        </el-button>
-        <el-button plain @click="printPage">
-          <el-icon><Printer /></el-icon>
-          打印
-        </el-button>
-        <el-button plain @click="hiprintVisible = true">
-          <el-icon><Printer /></el-icon>
-          套打
-        </el-button>
-      </div>
-      <div v-if="showAdvancedFilter" class="filter-row filter-row--advanced">
-        <el-input
-          v-model="filters.summary_keyword"
-          placeholder="摘要关键词"
-          clearable
-          class="filter-ctl--md"
-        />
-        <el-input
-          v-model="filters.min_amount"
-          placeholder="最小金额"
-          type="number"
-          clearable
-          class="filter-ctl--sm"
-        />
-        <el-input
-          v-model="filters.max_amount"
-          placeholder="最大金额"
-          type="number"
-          clearable
-          class="filter-ctl--sm"
-        />
-        <el-input
-          v-model="filters.maker_name"
-          placeholder="制单人"
-          clearable
-          class="filter-ctl--sm"
-        />
-        <el-input
-          v-model="filters.auditor_name"
-          placeholder="审核人"
-          clearable
-          class="filter-ctl--sm"
-        />
-      </div>
-    </div>
-
+    
     <AccountScopeAlert />
 
     <div class="print-title-row">
@@ -529,13 +428,11 @@ onActivated(() => {
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
-.page-header h3 {
   margin: 0;
 }
 .filter-row--advanced {
@@ -563,7 +460,6 @@ onActivated(() => {
   }
 
   /* 隐藏筛选栏、按钮、分页等非打印元素 */
-  .page-header,
   .filter-row,
   .pagination,
   .el-button,

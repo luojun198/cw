@@ -97,8 +97,12 @@ export const COSTING_METHODS: Record<string, string> = {
   specified: '指定成本',
 }
 
-export interface ScmDoc { id?: string; doc_type: string; doc_no?: string; doc_date?: string; partner_code?: string; partner_name?: string; warehouse_code?: string; warehouse_name?: string; operator?: string; status?: string; source_doc_id?: string; total_qty?: number; total_amount?: number; remark?: string; lines?: ScmDocLine[] }
-export interface ScmDocLine { id?: string; seq?: number; item_code: string; item_name?: string; spec?: string; unit?: string; warehouse_code?: string; qty: number; price?: number; amount?: number; tax_rate?: number; unit_cost?: number; batch_no?: string; source_line_id?: string; remark?: string }
+export interface ScmDocRef { id: string; doc_no: string; doc_type: string; status: string }
+export interface ScmDoc { id?: string; doc_type: string; doc_no?: string; doc_date?: string; partner_code?: string; partner_name?: string; warehouse_code?: string; warehouse_name?: string; operator?: string; status?: string; source_doc_id?: string; total_qty?: number; total_amount?: number; remark?: string; lines?: ScmDocLine[];
+  // 上下游链路
+  push_progress?: 'none' | 'part' | 'full'; total_lines?: number; pushed_lines?: number; fully_pushed_lines?: number;
+  source_doc?: ScmDocRef | null; source_docs?: ScmDocRef[]; target_docs?: ScmDocRef[] }
+export interface ScmDocLine { id?: string; seq?: number; item_code: string; item_name?: string; spec?: string; unit?: string; warehouse_code?: string; qty: number; pushed_qty?: number; price?: number; amount?: number; tax_rate?: number; unit_cost?: number; batch_no?: string; source_line_id?: string; remark?: string }
 export interface ScmDocType { code: string; name: string; direction: string; affects_stock: number; affects_ar_ap: number; category: string }
 
 export const DOC_CATEGORIES: Record<string, string> = { purchase: '采购', sale: '销售', inventory: '库存', production: '生产', outsource: '委外', finance: '财务' }
@@ -106,7 +110,7 @@ export const DOC_CATEGORIES: Record<string, string> = { purchase: '采购', sale
 export const scmApi = {
   // 物料
   getItemNextNo: () => request.get<{ next_no: string }>('/scm/items/next-no'),
-  getItems: (params?: { keyword?: string; category_code?: string; item_type?: string; page?: number; page_size?: number }) =>
+  getItems: (params?: { keyword?: string; category_code?: string; item_type?: string; is_leaf?: number; page?: number; page_size?: number }) =>
     request.get<{ list: ScmItem[]; total: number; page: number; page_size: number }>('/scm/items', { params }),
   createItem: (data: Partial<ScmItem>) => request.post<{ id: string }>('/scm/items', data),
   // 物料自定义字段定义
@@ -166,6 +170,7 @@ export const scmApi = {
   genVoucher: (id: string) => request.post<{ voucher_id: string; voucher_no: string; entry_count: number }>(`/scm/docs/${id}/gen-voucher`, {}),
 
   // BOM
+  getBomNextNo: () => request.get<{ next_no: string }>('/scm/boms/next-no'),
   getBoms: () => request.get<any[]>('/scm/boms'),
   getBom: (id: string) => request.get<any>(`/scm/boms/${id}`),
   createBom: (data: any) => request.post<{ id: string }>('/scm/boms', data),

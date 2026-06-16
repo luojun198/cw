@@ -150,11 +150,12 @@ router.get('/scm/items/next-no', (req: AuthRequest, res) => {
 })
 router.get('/scm/items', (req: AuthRequest, res) => {
   const db = getDb()
-  const { keyword, category_code, item_type, parent_id, all, page = '1', page_size = '50' } = req.query as any
+  const { keyword, category_code, item_type, parent_id, is_leaf, all, page = '1', page_size = '50' } = req.query as any
   const conds = ['i.account_set_id=?']; const params: any[] = [asid(req)]
   if (keyword) { conds.push('(i.code LIKE ? OR i.name LIKE ? OR i.spec LIKE ?)'); params.push(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`) }
   if (category_code) { conds.push('i.category_code=?'); params.push(category_code) }
   if (item_type) { conds.push('i.item_type=?'); params.push(item_type) }
+  if (is_leaf !== undefined && is_leaf !== '') { conds.push('i.is_leaf=?'); params.push(parseInt(is_leaf)) }
   if (parent_id !== undefined) {
     if (parent_id === '' || parent_id === 'null') { conds.push('i.parent_id IS NULL') }
     else { conds.push('i.parent_id=?'); params.push(parent_id) }
@@ -517,16 +518,40 @@ router.get('/scm/stock/summary', (req: AuthRequest, res) => {
 router.get('/scm/stock', (req: AuthRequest, res) => {
   const db = getDb()
   const { keyword, warehouse_code } = req.query as any
-  const conds = ['s.account_set_id=?']; const params: any[] = [asid(req)]
-  if (warehouse_code) { conds.push('s.warehouse_code=?'); params.push(warehouse_code) }
-  if (keyword) { conds.push('(s.item_code LIKE ? OR i.name LIKE ?)'); params.push(`%${keyword}%`, `%${keyword}%`) }
+  const account_set_id = asid(req)
+  const conds = ['a.account_set_id=?']; const params: any[] = [account_set_id, account_set_id, account_set_id]
+  if (warehouse_code) { conds.push('a.warehouse_code=?'); params.push(warehouse_code) }
+  if (keyword) { conds.push('(a.item_code LIKE ? OR i.name LIKE ?)'); params.push(`%${keyword}%`, `%${keyword}%`) }
   const list = db.prepare(`
-    SELECT s.*, i.name AS item_name, i.spec, i.unit, w.name AS warehouse_name
-    FROM scm_stock s
-    LEFT JOIN scm_item i ON i.account_set_id=s.account_set_id AND i.code=s.item_code
-    LEFT JOIN scm_warehouse w ON w.account_set_id=s.account_set_id AND w.code=s.warehouse_code
+    WITH AllItems AS (
+      SELECT account_set_id, item_code, IFNULL(warehouse_code, '') AS warehouse_code FROM scm_stock WHERE account_set_id=?
+      UNION
+      SELECT d.account_set_id, l.item_code, IFNULL(l.warehouse_code, '') AS warehouse_code
+      FROM scm_doc_line l
+      JOIN scm_doc d ON d.id = l.doc_id
+      WHERE d.account_set_id=? AND d.doc_type='SOa' AND d.status='audited'
+        AND l.qty > (SELECT COALESCE(SUM(l2.qty), 0) FROM scm_doc_line l2 WHERE l2.source_line_id = l.id)
+    )
+    SELECT a.item_code, a.warehouse_code, i.name AS item_name, i.spec, i.unit, w.name AS warehouse_name,
+      COALESCE(s.qty, 0) AS qty, COALESCE(s.amount, 0) AS amount, COALESCE(s.avg_cost, 0) AS avg_cost,
+      (
+        SELECT COALESCE(SUM(
+          l.qty - (SELECT COALESCE(SUM(l2.qty), 0) FROM scm_doc_line l2 WHERE l2.source_line_id = l.id)
+        ), 0)
+        FROM scm_doc_line l
+        JOIN scm_doc d ON d.id = l.doc_id
+        WHERE d.account_set_id = a.account_set_id
+          AND d.doc_type = 'SOa'
+          AND d.status = 'audited'
+          AND l.item_code = a.item_code
+          AND IFNULL(l.warehouse_code, '') = a.warehouse_code
+      ) AS unshipped_sales_qty
+    FROM AllItems a
+    LEFT JOIN scm_stock s ON s.account_set_id=a.account_set_id AND s.item_code=a.item_code AND IFNULL(s.warehouse_code, '')=a.warehouse_code
+    LEFT JOIN scm_item i ON i.account_set_id=a.account_set_id AND i.code=a.item_code
+    LEFT JOIN scm_warehouse w ON w.account_set_id=a.account_set_id AND w.code=a.warehouse_code
     WHERE ${conds.join(' AND ')}
-    ORDER BY s.warehouse_code, s.item_code
+    ORDER BY a.warehouse_code, a.item_code
   `).all(...params)
   res.json({ code: 0, data: list })
 })

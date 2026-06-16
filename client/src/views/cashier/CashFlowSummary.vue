@@ -1,55 +1,26 @@
 <template>
   <div class="page page-summary">
-    <div class="page-header">
-      <h3>资金收支汇总表</h3>
-      <div class="filter-row">
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          style="width:260px"
-          @change="load"
-        />
-        <el-select v-model="groupBy" style="width: 140px" @change="load">
-          <el-option label="按月份汇总" value="month" />
-          <el-option label="按结算方式汇总" value="settle_type" />
-          <el-option label="按对方科目汇总" value="counter_account" />
-        </el-select>
-        <el-button type="primary" @click="load" :loading="loading">
-          <el-icon><Search /></el-icon>查询
-        </el-button>
-        <el-button plain :disabled="!rows.length" @click="handleExport">
-          <el-icon><Download /></el-icon>导出
-        </el-button>
-        <el-button plain @click="handlePrint">
-          <el-icon><Printer /></el-icon>打印
-        </el-button>
-      </div>
-    </div>
-
+    
     <div v-if="rows.length" class="report-body">
       <h4 class="report-title">
         资金收支汇总表
         <span class="subtitle">（期间：{{ dateRange?.[0] || '起' }} 至 {{ dateRange?.[1] || '止' }}　单位：人民币元）</span>
       </h4>
 
-      <el-table :data="rows" size="small" class="compact-data-table" border stripe show-summary :summary-method="summarize">
-        <el-table-column :label="groupColumnLabel" prop="group_name" min-width="150">
+      <el-table ref="tableRef" :data="rows" size="small" class="compact-data-table" border stripe show-summary :summary-method="summarize" @header-dragend="onDragEnd">
+        <el-table-column :label="groupColumnLabel" prop="group_name" min-width="150" :width="widths.group_name">
           <template #default="{ row }">
             <span v-if="groupBy === 'month'">{{ row.group_code }}</span>
             <span v-else>{{ row.group_code === 'N/A' ? '未指定' : `${row.group_code} ${row.group_name}` }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="收入金额" prop="income" width="160" align="right">
+        <el-table-column label="收入金额" prop="income" :width="cw('income', 160)" align="right">
           <template #default="{ row }"><span v-if="row.income" class="debit">{{ fmt(row.income) }}</span></template>
         </el-table-column>
-        <el-table-column label="支出金额" prop="expense" width="160" align="right">
+        <el-table-column label="支出金额" prop="expense" :width="cw('expense', 160)" align="right">
           <template #default="{ row }"><span v-if="row.expense" class="credit">{{ fmt(row.expense) }}</span></template>
         </el-table-column>
-        <el-table-column label="收支净额" prop="net_amount" width="160" align="right">
+        <el-table-column label="收支净额" prop="net_amount" :width="cw('net_amount', 160)" align="right">
           <template #default="{ row }">
             <span :class="{ debit: row.income - row.expense >= 0, credit: row.income - row.expense < 0 }">
               {{ fmt(row.income - row.expense) }}
@@ -86,6 +57,10 @@ import { ElMessage } from 'element-plus'
 import { Search, Printer, Download } from '@element-plus/icons-vue'
 import { cashierApi } from '@/api/cashier'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, colWidth, onDragEnd, widths } = useListColumnWidth('cashier_cashflow_summary')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 const today = new Date().toISOString().slice(0, 10)
 const dateRange = ref<[string, string]>([`${today.slice(0, 8)}01`, today])
@@ -169,8 +144,6 @@ async function handleExport() {
 
 <style scoped>
 .page-summary { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .report-body { flex: 1; overflow: auto; padding: 16px; }
 .report-title { margin: 0 0 12px; font-size: 16px; text-align: center; }

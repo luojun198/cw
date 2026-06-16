@@ -51,20 +51,20 @@
           </span>
         </el-tooltip>
       </div>
-      <el-table :data="generatedVouchers" border size="small" class="compact-data-table generated-table">
-        <el-table-column prop="transferTypeCode" label="类型代码" width="88" />
-        <el-table-column prop="transferTypeName" label="结转类型" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="voucherType" label="凭证字" width="80" />
-        <el-table-column prop="voucherNo" label="凭证号" width="120" />
-        <el-table-column prop="voucherDate" label="凭证日期" width="110" />
-        <el-table-column label="状态" width="88" align="center">
+      <el-table ref="genTableRef" :data="generatedVouchers" border size="small" class="compact-data-table generated-table" @header-dragend="genDrag">
+        <el-table-column prop="transferTypeCode" label="类型代码" :width="genCw('transferTypeCode', 88)" />
+        <el-table-column prop="transferTypeName" label="结转类型" min-width="160" :width="genWidths.transferTypeName" show-overflow-tooltip />
+        <el-table-column prop="voucherType" label="凭证字" :width="genCw('voucherType', 80)" />
+        <el-table-column prop="voucherNo" label="凭证号" :width="genCw('voucherNo', 120)" />
+        <el-table-column prop="voucherDate" label="凭证日期" :width="genCw('voucherDate', 110)" />
+        <el-table-column label="状态" column-key="status" :width="genCw('status', 88)" align="center">
           <template #default="{ row }">
             <el-tag size="small" effect="plain" :type="getVoucherStatusTagType(row.status)">
               {{ getVoucherStatusText(row.status) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="金额" width="130" align="right">
+        <el-table-column label="金额" column-key="amount" :width="genCw('amount', 130)" align="right">
           <template #default="{ row }">{{ formatAmount(row.totalAmount) }}</template>
         </el-table-column>
       </el-table>
@@ -166,14 +166,14 @@
                 {{ selectedCodes.includes(preview.transferTypeCode) ? '已选择' : '未选择' }}
               </el-tag>
             </div>
-            <el-table :data="preview.entries" border size="small" class="compact-data-table entry-table">
-              <el-table-column prop="summary" label="摘要" min-width="150" show-overflow-tooltip />
-              <el-table-column prop="account_code" label="科目编码" width="110" />
-              <el-table-column prop="account_name" label="科目名称" min-width="150" show-overflow-tooltip />
-              <el-table-column label="方向" width="70" align="center">
+            <el-table ref="entTableRef" :data="preview.entries" border size="small" class="compact-data-table entry-table" @header-dragend="entDrag">
+              <el-table-column prop="summary" label="摘要" min-width="150" :width="entWidths.summary" show-overflow-tooltip />
+              <el-table-column prop="account_code" label="科目编码" :width="entCw('account_code', 110)" />
+              <el-table-column prop="account_name" label="科目名称" min-width="150" :width="entWidths.account_name" show-overflow-tooltip />
+              <el-table-column label="方向" column-key="direction" :width="entCw('direction', 70)" align="center">
                 <template #default="{ row }">{{ row.direction === 'debit' ? '借' : '贷' }}</template>
               </el-table-column>
-              <el-table-column label="金额" width="130" align="right">
+              <el-table-column label="金额" column-key="amount" :width="entCw('amount', 130)" align="right">
                 <template #default="{ row }">{{ formatAmount(row.amount) }}</template>
               </el-table-column>
             </el-table>
@@ -196,6 +196,10 @@ import { RefreshLeft, WarningFilled } from '@element-plus/icons-vue'
 import { formatAmount } from '@/utils/format'
 import { buildRevokeTransferConfirmHtml } from '@/utils/revokeTransferConfirm'
 import { buildRunTransferConfirmHtml } from '@/utils/runTransferConfirm'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef: genTableRef, colWidth: genCw, onDragEnd: genDrag, widths: genWidths } = useListColumnWidth('voucher_autotransfer_generated')
+const { tableRef: entTableRef, colWidth: entCw, onDragEnd: entDrag, widths: entWidths } = useListColumnWidth('voucher_autotransfer_entries')
 
 type TransferPreviewStatus = 'ready' | 'empty' | 'generated' | 'notYetDue' | 'unbalanced'
 

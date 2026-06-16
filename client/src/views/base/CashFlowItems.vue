@@ -1,23 +1,6 @@
 <template>
   <div class="page cash-flow-items-page">
-    <div class="page-header">
-      <div class="page-title">
-        <h3>现金流量项目</h3>
-        <span>{{ list.length }} 项</span>
-      </div>
-      <div class="page-actions">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索编码、名称"
-          clearable
-          class="search-input"
-          size="small"
-        />
-        <el-button size="small" :loading="initLoading" @click="handleInitDefault">初始化标准项目</el-button>
-        <el-button type="primary" size="small" @click="openDialog('add')">新增项目</el-button>
-      </div>
-    </div>
-
+    
     <el-table
       ref="tableRef"
       :data="filteredList"
@@ -289,7 +272,6 @@ onMounted(async () => {
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;

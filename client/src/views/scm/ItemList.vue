@@ -1,73 +1,6 @@
 <template>
   <div class="page scm-item-page">
-    <div class="page-header">
-      <div class="item-title">
-        <h3>物料档案</h3>
-        <span>{{ itemCountLabel }}</span>
-      </div>
-      <div class="item-toolbar">
-        <el-button-group class="level-actions" size="small">
-          <el-button title="全部收拢 (Ctrl+\)" @click="collapseAll">顶层</el-button>
-          <el-button title="上一级 (Ctrl+↑)" @click="goUpLevel">上级</el-button>
-          <el-button title="下一级 (Ctrl+↓)" @click="goDownLevel">下级</el-button>
-          <el-button title="全部展开 (Ctrl+Shift+\)" @click="expandAll">底层</el-button>
-        </el-button-group>
-
-        <el-input
-          v-model="filters.keyword"
-          placeholder="搜索编号/名称/规格"
-          class="item-search"
-          size="small"
-          clearable
-          @input="onSearchInput"
-          @clear="onSearchClear"
-        />
-
-        <el-select v-model="filters.item_type" placeholder="属性" clearable size="small" style="width:110px" @change="load">
-          <el-option v-for="(n, k) in dynamicItemTypes" :key="k" :label="n" :value="k" />
-        </el-select>
-
-        <el-select v-model="filters.is_leaf" placeholder="目录/明细" clearable size="small" style="width:100px" @change="load">
-          <el-option label="明细" :value="1" />
-          <el-option label="目录" :value="0" />
-        </el-select>
-
-        <el-popover placement="bottom" :width="200" trigger="click">
-          <template #reference>
-            <el-button size="small" circle title="列显示设置">
-              <el-icon><Setting /></el-icon>
-            </el-button>
-          </template>
-          <div style="max-height: 400px; overflow-y: auto">
-            <div style="font-weight: bold; margin-bottom: 8px; font-size: 13px; border-bottom: 1px solid #eee; padding-bottom: 4px">显示列设置</div>
-            <div v-for="col in allColumnSettings" :key="col.prop" style="margin-bottom: 4px">
-              <el-checkbox v-model="colVisible[col.prop]" @change="saveColumnConfig">
-                {{ col.label }}
-              </el-checkbox>
-            </div>
-          </div>
-        </el-popover>
-
-        <el-button size="small" @click="openFieldConfig">字段配置</el-button>
-
-        <el-dropdown trigger="click" @command="handleAddCommand">
-          <el-button type="primary" size="small">
-            <el-icon><Plus /></el-icon>
-            新增物料
-            <el-icon class="el-icon--right"><ArrowDown /></el-icon>
-          </el-button>
-          <template #dropdown>
-            <el-dropdown-menu>
-              <el-dropdown-item command="sibling">增加同级物料</el-dropdown-item>
-              <el-dropdown-item command="child" :disabled="!currentRow">
-                增加子物料
-              </el-dropdown-item>
-            </el-dropdown-menu>
-          </template>
-        </el-dropdown>
-      </div>
-    </div>
-
+    
     <!-- 树形模式 -->
     <el-table
       v-if="!hasSearch"
@@ -229,139 +162,131 @@
     <el-dialog
       v-model="dialogVisible"
       :title="editId ? '编辑物料' : '新增物料'"
-      width="640px"
+      width="780px"
       draggable
       @keydown="onDialogKeydown"
     >
       <el-form :model="form" label-width="90px" size="small">
-        <el-row :gutter="12">
-          <el-col :span="12">
-            <el-form-item label="上级物料">
-              <el-tree-select
-                v-model="form.parent_id"
-                :data="treeSelectData"
-                :props="{ value: 'id', label: 'displayLabel', children: 'children' }"
-                check-strictly filterable clearable
-                placeholder="不选则为顶级"
-                style="width:100%"
-                @change="onParentChange"
-              />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="物料性质">
-              <el-radio-group v-model="form.is_leaf">
-                <el-radio :value="1">明细（可调用）</el-radio>
-                <el-radio :value="0">目录（仅分类）</el-radio>
-              </el-radio-group>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="编号" required>
-              <el-input v-model="form.code" :disabled="!!editId">
-                <template v-if="!editId" #append>{{ expectedCodeLen }}位</template>
-              </el-input>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="名称" required>
-              <el-input v-model="form.name" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="规格">
-              <el-input v-model="form.spec" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="主单位" required>
-              <div style="display:flex;gap:4px;width:100%">
-                <el-select v-model="form.primary_unit_code" filterable placeholder="选择单位" style="flex:1" clearable>
-                  <el-option v-for="u in unitOptions" :key="u.code" :label="u.name" :value="u.code" />
-                </el-select>
-                <el-button size="small" @click="showQuickUnit = true"><el-icon><Plus /></el-icon></el-button>
-              </div>
-              <div v-if="showQuickUnit" style="display:flex;gap:4px;margin-top:4px">
-                <el-input v-model="quickUnitName" placeholder="新单位名称" size="small" style="width:100px" @keyup.enter="handleQuickAddUnit" />
-                <el-button type="primary" size="small" :loading="quickUnitSaving" @click="handleQuickAddUnit">确定</el-button>
-                <el-button size="small" @click="showQuickUnit = false">取消</el-button>
-              </div>
-            </el-form-item>
-          </el-col>
-          <el-col :span="24">
-            <el-form-item label="副单位">
-              <div v-for="(su, i) in form.secondary_units" :key="i" style="display:flex;gap:6px;align-items:center;margin-bottom:4px">
-                <el-select v-model="su.unit_code" filterable placeholder="单位" style="width:140px">
-                  <el-option v-for="u in unitOptions" :key="u.code" :label="u.name" :value="u.code" />
-                </el-select>
-                <span style="font-size:12px;white-space:nowrap">1 主单位 =</span>
-                <el-input-number v-model="su.conversion_rate" :min="0.0001" :precision="4" :controls="false" style="width:100px" placeholder="系数" />
-                <span style="font-size:12px;white-space:nowrap">副单位</span>
-                <el-button link type="danger" size="small" @click="removeSecondaryUnit(i)">×</el-button>
-              </div>
-              <el-button size="small" @click="addSecondaryUnit">+ 添加副单位</el-button>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="属性">
-              <div style="display:flex;gap:4px;width:100%">
-                <el-select v-model="form.item_type" clearable style="flex:1">
-                  <el-option v-for="(n, k) in dynamicItemTypes" :key="k" :label="n" :value="k" />
-                </el-select>
-                <el-button size="small" @click="showQuickAttr = true"><el-icon><Plus /></el-icon></el-button>
-              </div>
-              <div v-if="showQuickAttr" style="display:flex;gap:4px;margin-top:4px">
-                <el-input v-model="quickAttrName" placeholder="新属性名称" size="small" style="width:100px" @keyup.enter="handleQuickAddAttr" />
-                <el-button type="primary" size="small" :loading="quickAttrSaving" @click="handleQuickAddAttr">确定</el-button>
-                <el-button size="small" @click="showQuickAttr = false">取消</el-button>
-              </div>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="条码">
-              <el-input v-model="form.barcode" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="进价">
-              <el-input-number v-model="form.purchase_price" :precision="4" :controls="false" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="售价">
-              <el-input-number v-model="form.sale_price" :precision="4" :controls="false" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="指定成本">
-              <el-input-number v-model="form.fixed_cost" :precision="4" :controls="false" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="存货科目">
-              <AccountSelect v-model="form.inv_account" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="销售科目">
-              <AccountSelect v-model="form.sale_account" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="批号管理">
-              <el-switch v-model="form.batch_flag" :active-value="1" :inactive-value="0" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="采购生成资产">
-              <el-switch v-model="form.is_asset" :active-value="1" :inactive-value="0" />
-            </el-form-item>
-          </el-col>
-          <!-- 自定义扩展信息 -->
-          <template v-if="activeFieldDefs.length > 0">
-            <el-col :span="24">
-              <el-divider content-position="left" style="margin:4px 0 8px">扩展信息</el-divider>
+        <div class="form-sector">
+          <div class="form-sector-title">基本信息</div>
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="上级物料">
+                <el-tree-select
+                  v-model="form.parent_id"
+                  :data="treeSelectData"
+                  :props="{ value: 'id', label: 'displayLabel', children: 'children' }"
+                  check-strictly filterable clearable
+                  placeholder="不选则为顶级"
+                  style="width:100%"
+                  @change="onParentChange"
+                />
+              </el-form-item>
             </el-col>
+            <el-col :span="12">
+              <el-form-item label="物料性质">
+                <el-radio-group v-model="form.is_leaf">
+                  <el-radio :value="1">明细</el-radio>
+                  <el-radio :value="0">目录</el-radio>
+                </el-radio-group>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="编号" required>
+                <el-input v-model="form.code" :disabled="!!editId">
+                  <template v-if="!editId" #append>{{ expectedCodeLen }}位</template>
+                </el-input>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="名称" required>
+                <el-input v-model="form.name" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="规格">
+                <el-input v-model="form.spec" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
+
+        <div class="form-sector">
+          <div class="form-sector-title">业务属性</div>
+          <el-row :gutter="12">
+            <el-col :span="8">
+              <el-form-item label="物料属性">
+                <div style="display:flex;gap:4px;width:100%">
+                  <el-select v-model="form.item_type" clearable style="flex:1">
+                    <el-option v-for="(n, k) in dynamicItemTypes" :key="k" :label="n" :value="k" />
+                  </el-select>
+                  <el-button size="small" @click="showQuickAttr = true"><el-icon><Plus /></el-icon></el-button>
+                </div>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="主单位" required>
+                <div style="display:flex;gap:4px;width:100%">
+                  <el-select v-model="form.primary_unit_code" filterable placeholder="选择单位" style="flex:1" clearable>
+                    <el-option v-for="u in unitOptions" :key="u.code" :label="u.name" :value="u.code" />
+                  </el-select>
+                  <el-button size="small" @click="showQuickUnit = true"><el-icon><Plus /></el-icon></el-button>
+                </div>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="条码">
+                <el-input v-model="form.barcode" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="进价">
+                <el-input-number v-model="form.purchase_price" :precision="4" :controls="false" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="售价">
+                <el-input-number v-model="form.sale_price" :precision="4" :controls="false" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="成本价">
+                <el-input-number v-model="form.fixed_cost" :precision="4" :controls="false" style="width:100%" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
+
+        <div class="form-sector">
+          <div class="form-sector-title">财务与库存</div>
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <el-form-item label="存货科目">
+                <AccountSelect v-model="form.inv_account" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="销售科目">
+                <AccountSelect v-model="form.sale_account" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <div style="display:flex;gap:30px;padding-left:10px">
+                <el-form-item label="批号管理" label-width="70px">
+                  <el-switch v-model="form.batch_flag" :active-value="1" :inactive-value="0" />
+                </el-form-item>
+                <el-form-item label="生成资产" label-width="70px">
+                  <el-switch v-model="form.is_asset" :active-value="1" :inactive-value="0" />
+                </el-form-item>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <!-- 自定义扩展信息 -->
+        <div class="form-sector" v-if="activeFieldDefs.length > 0">
+          <div class="form-sector-title">扩展信息</div>
+          <el-row :gutter="12">
             <el-col v-for="field in activeFieldDefs" :key="field.field_key" :span="12">
               <el-form-item :label="field.field_name">
                 <el-input
@@ -396,14 +321,15 @@
                 </el-select>
               </el-form-item>
             </el-col>
-          </template>
+          </el-row>
+        </div>
 
-          <el-col :span="24">
-            <el-form-item label="备注">
-              <el-input v-model="form.remark" type="textarea" :rows="2" />
-            </el-form-item>
-          </el-col>
-        </el-row>
+        <div class="form-sector">
+          <div class="form-sector-title">其他备注</div>
+          <el-form-item label="备注">
+            <el-input v-model="form.remark" type="textarea" :rows="2" />
+          </el-form-item>
+        </div>
       </el-form>
       <template #footer>
         <div style="display:flex;justify-content:flex-end;gap:8px">
@@ -412,7 +338,7 @@
             保存并新增 (Ctrl+Enter)
           </el-button>
           <el-button type="primary" :loading="saving" @click="handleSave(false)">
-            保存 (Enter)
+            确认保存 (Enter)
           </el-button>
         </div>
       </template>
@@ -1079,7 +1005,6 @@ onMounted(async () => {
   background: var(--el-fill-color-lighter);
 }
 
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1156,6 +1081,26 @@ onMounted(async () => {
   line-height: 1;
 }
 
+.unit-config-area {
+  padding: 12px;
+  background: var(--ink-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+}
+
+.unit-config-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.unit-convert-sep {
+  font-size: 12px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
 :deep(.item-table .el-table__cell) {
   padding: 2px 0 !important;
 }
@@ -1201,7 +1146,6 @@ onMounted(async () => {
 }
 
 @media (max-width: 1100px) {
-  .page-header { align-items: flex-start; }
   .item-toolbar { justify-content: flex-start; }
   .item-search { width: 160px; }
 }

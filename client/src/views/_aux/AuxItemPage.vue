@@ -1,19 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-header">
-      <h3>{{ title }}</h3>
-      <div class="page-header-actions">
-        <el-input
-          v-model="searchKeyword"
-          :placeholder="`搜索编码、${nameLabel}...`"
-          clearable
-          class="search-input filter-ctl--lg"
-          prefix-icon="Search"
-        />
-        <el-button type="primary" @click="openDialog('add')">新增{{ entityName }}</el-button>
-      </div>
-    </div>
-    <div ref="tableContainerRef" class="page-table-fill">
+        <div ref="tableContainerRef" class="page-table-fill">
     <el-table
       ref="tableRef"
       :height="tableHeight"
@@ -178,13 +165,11 @@ onMounted(fetchData)
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
-.page-header h3 {
   margin: 0;
 }
 </style>

@@ -1,13 +1,7 @@
 <template>
   <div class="page page--perm">
     <template v-if="pageView === 'list'">
-      <div class="page-header">
-        <h3>角色管理</h3>
-        <div class="page-header-actions">
-          <el-button type="primary" @click="openEditor('add')">新增角色</el-button>
-        </div>
-      </div>
-
+      
       <el-table
         ref="tableRef"
         :data="list"
@@ -206,20 +200,17 @@ onMounted(fetchData)
   min-height: 0;
 }
 
-.page-header--perm {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-shrink: 0;
 }
 
-.page-header__left {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 
-.page-header__left h3 {
   margin: 0;
 }
 

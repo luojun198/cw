@@ -1,28 +1,19 @@
 <template>
   <div class="page scm-item-type-page">
-    <div class="page-header">
-      <div class="item-title">
-        <h3>物料属性</h3>
-        <span>管理物料档案中的自定义属性分类</span>
-      </div>
-      <div class="item-toolbar">
-        <el-button type="primary" size="small" @click="openAdd">
-          <el-icon><Plus /></el-icon>
-          新增属性
-        </el-button>
-      </div>
-    </div>
+    
 
     <el-table
+      ref="tableRef"
       :data="tableData"
       v-loading="loading"
       border stripe size="small"
       class="item-table"
       height="100%"
+      @header-dragend="onDragEnd"
     >
-      <el-table-column label="编码" prop="key" width="120" />
-      <el-table-column label="名称" prop="name" min-width="200" />
-      <el-table-column label="来源" width="120">
+      <el-table-column label="编码" prop="key" :width="cw('key', 120)" />
+      <el-table-column label="名称" prop="name" min-width="200" :width="widths.name" />
+      <el-table-column label="来源" column-key="source" :width="cw('source', 120)">
         <template #default="{ row }">
           <el-tag :type="row.isSystem ? 'info' : 'success'" size="small">
             {{ row.isSystem ? '系统预设' : '用户定义' }}
@@ -63,6 +54,10 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { scmApi, ITEM_TYPES } from '@/api/scm'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, colWidth, onDragEnd, widths } = useListColumnWidth('scm_item_type')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 const loading = ref(false)
 const saving = ref(false)
@@ -173,7 +168,6 @@ onMounted(load)
   overflow: hidden;
   background: var(--el-fill-color-lighter);
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;

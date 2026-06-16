@@ -1,21 +1,18 @@
 <template>
   <div class="page scm-doc-page">
-    <div class="page-header">
-      <h3>{{ title }}</h3>
-      <div class="filter-row">
-        <el-select v-if="!propType" v-model="filters.doc_type" placeholder="单据类型" style="width:150px" @change="load" clearable>
-          <el-option v-for="t in types" :key="t.code" :label="t.name" :value="t.code" />
-        </el-select>
-        <el-select v-model="filters.warehouse_code" placeholder="仓库" clearable style="width:130px">
-          <el-option v-for="w in warehouses" :key="w.code" :label="`${w.code} ${w.name}`" :value="w.code" />
-        </el-select>
-        <el-input v-model="filters.partner_code" placeholder="往来编号" clearable style="width:130px" />
-        <el-date-picker v-model="filters.start_date" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" style="width:130px" />
-        <el-date-picker v-model="filters.end_date" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" style="width:130px" />
-        <el-button type="primary" @click="load"><el-icon><Search /></el-icon>查询</el-button>
-        <el-button type="success" @click="handleCreate"><el-icon><Plus /></el-icon>新增</el-button>
-        <span class="total-hint">共 {{ total }} 条</span>
-      </div>
+
+    <div class="filter-row">
+      <el-select v-if="!propType" v-model="filters.doc_type" placeholder="单据类型" style="width:140px" @change="load" clearable size="small">
+        <el-option v-for="t in types" :key="t.code" :label="t.name" :value="t.code" />
+      </el-select>
+      <el-select v-model="filters.warehouse_code" placeholder="仓库" clearable style="width:120px" size="small">
+        <el-option v-for="w in warehouses" :key="w.code" :label="`${w.code} ${w.name}`" :value="w.code" />
+      </el-select>
+      <el-input v-model="filters.partner_code" placeholder="往来单位" clearable style="width:140px" size="small" />
+      <el-date-picker v-model="filters.start_date" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" style="width:130px" size="small" />
+      <el-date-picker v-model="filters.end_date" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" style="width:130px" size="small" />
+      <el-button type="primary" plain @click="load" size="small"><el-icon><Search /></el-icon>查询</el-button>
+      <el-button type="primary" size="small" @click="handleCreate"><el-icon><Plus /></el-icon>新增单据</el-button>
     </div>
 
     <div v-if="!propType" class="doc-type-tabs">
@@ -25,44 +22,60 @@
       </el-radio-group>
     </div>
 
-    <el-table :data="list" v-loading="loading" border stripe size="small" height="calc(100vh - 280px)" @row-dblclick="handleView">
-      <el-table-column label="单据号" prop="doc_no" width="180" />
-      <el-table-column label="日期" prop="doc_date" width="110" />
-      <el-table-column v-if="!propType" label="类型" width="90">
-        <template #default="{ row }">{{ typeName(row.doc_type) }}</template>
-      </el-table-column>
-      <el-table-column label="往来单位" min-width="150" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.partner_name || row.partner_code }}</template>
-      </el-table-column>
-      <el-table-column label="仓库" width="120">
-        <template #default="{ row }">{{ row.warehouse_name || row.warehouse_code }}</template>
-      </el-table-column>
-      <el-table-column label="数量" prop="total_qty" width="80" align="right" />
-      <el-table-column label="金额" prop="total_amount" width="110" align="right">
-        <template #default="{ row }">{{ fmt(row.total_amount) }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="80" align="center">
-        <template #default="{ row }">
-          <el-tag :type="row.status === 'audited' ? 'success' : 'info'" size="small">
-            {{ row.status === 'audited' ? '已审核' : '草稿' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="340" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="handleView(row)">查看</el-button>
-          <el-button v-if="row.status === 'draft'" link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
-          <el-button v-if="row.status === 'draft'" link type="success" size="small" @click="handleAudit(row)">审核</el-button>
-          <el-button v-if="row.status === 'audited'" link type="warning" size="small" @click="handleUnaudit(row)">反审核</el-button>
-          <el-button v-if="row.status === 'draft'" link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
-          <el-button v-if="row.status === 'audited' && !row.voucher_id" link type="warning" size="small" @click="handleGenVoucher(row)">生成凭证</el-button>
-          <el-button v-if="row.status === 'audited' && row.doc_type === 'PI'" link type="warning" size="small" @click="handleGenAssets(row)">生成资产</el-button>
-          <el-button v-if="pushTarget(row.doc_type)" link type="success" size="small" @click="handlePush(row)">下推{{ pushLabel(row.doc_type) }}</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-    <el-pagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev,pager,next,total" background
-      style="margin-top:8px;justify-content:flex-end" @current-change="load" />
+    <div class="page-body">
+      <el-table ref="tableRef" :data="list" v-loading="loading" border stripe size="small" height="100%" @row-dblclick="handleView" @header-dragend="onDragEnd">
+        <el-table-column label="单据号" prop="doc_no" :width="cw('doc_no', 160)" />
+        <el-table-column label="日期" prop="doc_date" :width="cw('doc_date', 100)" />
+        <el-table-column v-if="!propType" label="类型" column-key="doc_type" :width="cw('doc_type', 90)">
+          <template #default="{ row }">{{ typeName(row.doc_type) }}</template>
+        </el-table-column>
+        <el-table-column label="往来单位" column-key="partner" min-width="150" :width="widths.partner" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.partner_name || row.partner_code }}</template>
+        </el-table-column>
+        <el-table-column label="仓库" column-key="warehouse" :width="cw('warehouse', 120)">
+          <template #default="{ row }">{{ row.warehouse_name || row.warehouse_code }}</template>
+        </el-table-column>
+        <el-table-column label="数量" prop="total_qty" :width="cw('total_qty', 80)" align="right" />
+        <el-table-column label="金额" prop="total_amount" :width="cw('total_amount', 110)" align="right">
+          <template #default="{ row }">{{ fmt(row.total_amount) }}</template>
+        </el-table-column>
+        <el-table-column label="下推数量" width="110" align="center">
+          <template #default="{ row }">
+            <span v-if="pushTarget(row.doc_type)">
+              <el-tag :type="row.pushed_qty >= row.total_qty && row.total_qty > 0 ? 'success' : (row.pushed_qty > 0 ? 'warning' : 'info')" size="small">
+                {{ row.pushed_qty || 0 }} / {{ row.total_qty || 0 }}
+              </el-tag>
+            </span>
+            <span v-else class="text-muted">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'audited' ? 'success' : 'info'" size="small">
+              {{ row.status === 'audited' ? '已审核' : '草稿' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right" align="center" class-name="action-col">
+          <template #default="{ row }">
+            <div class="action-btns">
+              <el-button link type="primary" size="small" title="查看" @click="handleView(row)">查</el-button>
+              <el-button v-if="row.status === 'draft' && !isLocked(row)" link type="primary" size="small" title="编辑" @click="handleEdit(row)">编</el-button>
+              <el-button v-if="row.status === 'draft'" link type="success" size="small" title="审核" @click="handleAudit(row)">审</el-button>
+              <el-button v-if="row.status === 'audited'" link type="warning" size="small" title="反审核" @click="handleUnaudit(row)">反</el-button>
+              <el-button v-if="row.status === 'draft' && !isLocked(row)" link type="danger" size="small" title="删除" @click="handleDelete(row)">删</el-button>
+              <el-button v-if="row.status === 'audited' && !row.voucher_id" link type="warning" size="small" title="生成凭证" @click="handleGenVoucher(row)">凭</el-button>
+              <el-button v-if="row.status === 'audited' && row.doc_type === 'PI'" link type="warning" size="small" title="生成资产" @click="handleGenAssets(row)">资</el-button>
+              <el-button v-if="row.status === 'audited' && pushTarget(row.doc_type) && row.push_progress !== 'full'" link type="success" size="small" :title="'下推' + pushLabel(row.doc_type)" @click="handlePush(row)">推</el-button>
+            </div>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <div class="pagination-bar">
+      <el-pagination v-model:current-page="page" :page-size="pageSize" :total="total" layout="prev,pager,next,total" background @current-change="load" />
+    </div>
   </div>
 </template>
 
@@ -72,6 +85,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search, Plus } from '@element-plus/icons-vue'
 import { scmApi, type ScmDoc, type ScmDocType } from '@/api/scm'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, colWidth, onDragEnd, widths } = useListColumnWidth('scm_doc_list')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 const route  = useRoute()
 const router = useRouter()
@@ -185,6 +202,10 @@ const PUSH_LABEL: Record<string, string> = {
 }
 function pushTarget(docType: string): string | undefined { return PUSH_MAP[docType] }
 function pushLabel(docType: string): string { return PUSH_LABEL[docType] || '' }
+// 已被下游引用（部分/完全下推）即视为锁定，禁止编辑/删除
+function isLocked(row: ScmDoc): boolean {
+  return !!pushTarget(row.doc_type) && row.push_progress != null && row.push_progress !== 'none'
+}
 async function handlePush(row: ScmDoc) {
   const target = PUSH_MAP[row.doc_type]
   if (!target) return
@@ -194,8 +215,11 @@ async function handlePush(row: ScmDoc) {
 
 <style scoped>
 .scm-doc-page { padding: 12px 16px; }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
+
 .filter-row { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-bottom: 8px; }
 .total-hint { font-size: 13px; color: var(--el-text-color-secondary); margin-left: auto; }
 .doc-type-tabs { margin-bottom: 8px; }
+:deep(.action-col .cell) { padding: 0 4px !important; }
+.action-btns { display: flex; justify-content: center; align-items: center; gap: 2px; flex-wrap: wrap; }
+.action-btns .el-button { margin: 0 !important; padding: 0 2px !important; min-width: auto; font-size: 13px; }
 </style>

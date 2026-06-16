@@ -1,24 +1,6 @@
 <template>
   <div class="page cash-flow-page">
-    <div class="page-header">
-      <h3>现金流量表（科目估算）</h3>
-      <div class="report-toolbar-row">
-        <el-select v-model="filters.year" size="small" style="width: 100px">
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <el-select v-model="filters.period" size="small" style="width: 100px">
-          <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
-        </el-select>
-        <el-select v-model="filters.scope" size="small" style="width: 120px">
-          <el-option label="本月" value="month" />
-          <el-option label="本年累计" value="ytd" />
-        </el-select>
-        <el-button type="primary" size="small" @click="fetchData">查询</el-button>
-        <el-button size="small" @click="exportData">导出 Excel</el-button>
-        <el-button size="small" @click="printData">打印</el-button>
-      </div>
-    </div>
-
+    
     <AccountScopeAlert />
 
     <div v-if="reportData" v-loading="loading" class="report-body">
@@ -519,7 +501,6 @@ onMounted(() => {
 </script>
 
 <style scoped>
-.cash-flow-page .page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -527,7 +508,6 @@ onMounted(() => {
   gap: 12px;
 }
 
-.cash-flow-page .page-header h3 {
   margin: 0;
 }
 

@@ -1,32 +1,6 @@
 <template>
   <div class="page page-ledger page-ledger-aux">
-    <div class="page-header">
-      <div class="header-left">
-        <h3>辅助项目余额表</h3>
-        <div class="filter-hint">
-          <span class="filter-hint-label">当前筛选：</span>
-          <span class="filter-hint-text">{{ filterHintText }}</span>
-        </div>
-      </div>
-      <div class="header-right">
-        <el-button type="primary" @click="drawerVisible = true">
-          <el-icon><Filter /></el-icon>
-          筛选
-        </el-button>
-
-        <el-divider direction="vertical" />
-
-        <el-button plain :loading="loadingAll" @click="handleLoadAll">
-          全部加载
-        </el-button>
-
-        <el-button plain :loading="exportProgress.visible" :disabled="exportProgress.visible" @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出 Excel
-        </el-button>
-      </div>
-    </div>
-
+    
     <AccountScopeAlert />
 
     <div
@@ -1249,7 +1223,6 @@ onMounted(async () => {
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;

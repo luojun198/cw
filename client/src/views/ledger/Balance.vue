@@ -1,59 +1,6 @@
 <template>
   <div class="page page-ledger">
-    <div class="page-header">
-      <h3>总分类账</h3>
-      <div class="filter-row">
-        <el-select v-model="filters.year" class="filter-ctl--xs" @change="fetchData">
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <el-input
-          v-model="filters.account_code"
-          placeholder="科目编码"
-          clearable
-          class="filter-ctl--sm"
-          @clear="fetchData"
-          @keyup.enter="fetchData"
-        />
-        <el-select
-          v-model="filters.account_level"
-          placeholder="科目级次"
-          clearable
-          class="filter-ctl--sm"
-          @change="fetchData"
-        >
-          <el-option label="展开到1级" :value="1" />
-          <el-option label="展开到2级" :value="2" />
-          <el-option label="展开到3级" :value="3" />
-          <el-option label="展开到4级" :value="4" />
-        </el-select>
-        <el-divider direction="vertical" />
-        <el-checkbox v-model="hideNoActivity">隐藏未发生</el-checkbox>
-        <el-divider direction="vertical" />
-        <el-checkbox v-model="filters.include_unposted" @change="fetchData">
-          统计未记账凭证
-        </el-checkbox>
-        <el-divider direction="vertical" />
-        <el-button type="primary" @click="fetchData">
-          <el-icon><Search /></el-icon>
-          查询
-        </el-button>
-
-        <el-divider direction="vertical" />
-
-        <el-button plain @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出 Excel
-        </el-button>
-        <el-button plain @click="printPage">
-          <el-icon><Printer /></el-icon>
-          打印
-        </el-button>
-        <span class="balance-tag" :class="isBalanced ? 'ok' : 'err'">
-          {{ isBalanced ? '借贷平衡' : '借贷不平衡' }}
-        </span>
-      </div>
-    </div>
-
+    
     <AccountScopeAlert />
 
     <div class="print-title-row">
@@ -515,14 +462,12 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
   flex-shrink: 0;
 }
-.page-header h3 {
   margin: 0;
 }
 .balance-tag {
@@ -569,7 +514,6 @@ onMounted(async () => {
   }
 
   /* 隐藏筛选栏、按钮、分页等非打印元素 */
-  .page-header,
   .filter-row,
   .pagination,
   .el-button,

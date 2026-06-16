@@ -17,120 +17,7 @@
       </button>
     </div>
 
-    <div class="page-header">
-      <div class="header-left">
-        <h3>期初余额录入</h3>
-        <el-select v-model="selectedYear" class="year-select" size="small" @change="onYearChange">
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <el-tag v-if="isMidYear" type="warning" size="small" effect="plain">
-          年中开账 · 第{{ startMonth }}期
-        </el-tag>
-      </div>
-
-      <div class="toolbar">
-        <div class="toolbar-track">
-          <div class="toolbar-nav">
-          <el-button-group>
-            <el-button plain size="small" title="全部收拢 (Ctrl+\)" @click="collapseAll">
-              <el-icon><Fold /></el-icon>
-              顶层
-            </el-button>
-            <el-button plain size="small" title="上一级 (Ctrl+↑)" @click="goUpLevel">
-              <el-icon><Top /></el-icon>
-              上级
-            </el-button>
-            <el-button plain size="small" title="下一级 (Ctrl+↓)" @click="goDownLevel">
-              <el-icon><Bottom /></el-icon>
-              下级
-            </el-button>
-            <el-button plain size="small" title="全部展开 (Ctrl+Shift+\)" @click="expandAll">
-              <el-icon><Expand /></el-icon>
-              底层
-            </el-button>
-          </el-button-group>
-          </div>
-
-          <div class="toolbar-actions">
-        <el-input
-          v-model="keyword"
-          placeholder="科目编码 / 名称"
-          class="search-input"
-          size="small"
-          clearable
-          @input="onSearchInput"
-          @clear="onSearchClear"
-        >
-          <template #prefix>
-            <el-icon><Search /></el-icon>
-          </template>
-        </el-input>
-        <el-button
-          :type="filterAuxOnly ? 'warning' : 'default'"
-          :plain="!filterAuxOnly"
-          size="small"
-          @click="toggleAuxFilter"
-        >
-          <el-icon><Filter /></el-icon>
-          辅助期初
-        </el-button>
-        <el-checkbox v-model="showZeroValue" size="small" class="zero-filter-checkbox">
-          零值显示
-        </el-checkbox>
-
-        <el-divider direction="vertical" class="toolbar-divider" />
-
-        <el-button type="info" plain size="small" @click="fetchData">
-          <el-icon><Refresh /></el-icon>
-          刷新
-        </el-button>
-        <el-button type="success" size="small" @click="checkBalance">
-          <el-icon><CircleCheck /></el-icon>
-          校验平衡
-        </el-button>
-
-        <el-divider direction="vertical" class="toolbar-divider" />
-
-        <el-button plain size="small" :disabled="locked" @click="downloadTemplate">
-          <el-icon><Download /></el-icon>
-          模板
-        </el-button>
-        <el-button size="small" :disabled="locked" @click="openImportDialog">
-          <el-icon><Upload /></el-icon>
-          导入
-        </el-button>
-        <el-button type="danger" plain size="small" :disabled="locked" @click="openClearDialog">
-          <el-icon><Delete /></el-icon>
-          清理
-        </el-button>
-
-        <el-divider direction="vertical" class="toolbar-divider" />
-
-        <el-button plain size="small" :disabled="list.length === 0" @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出
-        </el-button>
-        <el-button
-          plain
-          size="small"
-          :disabled="auxLeafCount === 0"
-          :loading="exportingAux"
-          @click="exportAllAuxData"
-        >
-          <el-icon><Download /></el-icon>
-          导出辅助
-        </el-button>
-
-        <el-divider direction="vertical" class="toolbar-divider" />
-
-        <el-button type="primary" size="small" :disabled="locked" :loading="saving" @click="saveAll">
-          <el-icon><DocumentChecked /></el-icon>
-          保存全部
-        </el-button>
-          </div>
-        </div>
-      </div>
-    </div>
+    
 
     <AccountScopeAlert :accounts-count="list.length" />
 
@@ -2289,7 +2176,6 @@ onBeforeUnmount(() => {
 .voucher-audit-return-btn:hover .voucher-audit-return-btn__action {
   background: #337ecc;
 }
-.page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;

@@ -1,12 +1,6 @@
 <template>
   <div class="print-template-page">
-    <div class="page-header">
-      <h2>打印模版管理</h2>
-      <div class="header-actions">
-        <el-button @click="handleCreate">新增凭证模版（旧）</el-button>
-        <el-button type="primary" @click="handleCreateHiprint">新增套打模板</el-button>
-      </div>
-    </div>
+    
 
     <div class="page-content">
       <el-table
@@ -289,7 +283,6 @@ onMounted(() => {
   flex-direction: column;
 }
 
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -297,7 +290,6 @@ onMounted(() => {
   border-bottom: 1px solid #e0e0e0;
 }
 
-.page-header h2 {
   margin: 0;
   font-size: 20px;
   font-weight: 500;

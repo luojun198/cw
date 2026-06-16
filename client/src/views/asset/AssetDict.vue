@@ -1,9 +1,6 @@
 <template>
   <div class="page page-asset-dict">
-    <div class="page-header">
-      <h3>固定资产档案维护</h3>
-    </div>
-
+    
     <div class="dict-body">
       <el-tabs v-model="activeTab">
         <el-tab-pane label="资产类别" name="category">
@@ -393,8 +390,6 @@ async function handleSave() {
 
 <style scoped>
 .page-asset-dict { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .dict-body { flex: 1; overflow: auto; padding: 16px; }
 .dict-panel-toolbar { margin-bottom: 8px; }
 </style>

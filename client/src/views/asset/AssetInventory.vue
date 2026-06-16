@@ -1,41 +1,30 @@
 <template>
   <div class="page page-asset-inventory">
-    <div class="page-header">
-      <h3>资产盘点</h3>
-      <div class="header-actions">
-        <el-button type="primary" @click="openCreateDialog">
-          <el-icon><Plus /></el-icon>新建盘点
-        </el-button>
-        <el-button @click="loadList">
-          <el-icon><Refresh /></el-icon>刷新
-        </el-button>
-      </div>
-    </div>
-
+    
     <!-- 盘点列表 / 盘点详情 -->
     <template v-if="!currentInventory">
-      <el-table :data="inventories" size="small" border stripe highlight-current-row
-        @row-click="openInventory" style="cursor:pointer">
-        <el-table-column label="盘点名称" prop="name" min-width="160" />
-        <el-table-column label="盘点日期" prop="inventory_date" width="110" />
-        <el-table-column label="状态" width="100" align="center">
+      <el-table ref="tableRef" :data="inventories" size="small" border stripe highlight-current-row
+        @row-click="openInventory" style="cursor:pointer" @header-dragend="onDragEnd">
+        <el-table-column label="盘点名称" prop="name" min-width="160" :width="widths.name" />
+        <el-table-column label="盘点日期" prop="inventory_date" :width="cw('inventory_date', 110)" />
+        <el-table-column label="状态" column-key="status" :width="cw('status', 100)" align="center">
           <template #default="{ row }">
             <el-tag :type="statusTag(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="资产总数" prop="total_count" width="90" align="center" />
-        <el-table-column label="正常" prop="match_count" width="70" align="center" />
-        <el-table-column label="盘盈" prop="surplus_count" width="70" align="center">
+        <el-table-column label="资产总数" prop="total_count" :width="cw('total_count', 90)" align="center" />
+        <el-table-column label="正常" prop="match_count" :width="cw('match_count', 70)" align="center" />
+        <el-table-column label="盘盈" prop="surplus_count" :width="cw('surplus_count', 70)" align="center">
           <template #default="{ row }">
             <span :class="row.surplus_count > 0 ? 'incr' : ''">{{ row.surplus_count }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="盘亏" prop="deficit_count" width="70" align="center">
+        <el-table-column label="盘亏" prop="deficit_count" :width="cw('deficit_count', 70)" align="center">
           <template #default="{ row }">
             <span :class="row.deficit_count > 0 ? 'decr' : ''">{{ row.deficit_count }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" prop="created_at" width="160" />
+        <el-table-column label="创建时间" prop="created_at" :width="cw('created_at', 160)" />
         <el-table-column label="操作" width="80" align="center">
           <template #default="{ row }">
             <el-button link type="danger" size="small" @click.stop="handleDeleteInventory(row)">删除</el-button>
@@ -168,6 +157,10 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Refresh, ArrowLeft, Select, Check } from '@element-plus/icons-vue'
 import { fixedAssetApi, type InventorySummary, type InventoryItem } from '@/api/fixedAsset'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, colWidth, onDragEnd, widths } = useListColumnWidth('asset_inventory_list')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 const fmtAmt = (v: number) =>
   v == null || v === 0 ? '0.00' : v.toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -282,8 +275,6 @@ onMounted(loadList)
 
 <style scoped>
 .page-asset-inventory { display: flex; flex-direction: column; height: 100%; }
-.page-header { display: flex; align-items: center; gap: 16px; padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0; font-size: 15px; flex: 1; }
 .detail-header { display: flex; align-items: center; gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--el-border-color-lighter); }
 .detail-info { display: flex; align-items: center; gap: 10px; flex: 1; font-size: 14px; }
 .detail-actions { display: flex; gap: 8px; }

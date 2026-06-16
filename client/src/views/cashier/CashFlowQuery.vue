@@ -1,30 +1,6 @@
 <template>
   <div class="page page-flow-query">
-    <div class="page-header">
-      <h3>出纳流水账</h3>
-      <div class="filter-row">
-        <el-select v-model="filters.account_code" filterable placeholder="选择科目" style="width:220px" @change="handleQuery">
-          <el-option-group label="现金科目">
-            <el-option v-for="a in cashAccounts" :key="a.code" :label="`${a.code} ${a.name}`" :value="a.code" />
-          </el-option-group>
-          <el-option-group label="银行存款">
-            <el-option v-for="a in bankAccounts" :key="a.code" :label="`${a.code} ${a.name}`" :value="a.code" />
-          </el-option-group>
-        </el-select>
-        <el-date-picker v-model="filters.start_date" type="date" value-format="YYYY-MM-DD" placeholder="开始日期" style="width:140px" />
-        <el-date-picker v-model="filters.end_date" type="date" value-format="YYYY-MM-DD" placeholder="结束日期" style="width:140px" />
-        <el-button type="primary" @click="handleQuery">
-          <el-icon><Search /></el-icon>查询
-        </el-button>
-        <el-button plain :disabled="!journalResult" @click="handleExport">
-          <el-icon><Download /></el-icon>导出
-        </el-button>
-        <el-button plain @click="handlePrint">
-          <el-icon><Printer /></el-icon>打印
-        </el-button>
-      </div>
-    </div>
-
+    
     <!-- 余额摘要 -->
     <div v-if="journalResult" class="balance-summary">
       <span>期初余额：<b>{{ fmt(journalResult.opening) }}</b></span>
@@ -180,8 +156,6 @@ async function handleExport() {
 
 <style scoped>
 .page-flow-query { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .balance-summary { display: flex; gap: 24px; padding: 6px 16px; background: var(--el-fill-color-lighter); font-size: 13px; }
 .balance-summary b { font-weight: 600; }

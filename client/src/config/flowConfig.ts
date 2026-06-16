@@ -29,7 +29,7 @@ export const groupFlowMap: Record<string, ModuleFlowConfig> = {
         color: 'blue', 
         next: ['rcv'],
         branches: [
-          { id: 'sr', path: '/scm/docs?doc_type=SR', icon: 'RefreshLeft', color: 'red' }
+          { id: 'sr', path: '/scm/docs?doc_type=SR', icon: 'Box', color: 'red' }
         ]
       },
       { id: 'rcv', path: '/scm/docs?doc_type=RCV', icon: 'Money', color: 'green', next: ['rs'] },
@@ -48,7 +48,7 @@ export const groupFlowMap: Record<string, ModuleFlowConfig> = {
         color: 'orange', 
         next: ['pay'],
         branches: [
-          { id: 'pr', path: '/scm/docs?doc_type=PR', icon: 'RefreshRight', color: 'red' }
+          { id: 'pr', path: '/scm/docs?doc_type=PR', icon: 'Van', color: 'red' }
         ]
       },
       { id: 'pay', path: '/scm/docs?doc_type=PAY', icon: 'Wallet', color: 'green', next: ['rp'] },
@@ -80,7 +80,7 @@ export const groupFlowMap: Record<string, ModuleFlowConfig> = {
         color: 'green',
         branches: [
           { id: 'ps', path: '/scm/docs?doc_type=PS', icon: 'Warning', color: 'red' },
-          { id: 'pj', path: '/scm/docs?doc_type=PJ', icon: 'RefreshLeft', color: 'orange' }
+          { id: 'pj', path: '/scm/docs?doc_type=PJ', icon: 'Box', color: 'orange' }
         ]
       },
     ],

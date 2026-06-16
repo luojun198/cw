@@ -1,37 +1,6 @@
 <template>
   <div class="page page-ledger page-cf-trial">
-    <div class="page-header">
-      <h3>现金流量试算平衡表</h3>
-      <div class="filter-row">
-        <el-select v-model="filters.year" placeholder="年份" style="width: 100px" @change="fetchAll">
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <el-select v-model="filters.period" placeholder="月份" style="width: 100px" @change="fetchAll">
-          <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
-        </el-select>
-        <el-select v-model="filters.scope" style="width: 130px" @change="fetchAll">
-          <el-option label="本月" value="month" />
-          <el-option label="本年累计" value="ytd" />
-        </el-select>
-        <el-checkbox v-model="filters.include_unposted" @change="fetchAll">
-          统计未记账凭证
-        </el-checkbox>
-        <el-button type="primary" :loading="loading" @click="fetchAll">
-          <el-icon><Search /></el-icon>
-          查询
-        </el-button>
-        <el-divider direction="vertical" />
-        <el-button plain :disabled="!canExport" @click="exportCurrentTab">
-          <el-icon><Download /></el-icon>
-          导出 Excel
-        </el-button>
-        <el-button plain :disabled="!data && !checkData" @click="printPage">
-          <el-icon><Printer /></el-icon>
-          打印
-        </el-button>
-      </div>
-    </div>
-
+    
     <div v-if="!enabled" class="disabled-tip">
       <el-empty description="账套未启用现金流核算，请先在系统参数中开启" />
     </div>
@@ -102,25 +71,25 @@
 
           <div v-if="data" class="table-section">
             <h4>现金流量项目试算</h4>
-            <el-table :data="data.items" border stripe size="small" class="trial-table">
-              <el-table-column prop="code" label="编码" width="90" />
-              <el-table-column prop="name" label="项目名称" min-width="200" show-overflow-tooltip />
-              <el-table-column prop="activityLabel" label="活动分类" width="100" />
-              <el-table-column label="流向" width="70">
+            <el-table ref="tableRef" :data="data.items" border stripe size="small" class="trial-table" @header-dragend="onDragEnd">
+              <el-table-column prop="code" label="编码" :width="cw('code', 90)" />
+              <el-table-column prop="name" label="项目名称" min-width="200" :width="widths.name" show-overflow-tooltip />
+              <el-table-column prop="activityLabel" label="活动分类" :width="cw('activityLabel', 100)" />
+              <el-table-column label="流向" column-key="direction" :width="cw('direction', 70)">
                 <template #default="{ row }">{{ directionLabel(row.direction) }}</template>
               </el-table-column>
-              <el-table-column label="借方发生" width="120" align="right">
+              <el-table-column label="借方发生" column-key="debitTotal" :width="cw('debitTotal', 120)" align="right">
                 <template #default="{ row }">{{ formatAmount(row.debitTotal) }}</template>
               </el-table-column>
-              <el-table-column label="贷方发生" width="120" align="right">
+              <el-table-column label="贷方发生" column-key="creditTotal" :width="cw('creditTotal', 120)" align="right">
                 <template #default="{ row }">{{ formatAmount(row.creditTotal) }}</template>
               </el-table-column>
-              <el-table-column label="净额" width="120" align="right">
+              <el-table-column label="净额" column-key="signedNet" :width="cw('signedNet', 120)" align="right">
                 <template #default="{ row }">
                   <span :class="amountClass(row.signedNet)">{{ formatAmount(row.signedNet) }}</span>
                 </template>
               </el-table-column>
-              <el-table-column prop="voucherCount" label="凭证笔数" width="90" align="center" />
+              <el-table-column prop="voucherCount" label="凭证笔数" :width="cw('voucherCount', 90)" align="center" />
             </el-table>
           </div>
         </el-tab-pane>
@@ -265,6 +234,10 @@ import { showOperationError } from '@/composables/useMessage'
 import { useSystemParamsStore } from '@/stores/systemParams'
 import VoucherEntryDialogHost from '@/components/voucher/VoucherEntryDialogHost.vue'
 import { exportStyledTable, exportStyledWorkbook, type ExportColumnDef } from '@/utils/exportStyledExcel'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, colWidth, onDragEnd, widths } = useListColumnWidth('ledger_cf_trial_balance')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 type VoucherCheckEntry = {
   voucherId: string
@@ -716,7 +689,6 @@ onMounted(async () => {
 }
 
 @media print {
-  .page-header .filter-row,
   .el-button,
   .check-actions {
     display: none !important;

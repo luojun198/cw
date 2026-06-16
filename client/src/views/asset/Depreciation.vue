@@ -1,58 +1,6 @@
 <template>
   <div class="page page-asset-depr">
-    <div class="page-header">
-      <h3>固定资产折旧</h3>
-      <div class="filter-row">
-        <el-date-picker
-          v-model="period"
-          type="month"
-          value-format="YYYY-MM"
-          placeholder="选择期间"
-          style="width: 140px"
-        />
-        <el-button type="primary" :loading="previewing" @click="handlePreview">
-          <el-icon><Search /></el-icon>预览折旧
-        </el-button>
-        <template v-if="previewLines.length > 0 && !executed">
-          <el-divider direction="vertical" />
-          <el-checkbox v-model="generateVoucher">同时生成凭证</el-checkbox>
-          <div v-if="generateVoucher" class="header-acc-select">
-            <span class="tip-label">默认累计折旧科目：</span>
-            <el-select 
-              v-model="accumAccount" 
-              filterable 
-              placeholder="选择科目" 
-              style="width: 240px" 
-              clearable
-            >
-              <el-option
-                v-for="a in baseData.accounts.filter(acc => !acc.is_parent)"
-                :key="a.code"
-                :label="`${a.code} ${a.name}`"
-                :value="a.code"
-              />
-            </el-select>
-          </div>
-          <el-button
-            type="success"
-            :loading="executing"
-            :disabled="!!priorUnvouchered"
-            :title="priorUnvouchered ? `请先为 ${priorUnvouchered} 折旧生成凭证` : ''"
-            @click="handleExecute"
-          >
-            <el-icon><Check /></el-icon>确认计提
-          </el-button>
-        </template>
-        <el-divider direction="vertical" />
-        <el-button plain @click="openWorkloadDialog">
-          <el-icon><Edit /></el-icon>录入工作量
-        </el-button>
-        <el-button plain @click="switchTab('history')">
-          <el-icon><List /></el-icon>历史记录
-        </el-button>
-      </div>
-    </div>
-
+    
     <el-tabs v-model="activeTab" class="depr-tabs">
       <!-- 预览 Tab -->
       <el-tab-pane label="折旧预览" name="preview">
@@ -93,33 +41,34 @@
             stripe
             size="small"
             empty-text="点击「预览折旧」查看本期应计提明细"
+            @header-dragend="pvDrag"
           >
-            <el-table-column label="资产编号" prop="asset_no" width="110" />
-            <el-table-column label="资产名称" prop="asset_name" min-width="140" show-overflow-tooltip />
-            <el-table-column label="折旧方法" width="110">
+            <el-table-column label="资产编号" prop="asset_no" :width="pvCw('asset_no', 110)" />
+            <el-table-column label="资产名称" prop="asset_name" min-width="140" :width="pvWidths.asset_name" show-overflow-tooltip />
+            <el-table-column label="折旧方法" column-key="depr_method" :width="pvCw('depr_method', 110)">
               <template #default="{ row }">{{ DEPR_METHODS[row.depr_method] || row.depr_method }}</template>
             </el-table-column>
-            <el-table-column label="折旧费用科目" width="150" show-overflow-tooltip>
+            <el-table-column label="折旧费用科目" column-key="expense_account" :width="pvCw('expense_account', 150)" show-overflow-tooltip>
               <template #default="{ row }">{{ formatAccount(row.expense_account) }}</template>
             </el-table-column>
-            <el-table-column label="累计折旧科目" width="150" show-overflow-tooltip>
+            <el-table-column label="累计折旧科目" column-key="depr_account" :width="pvCw('depr_account', 150)" show-overflow-tooltip>
               <template #default="{ row }">{{ formatAccount(row.depr_account_code || accumAccount) }}</template>
             </el-table-column>
-            <el-table-column label="原值" prop="original_value" width="110" align="right">
+            <el-table-column label="原值" prop="original_value" :width="pvCw('original_value', 110)" align="right">
               <template #default="{ row }">{{ fmtAmt(row.original_value) }}</template>
             </el-table-column>
-            <el-table-column label="计提前累计折旧" prop="accum_depr_before" width="130" align="right">
+            <el-table-column label="计提前累计折旧" prop="accum_depr_before" :width="pvCw('accum_depr_before', 130)" align="right">
               <template #default="{ row }">{{ fmtAmt(row.accum_depr_before) }}</template>
             </el-table-column>
-            <el-table-column label="本月折旧额" prop="month_depr" width="115" align="right">
+            <el-table-column label="本月折旧额" prop="month_depr" :width="pvCw('month_depr', 115)" align="right">
               <template #default="{ row }">
                 <span class="depr-amt">{{ fmtAmt(row.month_depr) }}</span>
               </template>
             </el-table-column>
-            <el-table-column label="计提后累计折旧" prop="accum_depr_after" width="130" align="right">
+            <el-table-column label="计提后累计折旧" prop="accum_depr_after" :width="pvCw('accum_depr_after', 130)" align="right">
               <template #default="{ row }">{{ fmtAmt(row.accum_depr_after) }}</template>
             </el-table-column>
-            <el-table-column label="计提后净值" prop="net_value_after" width="110" align="right">
+            <el-table-column label="计提后净值" prop="net_value_after" :width="pvCw('net_value_after', 110)" align="right">
               <template #default="{ row }">{{ fmtAmt(row.net_value_after) }}</template>
             </el-table-column>
           </el-table>
@@ -146,13 +95,13 @@
         <!-- 按期间汇总 + 操作（补生成凭证 / 反折旧） -->
         <div v-if="historyPeriods.length" class="period-summary">
           <div class="period-summary-title">期间汇总</div>
-          <el-table :data="historyPeriods" size="small" border stripe max-height="200">
-            <el-table-column label="期间" prop="period" width="100" />
-            <el-table-column label="资产数" prop="count" width="80" align="right" />
-            <el-table-column label="折旧合计" width="130" align="right">
+          <el-table ref="hpTableRef" :data="historyPeriods" size="small" border stripe max-height="200" @header-dragend="hpDrag">
+            <el-table-column label="期间" prop="period" :width="hpCw('period', 100)" />
+            <el-table-column label="资产数" prop="count" :width="hpCw('count', 80)" align="right" />
+            <el-table-column label="折旧合计" column-key="total" :width="hpCw('total', 130)" align="right">
               <template #default="{ row }">¥{{ fmtAmt(row.total) }}</template>
             </el-table-column>
-            <el-table-column label="折旧凭证" min-width="160">
+            <el-table-column label="折旧凭证" column-key="voucher" min-width="160" :width="hpWidths.voucher">
               <template #default="{ row }">
                 <el-tag v-if="row.voucherNo" type="success" size="small" effect="plain">
                   已生成：{{ row.voucherNo }}
@@ -181,21 +130,21 @@
             </el-table-column>
           </el-table>
         </div>
-        <el-table :data="historyRows" size="small" border stripe max-height="480">
-          <el-table-column label="期间" width="90">
+        <el-table ref="hrTableRef" :data="historyRows" size="small" border stripe max-height="480" @header-dragend="hrDrag">
+          <el-table-column label="期间" column-key="period" :width="hrCw('period', 90)">
             <template #default="{ row }">{{ row.year }}-{{ String(row.month).padStart(2,'0') }}</template>
           </el-table-column>
-          <el-table-column label="资产编号" prop="asset_no" width="110" />
-          <el-table-column label="资产名称" prop="asset_name" min-width="130" show-overflow-tooltip />
-          <el-table-column label="折旧方法" width="110">
+          <el-table-column label="资产编号" prop="asset_no" :width="hrCw('asset_no', 110)" />
+          <el-table-column label="资产名称" prop="asset_name" min-width="130" :width="hrWidths.asset_name" show-overflow-tooltip />
+          <el-table-column label="折旧方法" column-key="depr_method" :width="hrCw('depr_method', 110)">
             <template #default="{ row }">{{ DEPR_METHODS[row.depr_method] || row.depr_method }}</template>
           </el-table-column>
-          <el-table-column label="使用部门" prop="dept_name" width="100" />
-          <el-table-column label="折旧费用科目" prop="expense_account" width="120" />
-          <el-table-column label="本月折旧" prop="month_depr" width="110" align="right">
+          <el-table-column label="使用部门" prop="dept_name" :width="hrCw('dept_name', 100)" />
+          <el-table-column label="折旧费用科目" prop="expense_account" :width="hrCw('expense_account', 120)" />
+          <el-table-column label="本月折旧" prop="month_depr" :width="hrCw('month_depr', 110)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.month_depr) }}</template>
           </el-table-column>
-          <el-table-column label="累计折旧" prop="accum_depr" width="110" align="right">
+          <el-table-column label="累计折旧" prop="accum_depr" :width="hrCw('accum_depr', 110)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.accum_depr) }}</template>
           </el-table-column>
         </el-table>
@@ -237,8 +186,14 @@ import { useFillHeightTable } from '@/composables/useFillHeightTable'
 import AccountSelect from '@/components/base/AccountSelect.vue'
 import { useBaseDataStore } from '@/stores/baseData'
 import { confirmRenumberAfterDelete } from '@/composables/useRenumberPrompt'
+import { useColumnWidthMemory, useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
 const { tableRef, containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+// 折旧预览表（复用 useFillHeightTable 的 tableRef）+ 历史期间/历史明细表的列宽记忆
+const { colWidth: pvCw, onDragEnd: pvDrag, widths: pvWidths, bindTable: pvBind } = useColumnWidthMemory('asset_depr_preview')
+pvBind(tableRef)
+const { tableRef: hpTableRef, colWidth: hpCw, onDragEnd: hpDrag, widths: hpWidths } = useListColumnWidth('asset_depr_history_periods')
+const { tableRef: hrTableRef, colWidth: hrCw, onDragEnd: hrDrag, widths: hrWidths } = useListColumnWidth('asset_depr_history_rows')
 const baseData = useBaseDataStore()
 
 const now = new Date()
@@ -508,8 +463,6 @@ onMounted(() => {
 
 <style scoped>
 .page-asset-depr { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .depr-tabs { flex: 1; display: flex; flex-direction: column; padding: 0 16px; overflow: hidden; }
 .depr-tabs :deep(.el-tabs__content) { flex: 1; overflow: hidden; }

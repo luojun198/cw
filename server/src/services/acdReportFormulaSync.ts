@@ -368,7 +368,30 @@ function getSheetIdsByDefinition(db: SqliteDatabase, definitionId: string) {
     .all(definitionId) as Array<{ id: string; sheet_index: number }>
 }
 
-function resolveSheetOffset(
+/**
+ * 把锚点位置按 (行,列) 去重后加入桶。
+ * ACD（.vts 二进制）解析时同一文本单元格常被重复记录多次（同一行列出现 2~3 次），
+ * 若不去重，下面「锚点必须在源/目标各恰好出现 1 次」的唯一性判断会把所有锚点判为多重并跳过，
+ * 导致行偏移检测恒为 0；据此放置 ACD 公式会整体错位一行（典型：资产负债表货币资金上移到「流动资产：」表头行）。
+ */
+function addAnchorPosition(
+  anchors: Map<string, Array<{ rowIndex: number; colIndex: number }>>,
+  key: string,
+  rowIndex: number,
+  colIndex: number
+) {
+  const bucket = anchors.get(key)
+  if (!bucket) {
+    anchors.set(key, [{ rowIndex, colIndex }])
+    return
+  }
+  if (bucket.some(pos => pos.rowIndex === rowIndex && pos.colIndex === colIndex)) {
+    return
+  }
+  bucket.push({ rowIndex, colIndex })
+}
+
+export function resolveSheetOffset(
   sourceSheet: ParsedAcdSheet,
   targetCells: Array<{
     row_index: number
@@ -384,24 +407,14 @@ function resolveSheetOffset(
     if (cell.cellType !== 'text' || !cell.textValue) continue
     const key = normalizeAnchorText(cell.textValue)
     if (!key || key.length < 2) continue
-    const bucket = sourceAnchors.get(key)
-    if (bucket) {
-      bucket.push({ rowIndex: cell.rowIndex, colIndex: cell.colIndex })
-    } else {
-      sourceAnchors.set(key, [{ rowIndex: cell.rowIndex, colIndex: cell.colIndex }])
-    }
+    addAnchorPosition(sourceAnchors, key, cell.rowIndex, cell.colIndex)
   }
 
   for (const cell of targetCells) {
     if (cell.cell_type === 'formula' || !cell.text_value) continue
     const key = normalizeAnchorText(cell.text_value)
     if (!key || key.length < 2) continue
-    const bucket = targetAnchors.get(key)
-    if (bucket) {
-      bucket.push({ rowIndex: cell.row_index, colIndex: cell.col_index })
-    } else {
-      targetAnchors.set(key, [{ rowIndex: cell.row_index, colIndex: cell.col_index }])
-    }
+    addAnchorPosition(targetAnchors, key, cell.row_index, cell.col_index)
   }
 
   const deltaCounts = new Map<string, number>()
@@ -542,11 +555,15 @@ export function syncAcdReportFormulasToAccountSet(
           const offsetApplied = rowDelta !== 0 || colDelta !== 0
 
           if (offsetApplied) {
+            // 仅清理「上一次同步因偏移错位而残留的同一条 ACD 公式」，避免误删 Excel 模板
+            // 在 ACD 公式原始行位上合法存在的小计公式（如「非流动负债合计」=E22+E23+E24+E25，
+            // 该公式不在 ACD 中，但其行号恰好与某条 ACD 数据公式的原始行重合）。
             for (const cell of sourceSheet.cells) {
               if (!cell.formulaText) continue
               const rawKey = `${cell.rowIndex}:${cell.colIndex}`
               const existing = existingCellMap.get(rawKey)
               if (!existing || existing.cell_type !== 'formula') continue
+              if (existing.formula_text !== cell.formulaText) continue
               clearFormulaCell.run(targetSheet.id, cell.rowIndex, cell.colIndex)
             }
           }

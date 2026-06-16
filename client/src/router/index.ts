@@ -383,6 +383,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '物料清单(BOM)', icon: 'Connection', parent: '供应链' },
       },
       {
+        path: 'scm/boms/new',
+        name: 'ScmBomNew',
+        component: () => import('@/views/scm/BomForm.vue'),
+        meta: { title: '新增BOM', parent: '供应链' },
+      },
+      {
+        path: 'scm/boms/:id/edit',
+        name: 'ScmBomEdit',
+        component: () => import('@/views/scm/BomForm.vue'),
+        meta: { title: '编辑BOM', parent: '供应链' },
+      },
+      {
         path: 'scm/docs',
         name: 'ScmDocList',
         component: () => import('@/views/scm/DocList.vue'),

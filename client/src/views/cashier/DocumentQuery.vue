@@ -1,131 +1,31 @@
 <template>
   <div class="page page-document-query">
-    <div class="page-header">
-      <h3>单据综合查询</h3>
-      <div class="filter-panel-wrap">
-        <div class="filter-bar-compact">
-          <el-button class="filter-toggle-btn" text @click="showAdvanced = !showAdvanced">
-            <el-icon><ArrowDown v-if="!showAdvanced" /><ArrowUp v-else /></el-icon>
-            {{ showAdvanced ? '收起' : '高级筛选' }}
-            <el-badge v-if="activeFilterCount > 0" class="filter-active-badge" :value="activeFilterCount" :max="99" />
-          </el-button>
-          
-          <el-input
-            v-model="filters.summary"
-            class="filter-keyword-inline"
-            size="small"
-            placeholder="输入摘要模糊搜索..."
-            clearable
-            @keyup.enter="handleQuery"
-          />
-
-          <div class="filter-bar-actions">
-            <el-button @click="resetFilters" size="small">重置</el-button>
-            <el-button type="primary" size="small" @click="handleQuery" :loading="loading">
-              <el-icon><Search /></el-icon>查询
-            </el-button>
-          </div>
-        </div>
-
-        <el-collapse-transition>
-          <div v-show="showAdvanced" class="filter-panel-expanded">
-            <div class="filter-group-row">
-              <span class="filter-group-label">基础</span>
-              <div class="filter-group-body">
-                <el-select v-model="filters.account_codes" multiple collapse-tags collapse-tags-tooltip clearable filterable placeholder="全部科目" class="filter-control filter-control--md" size="small">
-                  <el-option-group label="现金科目">
-                    <el-option v-for="a in cashAccounts" :key="a.code" :label="`${a.code} ${a.name}`" :value="a.code" />
-                  </el-option-group>
-                  <el-option-group label="银行存款">
-                    <el-option v-for="a in bankAccounts" :key="a.code" :label="`${a.code} ${a.name}`" :value="a.code" />
-                  </el-option-group>
-                </el-select>
-                <el-date-picker
-                  v-model="dateRange"
-                  type="daterange"
-                  value-format="YYYY-MM-DD"
-                  range-separator="至"
-                  start-placeholder="开始日期"
-                  end-placeholder="结束日期"
-                  class="filter-control filter-control--lg"
-                  size="small"
-                  clearable
-                />
-              </div>
-            </div>
-
-            <div class="filter-group-row">
-              <span class="filter-group-label">金额</span>
-              <div class="filter-group-body">
-                <el-select v-model="filters.amount_direction" size="small" class="filter-control filter-control--xs">
-                  <el-option label="全部" value="all" />
-                  <el-option label="收入" value="income" />
-                  <el-option label="支出" value="expense" />
-                </el-select>
-                <el-input-number v-model="filters.min_amount" :controls="false" placeholder="最小值" size="small" class="filter-control filter-control--xs" />
-                <span class="separator" style="color:var(--el-text-color-secondary)">-</span>
-                <el-input-number v-model="filters.max_amount" :controls="false" placeholder="最大值" size="small" class="filter-control filter-control--xs" />
-              </div>
-            </div>
-
-            <div class="filter-group-row">
-              <span class="filter-group-label">其它</span>
-              <div class="filter-group-body">
-                <el-select v-model="filters.settle_types" multiple collapse-tags collapse-tags-tooltip clearable placeholder="结算方式" size="small" class="filter-control filter-control--sm">
-                  <el-option v-for="t in settleTypes" :key="t.code" :label="t.name" :value="t.code" />
-                </el-select>
-                <el-input v-model="filters.bill_no" clearable placeholder="票据号" size="small" class="filter-control filter-control--sm" />
-                <el-input v-model="filters.counter_unit" clearable placeholder="对方单位" size="small" class="filter-control filter-control--sm" />
-                <el-input v-model="filters.counter_account" clearable placeholder="对方科目" size="small" class="filter-control filter-control--sm" />
-                <el-select v-model="filters.reconciled" clearable placeholder="对账状态" size="small" class="filter-control filter-control--xs">
-                  <el-option label="已对账" :value="1" />
-                  <el-option label="未对账" :value="0" />
-                </el-select>
-                <el-select v-model="filters.has_voucher" clearable placeholder="凭证状态" size="small" class="filter-control filter-control--xs">
-                  <el-option label="已生成" :value="1" />
-                  <el-option label="未生成" :value="0" />
-                </el-select>
-              </div>
-            </div>
-          </div>
-        </el-collapse-transition>
-      </div>
-      <div class="toolbar">
-        <el-button plain :disabled="!rows.length" @click="handleExport">
-          <el-icon><Download /></el-icon>导出
-        </el-button>
-        <el-button plain :disabled="!rows.length" @click="handlePrint">
-          <el-icon><Printer /></el-icon>打印
-        </el-button>
-      <span class="result-count" v-if="total > 0">共查询到 {{ total }} 条单据</span>
-      </div>
-    </div>
-
+    
     <!-- 流水表格 -->
     <div ref="tableContainerRef" class="table-container">
-      <el-table ref="tableRef" :data="rows" :height="tableHeight" border stripe size="small" class="compact-data-table" v-loading="loading">
-        <el-table-column label="科目名称" width="140" show-overflow-tooltip>
+      <el-table ref="tableRef" :data="rows" :height="tableHeight" border stripe size="small" class="compact-data-table" v-loading="loading" @header-dragend="onDragEnd">
+        <el-table-column label="科目名称" column-key="account_name" :width="cw('account_name', 140)" show-overflow-tooltip>
           <template #default="{ row }">{{ getAccountName(row.account_code) }}</template>
         </el-table-column>
-        <el-table-column label="日期" prop="biz_date" width="100" />
-        <el-table-column label="摘要" prop="summary" min-width="160" show-overflow-tooltip />
-        <el-table-column label="结算方式" prop="settle_type" width="90" show-overflow-tooltip>
+        <el-table-column label="日期" prop="biz_date" :width="cw('biz_date', 100)" />
+        <el-table-column label="摘要" prop="summary" min-width="160" :width="widths.summary" show-overflow-tooltip />
+        <el-table-column label="结算方式" prop="settle_type" :width="cw('settle_type', 90)" show-overflow-tooltip>
           <template #default="{ row }">{{ getSettleTypeName(row.settle_type) }}</template>
         </el-table-column>
-        <el-table-column label="票据号" prop="bill_no" width="110" show-overflow-tooltip />
-        <el-table-column label="对方单位" prop="counter_unit" width="140" show-overflow-tooltip />
-        <el-table-column label="借方(收入)" prop="debit" width="120" align="right">
+        <el-table-column label="票据号" prop="bill_no" :width="cw('bill_no', 110)" show-overflow-tooltip />
+        <el-table-column label="对方单位" prop="counter_unit" :width="cw('counter_unit', 140)" show-overflow-tooltip />
+        <el-table-column label="借方(收入)" prop="debit" :width="cw('debit', 120)" align="right">
           <template #default="{ row }"><span v-if="row.debit" class="debit">{{ fmt(row.debit) }}</span></template>
         </el-table-column>
-        <el-table-column label="贷方(支出)" prop="credit" width="120" align="right">
+        <el-table-column label="贷方(支出)" prop="credit" :width="cw('credit', 120)" align="right">
           <template #default="{ row }"><span v-if="row.credit" class="credit">{{ fmt(row.credit) }}</span></template>
         </el-table-column>
-        <el-table-column label="已对账" width="70" align="center">
+        <el-table-column label="已对账" column-key="reconciled" :width="cw('reconciled', 70)" align="center">
           <template #default="{ row }">
             <el-icon v-if="row.reconciled" color="#67c23a"><CircleCheck /></el-icon>
           </template>
         </el-table-column>
-        <el-table-column label="关联凭证" width="120" show-overflow-tooltip>
+        <el-table-column label="关联凭证" column-key="voucher" :width="cw('voucher', 120)" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.voucher_no" style="color:var(--el-color-primary)">
               {{ row.voucher_year }}-{{ String(row.voucher_month).padStart(2,'0') }} #{{ row.voucher_no }}
@@ -154,9 +54,13 @@ import { ElMessage } from 'element-plus'
 import { Search, Printer, Download, ArrowUp, ArrowDown, CircleCheck } from '@element-plus/icons-vue'
 import { cashierApi } from '@/api/cashier'
 import { useFillHeightTable } from '@/composables/useFillHeightTable'
+import { useColumnWidthMemory } from '@/composables/useColumnWidthMemory'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
 
 const { tableRef, containerRef: tableContainerRef, tableHeight } = useFillHeightTable()
+const { colWidth, onDragEnd, widths, bindTable } = useColumnWidthMemory('cashier_document_query')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
+bindTable(tableRef)
 
 const accounts = ref<{ code: string; name: string; is_cash: number; is_bank: number }[]>([])
 const cashAccounts = computed(() => accounts.value.filter(a => a.is_cash))
@@ -306,8 +210,6 @@ async function handleExport() {
 
 <style scoped>
 .page-document-query { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); background: #fff;}
-.page-header h3 { margin: 0 0 12px; font-size: 16px; font-weight: 600; }
 
 .filter-panel-wrap { width: 100%; margin-bottom: 8px; }
 .filter-bar-compact { display: flex; align-items: center; gap: 6px; min-height: 28px; }

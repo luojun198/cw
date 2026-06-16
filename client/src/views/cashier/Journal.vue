@@ -1,69 +1,6 @@
 <template>
   <div class="page page-cashier-journal">
-    <div class="page-header">
-      <h3>出纳录单</h3>
-      <div class="filter-row">
-        <el-select
-          v-model="filters.account_code"
-          filterable
-          placeholder="输入编码或名称检索科目"
-          style="width: 220px"
-          @change="handleQuery"
-          popper-class="counter-account-popper"
-          :filter-method="onCashierAccountFilter"
-          @visible-change="onCashierAccountVisibleChange"
-        >
-          <el-option
-            v-for="a in filteredCashierAccounts"
-            :key="a.code"
-            :label="`${a.code} ${a.name}`"
-            :value="a.isParent ? '' : a.code"
-            :disabled="a.isParent"
-            :class="{ 'parent-option': a.isParent }"
-          />
-        </el-select>
-        <el-date-picker
-          v-model="filters.start_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="开始日期"
-          style="width: 140px"
-        />
-        <el-date-picker
-          v-model="filters.end_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="结束日期"
-          style="width: 140px"
-        />
-        <el-button type="primary" @click="handleQuery">
-          <el-icon><Search /></el-icon>查询
-        </el-button>
-        <el-button @click="openAddDialog">
-          <el-icon><Plus /></el-icon>录入
-        </el-button>
-        <el-button :loading="swapping" @click="handleBatchSwap">
-          <el-icon><Connection /></el-icon>借贷互换
-        </el-button>
-
-        <el-button type="success" plain :disabled="!filters.account_code" :loading="generating" @click="handleGenerateVoucher">
-          <el-icon><DocumentAdd /></el-icon>生成凭证
-        </el-button>
-        <el-button type="danger" plain :disabled="!filters.account_code" :loading="deletingVouchers" @click="handleDeleteCashierVouchers">
-          <el-icon><Delete /></el-icon>删除出纳凭证
-        </el-button>
-        <el-button plain :disabled="!filters.account_code" @click="openImportDialog">
-          <el-icon><Upload /></el-icon>导入
-        </el-button>
-        <el-button plain :disabled="!rows.length" @click="handleExport">
-          <el-icon><Download /></el-icon>导出
-        </el-button>
-        <el-button plain @click="showColSetting = true">
-          <el-icon><Setting /></el-icon>列设置
-        </el-button>
-      </div>
-    </div>
-
+    
     <!-- 期初/期末余额摘要 -->
     <div v-if="journalResult" class="balance-summary">
       <span>期初余额：<b>{{ fmt(journalResult.opening) }}</b></span>
@@ -1757,8 +1694,6 @@ watch(reconDate, () => { if (showReconcile.value) loadReconDialog() }, { deep: t
 
 <style scoped>
 .page-cashier-journal { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .balance-summary { display: flex; gap: 24px; padding: 6px 16px; background: var(--el-fill-color-lighter); font-size: 13px; }
 .balance-summary b { font-weight: 600; }

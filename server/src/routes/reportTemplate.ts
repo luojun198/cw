@@ -4,7 +4,7 @@ import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import multer from 'multer'
 import { v4 as uuidv4 } from 'uuid'
-import { authMiddleware, AuthRequest } from '../middleware/index.js'
+import { authMiddleware, AuthRequest, requirePermission } from '../middleware/index.js'
 import { getDb } from '../db/index.js'
 import { executeTemplateSheets } from '../services/reportTemplateExecutor.js'
 import { exportReportTemplateToBuffer } from '../services/reportTemplateExport.js'
@@ -1608,8 +1608,8 @@ router.patch('/templates/:code/meta', (req: AuthRequest, res) => {
   })
 })
 
-// 删除报表模板
-router.delete('/templates/:code', (req: AuthRequest, res) => {
+// 删除报表模板（需「报表定义」权限，与报表维护页 /report/dynamic 的访问权限一致；系统管理员 '*' 亦可）
+router.delete('/templates/:code', requirePermission('report:define'), (req: AuthRequest, res) => {
   const reportCode = String(req.params.code || '').trim()
   const db = getDb()
   const resolvedAccountSetId = resolveAccountSetId(req.accountSetId || '', db)
@@ -1621,11 +1621,6 @@ router.delete('/templates/:code', (req: AuthRequest, res) => {
   const definition = getDefinitionByCode(db, resolvedAccountSetId, reportCode)
   if (!definition) {
     return res.status(404).json({ code: 404, message: '未找到对应的报表模板' })
-  }
-
-  // Only admin can delete
-  if (!req.permissions?.includes('*')) {
-    return res.status(403).json({ code: 403, message: '无权删除报表模板' })
   }
 
   db.transaction(() => {

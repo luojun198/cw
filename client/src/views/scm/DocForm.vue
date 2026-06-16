@@ -17,7 +17,11 @@
           <el-button type="primary" size="small" :loading="saving" @click="handleSave">保存</el-button>
         </template>
         <template v-else>
-          <el-button v-if="form.status === 'draft'" size="small" type="primary" @click="goEdit">编辑</el-button>
+          <el-button v-if="form.status === 'draft' && !isLocked" size="small" type="primary" @click="goEdit">编辑</el-button>
+          <el-tag v-if="isLocked" type="warning" size="small" effect="plain" style="margin-right:4px">🔒 已下推锁定</el-tag>
+          <el-button v-if="canPush" type="success" size="small" @click="handlePush">
+            下推{{ pushLabel(form.doc_type) }}
+          </el-button>
         </template>
       </div>
     </div>
@@ -37,14 +41,14 @@
             </el-form-item>
           </el-col>
           <el-col :span="6">
-            <el-form-item :label="isTransfer ? '调出仓' : '仓库'">
+            <el-form-item :label="isTransfer ? '调出仓' : '仓库'" :required="isTransfer || isShipment">
               <el-select v-model="form.warehouse_code" clearable filterable style="width:100%">
                 <el-option v-for="w in warehouses" :key="w.code" :label="`${w.code} ${w.name}`" :value="w.code" />
               </el-select>
             </el-form-item>
           </el-col>
           <el-col :span="6">
-            <el-form-item label="往来单位">
+            <el-form-item label="往来单位" :required="isShipment">
               <el-autocomplete
                 v-model="partnerSearch"
                 :fetch-suggestions="queryPartners"
@@ -71,6 +75,37 @@
         </el-row>
       </el-form>
 
+      <!-- 关联单据链条 -->
+      <div v-if="(sourceDocs && sourceDocs.length) || (targetDocs && targetDocs.length)" class="doc-relation-bar">
+        <span v-if="sourceDocs && sourceDocs.length" class="relation-item">
+          <span class="relation-label">上游来源：</span>
+          <span v-for="sd in sourceDocs" :key="sd.id" class="target-doc-item" style="margin-right:12px; display:inline-flex; align-items:center;">
+            <el-link type="primary" size="small" @click="viewRelationDoc(sd.id)">
+              [{{ typeName(sd.doc_type) }}] {{ sd.doc_no }}
+            </el-link>
+            <el-tag size="small" :type="sd.status === 'audited' ? 'success' : 'info'" style="margin-left:4px">
+              {{ sd.status === 'audited' ? '已审核' : '草稿' }}
+            </el-tag>
+          </span>
+        </span>
+        <span v-if="targetDocs && targetDocs.length" class="relation-item" style="margin-left:24px">
+          <span class="relation-label">下游关联：</span>
+          <span v-for="td in targetDocs" :key="td.id" class="target-doc-item" style="margin-right:12px; display:inline-flex; align-items:center;">
+            <el-link type="primary" size="small" @click="viewRelationDoc(td.id)">
+              [{{ typeName(td.doc_type) }}] {{ td.doc_no }}
+            </el-link>
+            <el-tag size="small" :type="td.status === 'audited' ? 'success' : 'info'" style="margin-left:4px">
+              {{ td.status === 'audited' ? '已审核' : '草稿' }}
+            </el-tag>
+          </span>
+        </span>
+      </div>
+
+      <!-- 已被下游引用锁定提示 -->
+      <el-alert v-if="isLocked && isView" type="warning" show-icon :closable="false" style="margin-bottom:10px">
+        本单已被下游单据引用并锁定，不可修改/删除；如需调整请先删除下游单据。
+      </el-alert>
+
       <!-- 单据类型提示 -->
       <el-alert v-if="isTransfer && !isView" type="info" show-icon :closable="false" style="margin-bottom:10px">
         调拨单：<b>调出仓</b>在上方「调出仓」选择；<b>调入仓</b>在下表每行的「调入仓」列分别指定（可不同行不同仓）。
@@ -83,6 +118,9 @@
       <div class="doc-lines-toolbar">
         <template v-if="!isView">
           <el-button size="small" @click="addLine"><el-icon><Plus /></el-icon>添加行</el-button>
+          <el-button v-if="sourceType" size="small" type="primary" plain @click="sourcePickerVisible = true">
+            <el-icon><Connection /></el-icon>选择源单（{{ typeName(sourceType) }}）
+          </el-button>
           <template v-if="isProduction">
             <el-select v-model="selectedBom" placeholder="选择BOM" size="small" style="width:200px" clearable>
               <el-option v-for="b in boms" :key="b.id" :label="`${b.code} ${b.item_code}`" :value="b.id" />
@@ -99,7 +137,7 @@
       </div>
 
       <!-- 明细表格 -->
-      <el-table :data="lines" border size="small" :height="tableHeight" style="width:100%" @cell-click="handleCellClick" class="compact-data-table">
+      <el-table :data="lines" border size="small" :height="tableHeight" style="width:100%" @cell-click="handleCellClick" @cell-dblclick="handleCellDblClick" class="compact-data-table">
         <el-table-column label="#" width="44" align="center" fixed="left">
           <template #default="{ $index }">{{ $index + 1 }}</template>
         </el-table-column>
@@ -109,7 +147,7 @@
               <span>{{ row.item_name || row.item_code }}</span>
             </template>
             <template v-else>
-              <ItemPicker v-if="isEditing($index, 'item_code')" v-model="row.item_code" :warehouse-code="row.warehouse_code || form.warehouse_code" @pick="(item:any) => { onItemPick(row, item); stopEdit() }" v-focus />
+              <ItemPicker v-if="isEditing($index, 'item_code')" v-model="row.item_code" :warehouse-code="row.warehouse_code || form.warehouse_code" auto-open :focus-search="itemPickerFocusSearch" @pick="(item:any) => { onItemPick(row, item); stopEdit() }" />
               <div v-else class="editable-cell">{{ row.item_name ? `${row.item_code} ${row.item_name}` : row.item_code }}</div>
             </template>
           </template>
@@ -132,6 +170,19 @@
               <el-input-number v-if="isEditing($index, 'qty')" v-model="row.qty" :min="0" :precision="3" size="small" :controls="false" style="width:100%" @change="recalcRow(row)" @blur="stopEdit" v-focus />
               <div v-else class="editable-cell">{{ row.qty }}</div>
             </template>
+          </template>
+        </el-table-column>
+        <el-table-column v-if="showPushCol && isView" label="下推进度" width="120" align="center">
+          <template #default="{ row }">
+            <template v-if="(Number(row.qty) || 0) > 0">
+              <span :class="(row.pushed_qty || 0) >= row.qty ? 'text-success' : ((row.pushed_qty || 0) > 0 ? 'text-warning' : 'text-muted')">
+                {{ row.pushed_qty || 0 }} / {{ row.qty }}
+              </span>
+              <div v-if="(row.qty - (row.pushed_qty || 0)) > 0" style="font-size:11px;color:var(--el-text-color-secondary);">
+                可下推 {{ row.qty - (row.pushed_qty || 0) }}
+              </div>
+            </template>
+            <span v-else class="text-muted">—</span>
           </template>
         </el-table-column>
         <el-table-column label="单价" width="120" align="right" prop="price">
@@ -185,16 +236,33 @@
         </el-table-column>
       </el-table>
     </div>
+
+    <!-- 批量选择物料对话框（双击物料列触发） -->
+    <ItemBatchPicker
+      v-model="batchPickerVisible"
+      @confirm="onBatchPickConfirm"
+    />
+
+    <!-- 选择源单对话框（订单→下游单据 反向选单，支持多对一合并） -->
+    <SourceDocPicker
+      v-if="sourceType"
+      v-model="sourcePickerVisible"
+      :source-doc-type="sourceType"
+      :partner-code="form.partner_code"
+      @confirm="onSourcePick"
+    />
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { ArrowLeft, Plus, Connection } from '@element-plus/icons-vue'
 import { scmApi, type ScmDocType } from '@/api/scm'
 import ItemPicker from '@/components/scm/ItemPicker.vue'
+import ItemBatchPicker from '@/components/scm/ItemBatchPicker.vue'
+import SourceDocPicker from '@/components/scm/SourceDocPicker.vue'
 
 const route  = useRoute()
 const router = useRouter()
@@ -218,6 +286,7 @@ const isProduction = computed(() => ['PL','PF','PB','PJ','AS','DS'].includes(for
 const isInvoice    = computed(() => ['RP','RS'].includes(form.value.doc_type))
 const isTransfer   = computed(() => form.value.doc_type === 'TR')
 const isCount      = computed(() => form.value.doc_type === 'CK')
+const isShipment   = computed(() => form.value.doc_type === 'SO')
 
 const DOC_TITLE: Record<string, string> = {
   PI:'采购入库', PR:'采购退货', SO:'销售出库', SR:'销售退货',
@@ -239,9 +308,73 @@ const tableHeight = computed(() => 'calc(100vh - 290px)')
 
 const form = ref<Record<string, any>>({
   doc_type: '', doc_no: '', doc_date: new Date().toISOString().slice(0, 10),
-  warehouse_code: '', partner_code: '', operator: '', remark: '', status: 'draft', bom_id: '',
+  warehouse_code: '', partner_code: '', operator: '', remark: '', status: 'draft', bom_id: '', source_doc_id: '',
 })
 const lines = ref<Array<Record<string, any>>>([])
+
+const sourceDoc = ref<any>(null)
+const sourceDocs = ref<any[]>([])
+const targetDocs = ref<any[]>([])
+const sourcePickerVisible = ref(false)
+
+const PUSH_MAP: Record<string, string> = {
+  PO: 'PI',   // 采购订单→采购入库
+  PQ: 'PO',   // 采购询价→采购订单
+  SOa:'SO',   // 销售订单→销售出库
+  SQ: 'SOa',  // 销售报价→销售订单
+}
+const PUSH_LABEL: Record<string, string> = {
+  PO: '采购入库', PQ: '采购订单', SOa:'销售出库', SQ:'销售订单',
+}
+// 下游单据 → 源单类型（PUSH_MAP 反向），用于「选择源单」反向选单
+const SOURCE_MAP: Record<string, string> = {
+  PI: 'PO', PO: 'PQ', SO: 'SOa', SOa: 'SQ',
+}
+function pushTarget(docType: string): string | undefined { return PUSH_MAP[docType] }
+function pushLabel(docType: string): string { return PUSH_LABEL[docType] || '' }
+// 当前单据可反向选择的源单类型（仅新增/编辑态可用）
+const sourceType = computed(() => (!isView.value ? SOURCE_MAP[form.value.doc_type] : undefined))
+
+// 选择源单回调：把源单剩余明细追加到当前明细（支持多对一合并）
+function onSourcePick(payload: { lines: any[]; partner_code: string }) {
+  const incoming = payload.lines || []
+  if (!incoming.length) return
+  // 往来单位：表单为空则用源单的
+  if (!form.value.partner_code && payload.partner_code) {
+    form.value.partner_code = payload.partner_code
+    const p = allPartners.value.find(x => x.code === payload.partner_code)
+    partnerSearch.value = p ? `${p.code} ${p.name}` : payload.partner_code
+  }
+  // 每行补全仓库（用表单仓库兜底）并追加；去掉当前的空行
+  const rows = incoming.map(l => ({ ...l, warehouse_code: l.warehouse_code || form.value.warehouse_code }))
+  const kept = lines.value.filter(l => l.item_code)
+  lines.value = [...kept, ...rows]
+  ElMessage.success(`已带入 ${rows.length} 行明细`)
+}
+
+// 本单是否可下推：可查看、已审核、存在下推目标，且未完全下推
+const fullyPushed = computed(() =>
+  lines.value.length > 0 && lines.value.every(l => (Number(l.pushed_qty) || 0) >= (Number(l.qty) || 0))
+)
+const canPush = computed(() =>
+  isView.value && form.value.status === 'audited' && !!pushTarget(form.value.doc_type) && !fullyPushed.value
+)
+// 本单是否已被下游引用（即被锁定）
+const isLocked = computed(() => targetDocs.value.length > 0)
+// 该类型单据是否参与下推链路（决定是否展示行级进度列）
+const showPushCol = computed(() => !!pushTarget(form.value.doc_type))
+
+function handlePush() {
+  const target = PUSH_MAP[form.value.doc_type]
+  if (!target) return
+  router.push({ name: 'ScmDocNew', query: { doc_type: target, source_doc_id: editId.value } })
+}
+
+const typeName = (c: string) => DOC_TITLE[c] || c
+
+function viewRelationDoc(id: string) {
+  router.push(`/scm/docs/${id}`)
+}
 
 const fmt = (v: number) => (v ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const totalQty       = computed(() => lines.value.reduce((s, l) => s + (Number(l.qty) || 0), 0))
@@ -249,13 +382,21 @@ const totalAmount    = computed(() => lines.value.reduce((s, l) => s + (Number(l
 const totalTaxAmount = computed(() => lines.value.reduce((s, l) => s + (Number(l.amount) || 0) + (Number(l.tax_amount) || 0), 0))
 
 const editingCell = ref<{rowIndex: number, field: string} | null>(null)
+/** 双击物料列时为 true，ItemPicker 聚焦下拉检索框 */
+const itemPickerFocusSearch = ref(false)
+/** 批量选择器是否可见 */
+const batchPickerVisible = ref(false)
+/** 触发批量选择的行索引（-1 表示追加到末尾） */
+const batchPickerRowIndex = ref(-1)
 const vFocus = {
   mounted: (el: HTMLElement) => {
-    const input = (el.tagName === 'INPUT' ? el : el.querySelector('input')) as HTMLInputElement | null
-    if (input) {
-      input.focus()
-      input.select()
-    }
+    nextTick(() => {
+      const input = (el.tagName === 'INPUT' ? el : el.querySelector('input')) as HTMLInputElement | null
+      if (input) {
+        input.focus()
+        input.select()
+      }
+    })
   }
 }
 
@@ -267,21 +408,104 @@ function handleCellClick(row: any, column: any) {
   if (isView.value) return
   const rowIndex = lines.value.indexOf(row)
   const field = column.property
-  if (['item_code', 'warehouse_code', 'qty', 'price', 'tax_rate', 'tax_amount', 'remark'].includes(field)) {
+  if (field === 'item_code') {
+    itemPickerFocusSearch.value = false
+    editingCell.value = { rowIndex, field }
+    return
+  }
+  if (['warehouse_code', 'qty', 'price', 'tax_rate', 'tax_amount', 'remark'].includes(field)) {
     editingCell.value = { rowIndex, field }
   }
 }
 
-function stopEdit() {
-  editingCell.value = null
+function handleCellDblClick(row: any, column: any) {
+  if (isView.value) return
+  if (column.property !== 'item_code') return
+  // 双击：打开全页面批量选择器
+  stopEdit()
+  batchPickerRowIndex.value = lines.value.indexOf(row)
+  batchPickerVisible.value = true
 }
 
-onMounted(async () => {
+function openItemPicker(rowIndex: number) {
+  itemPickerFocusSearch.value = true
+  editingCell.value = { rowIndex, field: 'item_code' }
+}
+
+/** 批量选择器确认回调：在触发行位置插入选中物料行 */
+function onBatchPickConfirm(items: any[]) {
+  if (!items.length) return
+  const rowIndex = batchPickerRowIndex.value
+  const newLines = items.map(item => ({
+    item_code: item.code,
+    item_name: item.name || '',
+    warehouse_code: form.value.warehouse_code,
+    qty: 0,
+    price: item.purchase_price || item.ref_cost || 0,
+    amount: 0,
+    tax_rate: 0,
+    tax_amount: 0,
+    remark: '',
+  }))
+  if (rowIndex >= 0 && rowIndex < lines.value.length) {
+    const currentRow = lines.value[rowIndex]
+    // 若触发行是空行（无物料），用第一个替换它，其余插入后面
+    if (!currentRow.item_code) {
+      Object.assign(currentRow, newLines[0])
+      recalcRow(currentRow)
+      lines.value.splice(rowIndex + 1, 0, ...newLines.slice(1))
+    } else {
+      // 触发行有内容，在其后插入所有选中行
+      lines.value.splice(rowIndex + 1, 0, ...newLines)
+    }
+  } else {
+    // 追加到末尾
+    lines.value.push(...newLines)
+  }
+  ElMessage.success(`已添加 ${items.length} 行物料`)
+}
+
+function stopEdit() {
+  editingCell.value = null
+  itemPickerFocusSearch.value = false
+}
+
+// 基础数据（类型/仓库/往来单位）仅需加载一次
+async function loadMeta() {
   const [ts, ws, ps] = await Promise.all([scmApi.getDocTypes(), scmApi.getWarehouses(), scmApi.getPartners({})])
   if (ts.code === 0) types.value = ts.data
   if (ws.code === 0) warehouses.value = ws.data
   if (ps.code === 0) allPartners.value = ps.data
+}
 
+// 重置为空白表单
+function resetForm() {
+  form.value = {
+    doc_type: '', doc_no: '', doc_date: new Date().toISOString().slice(0, 10),
+    warehouse_code: '', partner_code: '', operator: '', remark: '', status: 'draft', bom_id: '', source_doc_id: '',
+  }
+  lines.value = []
+  partnerSearch.value = ''
+  selectedBom.value = ''
+  editingCell.value = null
+  sourceDoc.value = null
+  sourceDocs.value = []
+  targetDocs.value = []
+}
+
+// 当前路由对应的单据身份键：用于判断 keep-alive 复用时是否需要重新初始化
+function currentDocKey() {
+  return isNew.value
+    ? `new|${initDocType.value}|${initSourceDocId.value}`
+    : `${String(route.name)}|${editId.value || ''}`
+}
+let initedKey = ''
+// 离开新增页后置位：下次激活时强制刷新为干净表单（避免复用同一实例时残留上一单数据）
+let needReinitOnActivate = false
+
+async function initForm() {
+  initedKey = currentDocKey()
+  resetForm()
   if (isNew.value) {
     form.value.doc_type = initDocType.value
     lines.value = [newLine()]
@@ -290,11 +514,33 @@ onMounted(async () => {
     }
     // 下推：从源单加载数据
     if (initSourceDocId.value) {
+      form.value.source_doc_id = initSourceDocId.value
       await loadSourceDoc(initSourceDocId.value)
     }
   } else if (editId.value) {
     await loadDoc(editId.value)
   }
+}
+
+onMounted(async () => {
+  await loadMeta()
+  await initForm()
+})
+
+// keep-alive 会按缓存键复用同一组件实例（onMounted 不再重跑）。
+// 复用时若不重新初始化，会出现 doc_type/明细等沿用上一单的数据：
+//  · 下推/切换不同单据类型 → 单据身份键变化 → 重新初始化
+//  · 新增页离开后再次进入（保存/取消/切菜单）→ needReinitOnActivate → 刷新为干净表单
+onActivated(() => {
+  if (needReinitOnActivate) { needReinitOnActivate = false; initForm(); return }
+  if (currentDocKey() !== initedKey) initForm()
+})
+
+// 离开新增页时标记：下次回到新增页应是一张全新单据，而非残留的上一单。
+// 注意 onDeactivated 触发时路由已切走，不能用 isNew.value 判断；
+// 改用本实例初始化时记录的 initedKey（新增页以 "new|" 开头）。
+onDeactivated(() => {
+  if (initedKey.startsWith('new|')) needReinitOnActivate = true
 })
 
 async function loadDoc(id: string) {
@@ -305,8 +551,11 @@ async function loadDoc(id: string) {
     doc_type: d.doc_type, doc_no: d.doc_no, doc_date: d.doc_date,
     warehouse_code: d.warehouse_code || '', partner_code: d.partner_code || '',
     operator: d.operator || '', remark: d.remark || '', status: d.status,
-    bom_id: d.bom_id || '',
+    bom_id: d.bom_id || '', source_doc_id: d.source_doc_id || '',
   }
+  sourceDoc.value = d.source_doc || null
+  sourceDocs.value = d.source_docs || (d.source_doc ? [d.source_doc] : [])
+  targetDocs.value = d.target_docs || []
   if (d.bom_id) selectedBom.value = d.bom_id
   if (d.partner_code) {
     const p = allPartners.value.find(x => x.code === d.partner_code)
@@ -314,17 +563,27 @@ async function loadDoc(id: string) {
   }
   lines.value = (d.lines || []).map((l: any) => ({
     id: l.id, item_code: l.item_code, item_name: l.item_name || '',
-    warehouse_code: l.warehouse_code || '', qty: l.qty,
+    warehouse_code: l.warehouse_code || '', qty: l.qty, pushed_qty: l.pushed_qty || 0,
     price: l.price || 0, amount: l.amount || 0, unit_cost: l.unit_cost || 0,
     tax_rate: l.tax_rate || 0, tax_amount: l.tax_amount || 0, remark: l.remark || '',
   }))
 }
+
+// 监听 editId，如果跳转到关联的同类型页面，需要重新初始化数据
+watch(editId, (newId) => {
+  if (newId) {
+    loadDoc(newId)
+  }
+})
 
 // 从源单加载数据（订单下推）
 async function loadSourceDoc(sourceId: string) {
   const res = await scmApi.getDoc(sourceId)
   if (res.code !== 0) return
   const s = res.data as any
+  // 新建下游单时即展示上游来源（关联条），让下游单据知道来源
+  sourceDoc.value = { id: s.id, doc_no: s.doc_no, doc_type: s.doc_type, status: s.status }
+  sourceDocs.value = [sourceDoc.value]
   // 复制源单头部信息
   form.value.partner_code = s.partner_code || ''
   form.value.warehouse_code = s.warehouse_code || ''
@@ -334,15 +593,23 @@ async function loadSourceDoc(sourceId: string) {
     const p = allPartners.value.find(x => x.code === s.partner_code)
     partnerSearch.value = p ? `${p.code} ${p.name}` : s.partner_code
   }
-  // 复制源单明细行（数量保留、单价清空待填）
+  // 复制源单明细行：按「剩余可下推数量 = 数量 - 已下推」预填，已下推完的行跳过
   if (s.lines && s.lines.length) {
-    lines.value = s.lines.map((l: any) => ({
-      item_code: l.item_code, item_name: l.item_name || '',
-      warehouse_code: l.warehouse_code || form.value.warehouse_code,
-      qty: l.qty, price: 0, amount: 0, unit_cost: l.unit_cost || 0,
-      tax_rate: 0, tax_amount: 0, remark: l.remark || '',
-      source_line_id: l.id,
-    }))
+    const rows = s.lines
+      .map((l: any) => ({ l, remain: (Number(l.qty) || 0) - (Number(l.pushed_qty) || 0) }))
+      .filter(({ remain }: any) => remain > 0)
+      .map(({ l, remain }: any) => {
+        const price = Number(l.price) || 0
+        return {
+          item_code: l.item_code, item_name: l.item_name || '',
+          warehouse_code: l.warehouse_code || form.value.warehouse_code,
+          qty: remain, price, amount: Math.round(remain * price * 100) / 100, unit_cost: l.unit_cost || 0,
+          tax_rate: 0, tax_amount: 0, remark: l.remark || '',
+          source_line_id: l.id,
+        }
+      })
+    // 若源单已全部下推完，至少保留一空行避免空表格
+    lines.value = rows.length ? rows : [newLine()]
   }
 }
 
@@ -399,6 +666,9 @@ async function handleBomExplode() {
 async function handleSave() {
   if (!form.value.doc_type || !form.value.doc_date) return ElMessage.warning('类型和日期不能为空')
   if (isTransfer.value && !form.value.warehouse_code) return ElMessage.warning('调拨单须指定调出仓')
+  // 销售发货单：审核要扣库存、挂应收，故仓库与客户必填
+  if (isShipment.value && !form.value.warehouse_code) return ElMessage.warning('销售出库单必须指定仓库')
+  if (isShipment.value && !form.value.partner_code) return ElMessage.warning('销售出库单必须指定客户（往来单位）')
   const cleanLines = lines.value
     .filter(l => l.item_code && Number(l.qty) > 0)
     .map(l => ({
@@ -475,4 +745,30 @@ function goEdit() {
 .editable-cell:hover {
   background-color: var(--el-fill-color-light);
 }
+.doc-relation-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  background-color: var(--el-color-info-light-9);
+  border: 1px dashed var(--el-border-color);
+  border-radius: var(--radius-sm);
+  margin-bottom: 12px;
+  font-size: 13px;
+  gap: 16px;
+}
+.relation-item {
+  display: inline-flex;
+  align-items: center;
+}
+.relation-label {
+  font-weight: 600;
+  color: var(--el-text-color-regular);
+}
+.target-doc-item {
+  margin-right: 12px;
+}
+.text-success { color: var(--el-color-success); font-weight: 600; }
+.text-warning { color: var(--el-color-warning); font-weight: 600; }
+.text-muted { color: var(--el-text-color-placeholder); }
 </style>

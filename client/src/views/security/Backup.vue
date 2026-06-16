@@ -1,39 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-header">
-      <h3>备份恢复</h3>
-      <div class="header-actions">
-        <el-button type="primary" :loading="backingUp" @click="handleBackup">
-          <el-icon v-if="!backingUp"><Download /></el-icon>
-          完整备份
-        </el-button>
-        <el-button
-          type="primary"
-          plain
-          :loading="accountSetBackingUp"
-          @click="handleAccountSetBackup"
-        >
-          <el-icon v-if="!accountSetBackingUp"><Download /></el-icon>
-          单账套备份
-        </el-button>
-        <el-button type="success" @click="handleImportClick">
-          <el-icon><Upload /></el-icon>
-          导入备份
-        </el-button>
-        <el-button type="info" :loading="cleaning" @click="handleDatabaseCleanup">
-          <el-icon><Brush /></el-icon>
-          数据库瘦身
-        </el-button>
-        <input
-          ref="fileInputRef"
-          type="file"
-          accept=".db,.sqlite,.sqlite3"
-          style="display: none"
-          @change="handleFileSelected"
-        />
-      </div>
-    </div>
-
+    
     <!-- 统计卡片 -->
     <el-row :gutter="16" style="margin-bottom: 16px">
       <el-col :span="6">
@@ -746,13 +713,11 @@ onMounted(fetchData)
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
-.page-header h3 {
   margin: 0;
 }
 .header-actions {

@@ -1,50 +1,25 @@
 <template>
   <div class="page page-daily">
-    <div class="page-header">
-      <h3>账户余额表</h3>
-      <div class="filter-row">
-        <el-date-picker
-          v-model="dateRange"
-          type="daterange"
-          value-format="YYYY-MM-DD"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          style="width:260px"
-          @change="load"
-        />
-        <el-button type="primary" @click="load" :loading="loading">
-          <el-icon><Search /></el-icon>查询
-        </el-button>
-        <el-button plain :disabled="!displayRows.length" @click="handleExport">
-          <el-icon><Download /></el-icon>导出
-        </el-button>
-        <el-button plain @click="handlePrint">
-          <el-icon><Printer /></el-icon>打印
-        </el-button>
-        <el-checkbox v-model="showZero">显示零值</el-checkbox>
-      </div>
-    </div>
-
+    
     <div v-if="rows.length" class="report-body">
       <h4 class="report-title">
         账户资金余额表
         <span class="subtitle">（期间：{{ dateRange?.[0] }} 至 {{ dateRange?.[1] }}　单位：人民币元）</span>
       </h4>
 
-      <el-table :data="displayRows" size="small" class="compact-data-table" border stripe show-summary :summary-method="summarize" @row-dblclick="handleRowDblClick" style="cursor: pointer;">
-        <el-table-column label="科目编码" prop="account_code" width="120" />
-        <el-table-column label="科目名称" prop="account_name" min-width="150" />
-        <el-table-column label="期初余额" prop="opening" width="130" align="right">
+      <el-table ref="tableRef" :data="displayRows" size="small" class="compact-data-table" border stripe show-summary :summary-method="summarize" @row-dblclick="handleRowDblClick" style="cursor: pointer;" @header-dragend="onDragEnd">
+        <el-table-column label="科目编码" prop="account_code" :width="cw('account_code', 120)" />
+        <el-table-column label="科目名称" prop="account_name" min-width="150" :width="widths.account_name" />
+        <el-table-column label="期初余额" prop="opening" :width="cw('opening', 130)" align="right">
           <template #default="{ row }">{{ fmt(row.opening) }}</template>
         </el-table-column>
-        <el-table-column label="本期收入" prop="income" width="130" align="right">
+        <el-table-column label="本期收入" prop="income" :width="cw('income', 130)" align="right">
           <template #default="{ row }"><span v-if="row.income" class="debit">{{ fmt(row.income) }}</span></template>
         </el-table-column>
-        <el-table-column label="本期支出" prop="expense" width="130" align="right">
+        <el-table-column label="本期支出" prop="expense" :width="cw('expense', 130)" align="right">
           <template #default="{ row }"><span v-if="row.expense" class="credit">{{ fmt(row.expense) }}</span></template>
         </el-table-column>
-        <el-table-column label="期末余额" prop="closing" width="130" align="right">
+        <el-table-column label="期末余额" prop="closing" :width="cw('closing', 130)" align="right">
           <template #default="{ row }">{{ fmt(row.closing) }}</template>
         </el-table-column>
       </el-table>
@@ -78,6 +53,10 @@ import { Search, Printer, Download } from '@element-plus/icons-vue'
 import { cashierApi } from '@/api/cashier'
 import { exportStyledTable, type ExportColumnDef } from '@/utils/exportStyledExcel'
 import { useRouter } from 'vue-router'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef, colWidth, onDragEnd, widths } = useListColumnWidth('cashier_daily_report')
+function cw(key: string, fallback: number) { return colWidth(key, fallback) }
 
 const router = useRouter()
 const today = new Date().toISOString().slice(0, 10)
@@ -157,8 +136,6 @@ async function handleExport() {
 
 <style scoped>
 .page-daily { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .report-body { flex: 1; overflow: auto; padding: 16px; }
 .report-title { margin: 0 0 12px; font-size: 16px; text-align: center; }

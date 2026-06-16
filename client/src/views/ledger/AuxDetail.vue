@@ -1,59 +1,6 @@
 <template>
   <div class="page page-ledger page-ledger-aux">
-    <div class="page-header">
-      <div class="header-left">
-        <h3>辅助项目明细账</h3>
-        <div class="filter-hint">
-          <span class="filter-hint-label">当前筛选：</span>
-          <span class="filter-hint-text">{{ filterHintText }}</span>
-        </div>
-      </div>
-      <div class="header-right">
-        <DrillDownReturnButton />
-        <el-button type="primary" @click="drawerVisible = true">
-          <el-icon><Filter /></el-icon>
-          筛选
-        </el-button>
-
-        <el-divider direction="vertical" />
-
-        <el-popover placement="bottom-start" :width="280" trigger="click">
-          <template #reference>
-            <el-button plain size="small">
-              <el-icon><Setting /></el-icon>
-              列设置
-            </el-button>
-          </template>
-          <div class="aux-detail-col-settings">
-            <div
-              v-for="group in columnSettingGroups"
-              :key="group.name"
-              class="col-settings-group"
-            >
-              <div class="col-settings-group-title">{{ group.name }}</div>
-              <div
-                v-for="col in group.cols"
-                :key="col.prop"
-                class="col-settings-item"
-              >
-                <el-checkbox v-model="col.visible" @change="saveVisibleCols" />
-                <span>{{ col.label }}</span>
-              </div>
-            </div>
-          </div>
-        </el-popover>
-
-        <el-button plain :loading="loadingAll" @click="handleLoadAll">
-          全部加载
-        </el-button>
-
-        <el-button plain :loading="exportProgress.visible" :disabled="exportProgress.visible" @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出 Excel
-        </el-button>
-      </div>
-    </div>
-
+    
     <AccountScopeAlert />
 
     <!-- 筛选抽屉 -->
@@ -1692,7 +1639,6 @@ onActivated(() => {
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;

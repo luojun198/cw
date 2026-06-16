@@ -1,26 +1,6 @@
 <template>
   <div class="page">
-    <div class="page-header">
-      <h3>凭证模版管理</h3>
-      <div style="display: flex; gap: 8px; align-items: center">
-        <el-input
-          v-model="searchKeyword"
-          placeholder="搜索模版编号、说明..."
-          clearable
-          style="width: 300px"
-          prefix-icon="Search"
-        />
-        <el-button type="primary" @click="handleCreate">
-          <el-icon><Plus /></el-icon>
-          新增模版
-        </el-button>
-        <el-button plain @click="loadTemplates">
-          <el-icon><Refresh /></el-icon>
-          刷新
-        </el-button>
-      </div>
-    </div>
-
+    
     <el-card style="flex: 1; min-height: 0; overflow: hidden">
       <el-table
         ref="tableRef"

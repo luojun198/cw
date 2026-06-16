@@ -1,9 +1,6 @@
 <template>
   <div class="page page-asset-report">
-    <div class="page-header">
-      <h3>固定资产报表</h3>
-    </div>
-
+    
     <el-tabs v-model="activeTab" class="report-tabs">
       <!-- 折旧汇总表 -->
       <el-tab-pane label="折旧汇总表" name="depr-summary">
@@ -17,21 +14,21 @@
             合计本月折旧：<b class="total-amt">¥{{ fmtAmt(deprSummaryTotal) }}</b>
           </span>
         </div>
-        <el-table :data="deprSummaryRows" size="small" border stripe max-height="420"
-          @row-click="showDeprSummaryDetail" highlight-current-row style="cursor:pointer">
-          <el-table-column :label="deprSummaryGroupBy === 'category' ? '类别编码' : '部门编码'" prop="group_code" width="100" />
-          <el-table-column :label="deprSummaryGroupBy === 'category' ? '类别名称' : '部门名称'" prop="group_name" min-width="140" />
-          <el-table-column label="资产数量" prop="asset_count" width="90" align="center" />
-          <el-table-column label="原值合计" prop="total_original" width="130" align="right">
+        <el-table ref="t1Ref" :data="deprSummaryRows" size="small" border stripe max-height="420"
+          @row-click="showDeprSummaryDetail" highlight-current-row style="cursor:pointer" @header-dragend="t1Drag">
+          <el-table-column :label="deprSummaryGroupBy === 'category' ? '类别编码' : '部门编码'" prop="group_code" :width="t1Cw('group_code', 100)" />
+          <el-table-column :label="deprSummaryGroupBy === 'category' ? '类别名称' : '部门名称'" prop="group_name" min-width="140" :width="t1Widths.group_name" />
+          <el-table-column label="资产数量" prop="asset_count" :width="t1Cw('asset_count', 90)" align="center" />
+          <el-table-column label="原值合计" prop="total_original" :width="t1Cw('total_original', 130)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_original) }}</template>
           </el-table-column>
-          <el-table-column label="本月折旧" prop="month_depr" width="130" align="right">
+          <el-table-column label="本月折旧" prop="month_depr" :width="t1Cw('month_depr', 130)" align="right">
             <template #default="{ row }"><span class="depr-amt">{{ fmtAmt(row.month_depr) }}</span></template>
           </el-table-column>
-          <el-table-column label="累计折旧" prop="total_accum_depr" width="130" align="right">
+          <el-table-column label="累计折旧" prop="total_accum_depr" :width="t1Cw('total_accum_depr', 130)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_accum_depr) }}</template>
           </el-table-column>
-          <el-table-column label="净值合计" prop="total_net_value" width="130" align="right">
+          <el-table-column label="净值合计" prop="total_net_value" :width="t1Cw('total_net_value', 130)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_net_value) }}</template>
           </el-table-column>
         </el-table>
@@ -71,11 +68,11 @@
             合计分配折旧：<b class="total-amt">¥{{ fmtAmt(deprAllocTotal) }}</b>
           </span>
         </div>
-        <el-table :data="deprAllocRows" size="small" border stripe max-height="420"
-          @row-click="showDeprAllocDetail" highlight-current-row style="cursor:pointer">
-          <el-table-column label="费用科目编码" prop="expense_account" width="140" />
-          <el-table-column label="资产数量" prop="asset_count" width="100" align="center" />
-          <el-table-column label="折旧金额" prop="total_depr" min-width="150" align="right">
+        <el-table ref="t2Ref" :data="deprAllocRows" size="small" border stripe max-height="420"
+          @row-click="showDeprAllocDetail" highlight-current-row style="cursor:pointer" @header-dragend="t2Drag">
+          <el-table-column label="费用科目编码" prop="expense_account" :width="t2Cw('expense_account', 140)" />
+          <el-table-column label="资产数量" prop="asset_count" :width="t2Cw('asset_count', 100)" align="center" />
+          <el-table-column label="折旧金额" prop="total_depr" min-width="150" :width="t2Widths.total_depr" align="right">
             <template #default="{ row }"><span class="depr-amt">{{ fmtAmt(row.total_depr) }}</span></template>
           </el-table-column>
         </el-table>
@@ -111,18 +108,18 @@
             <el-option v-for="s in dictStatus" :key="s.code" :label="s.name" :value="s.code" />
           </el-select>
         </div>
-        <el-table :data="catSummaryRows" size="small" border stripe max-height="420" show-summary
-          :summary-method="catSummaryMethod">
-          <el-table-column label="类别编码" prop="category_code" width="100" />
-          <el-table-column label="类别名称" prop="category_name" min-width="140" />
-          <el-table-column label="资产数量" prop="asset_count" width="100" align="center" />
-          <el-table-column label="原值合计" prop="total_original" width="140" align="right">
+        <el-table ref="t3Ref" :data="catSummaryRows" size="small" border stripe max-height="420" show-summary
+          :summary-method="catSummaryMethod" @header-dragend="t3Drag">
+          <el-table-column label="类别编码" prop="category_code" :width="t3Cw('category_code', 100)" />
+          <el-table-column label="类别名称" prop="category_name" min-width="140" :width="t3Widths.category_name" />
+          <el-table-column label="资产数量" prop="asset_count" :width="t3Cw('asset_count', 100)" align="center" />
+          <el-table-column label="原值合计" prop="total_original" :width="t3Cw('total_original', 140)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_original) }}</template>
           </el-table-column>
-          <el-table-column label="累计折旧合计" prop="total_accum_depr" width="140" align="right">
+          <el-table-column label="累计折旧合计" prop="total_accum_depr" :width="t3Cw('total_accum_depr', 140)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_accum_depr) }}</template>
           </el-table-column>
-          <el-table-column label="净值合计" prop="total_net_value" width="140" align="right">
+          <el-table-column label="净值合计" prop="total_net_value" :width="t3Cw('total_net_value', 140)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_net_value) }}</template>
           </el-table-column>
         </el-table>
@@ -135,18 +132,18 @@
             <el-option v-for="s in dictStatus" :key="s.code" :label="s.name" :value="s.code" />
           </el-select>
         </div>
-        <el-table :data="deptSummaryRows" size="small" border stripe max-height="420" show-summary
-          :summary-method="deptSummaryMethod">
-          <el-table-column label="部门编码" prop="dept_code" width="100" />
-          <el-table-column label="部门名称" prop="dept_name" min-width="140" />
-          <el-table-column label="资产数量" prop="asset_count" width="100" align="center" />
-          <el-table-column label="原值合计" prop="total_original" width="140" align="right">
+        <el-table ref="t4Ref" :data="deptSummaryRows" size="small" border stripe max-height="420" show-summary
+          :summary-method="deptSummaryMethod" @header-dragend="t4Drag">
+          <el-table-column label="部门编码" prop="dept_code" :width="t4Cw('dept_code', 100)" />
+          <el-table-column label="部门名称" prop="dept_name" min-width="140" :width="t4Widths.dept_name" />
+          <el-table-column label="资产数量" prop="asset_count" :width="t4Cw('asset_count', 100)" align="center" />
+          <el-table-column label="原值合计" prop="total_original" :width="t4Cw('total_original', 140)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_original) }}</template>
           </el-table-column>
-          <el-table-column label="累计折旧合计" prop="total_accum_depr" width="140" align="right">
+          <el-table-column label="累计折旧合计" prop="total_accum_depr" :width="t4Cw('total_accum_depr', 140)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_accum_depr) }}</template>
           </el-table-column>
-          <el-table-column label="净值合计" prop="total_net_value" width="140" align="right">
+          <el-table-column label="净值合计" prop="total_net_value" :width="t4Cw('total_net_value', 140)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.total_net_value) }}</template>
           </el-table-column>
         </el-table>
@@ -160,29 +157,29 @@
           <span>个月内到期</span>
           <span class="filter-hint" v-if="expiryWarningRows.length">共 <b>{{ expiryWarningRows.length }}</b> 项</span>
         </div>
-        <el-table :data="expiryWarningRows" size="small" border stripe max-height="420">
-          <el-table-column label="资产编号" prop="asset_no" width="110" />
-          <el-table-column label="资产名称" prop="asset_name" min-width="140" show-overflow-tooltip />
-          <el-table-column label="类别" prop="category_name" width="100" />
-          <el-table-column label="使用部门" prop="dept_name" width="100" />
-          <el-table-column label="原值" prop="original_value" width="110" align="right">
+        <el-table ref="t5Ref" :data="expiryWarningRows" size="small" border stripe max-height="420" @header-dragend="t5Drag">
+          <el-table-column label="资产编号" prop="asset_no" :width="t5Cw('asset_no', 110)" />
+          <el-table-column label="资产名称" prop="asset_name" min-width="140" :width="t5Widths.asset_name" show-overflow-tooltip />
+          <el-table-column label="类别" prop="category_name" :width="t5Cw('category_name', 100)" />
+          <el-table-column label="使用部门" prop="dept_name" :width="t5Cw('dept_name', 100)" />
+          <el-table-column label="原值" prop="original_value" :width="t5Cw('original_value', 110)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.original_value) }}</template>
           </el-table-column>
-          <el-table-column label="累计折旧" prop="accum_depr" width="110" align="right">
+          <el-table-column label="累计折旧" prop="accum_depr" :width="t5Cw('accum_depr', 110)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.accum_depr) }}</template>
           </el-table-column>
-          <el-table-column label="净值" prop="net_value" width="110" align="right">
+          <el-table-column label="净值" prop="net_value" :width="t5Cw('net_value', 110)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.net_value) }}</template>
           </el-table-column>
-          <el-table-column label="已提/总月数" width="110" align="center">
+          <el-table-column label="已提/总月数" column-key="months_progress" :width="t5Cw('months_progress', 110)" align="center">
             <template #default="{ row }">{{ row.depr_months_done }} / {{ row.use_months }}</template>
           </el-table-column>
-          <el-table-column label="剩余月数" prop="remaining_months" width="90" align="center">
+          <el-table-column label="剩余月数" prop="remaining_months" :width="t5Cw('remaining_months', 90)" align="center">
             <template #default="{ row }">
               <el-tag :type="row.remaining_months <= 1 ? 'danger' : 'warning'" size="small">{{ row.remaining_months }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="预计提完" prop="finished_month" width="90" />
+          <el-table-column label="预计提完" prop="finished_month" :width="t5Cw('finished_month', 90)" />
         </el-table>
         <el-empty v-if="!expiryWarningRows.length && expiryLoaded" description="无即将到期资产" />
       </el-tab-pane>
@@ -195,14 +192,14 @@
             期初 ¥{{ fmtAmt(changeSummaryTotals.opening_original) }} → 期末 ¥{{ fmtAmt(changeSummaryTotals.closing_original) }}
           </span>
         </div>
-        <el-table :data="changeSummaryRows" size="small" border stripe max-height="380" show-summary
-          :summary-method="changeSummaryMethod">
-          <el-table-column label="类别" prop="category_name" min-width="120" />
-          <el-table-column label="期初数量" prop="opening_count" width="90" align="center" />
-          <el-table-column label="期初原值" prop="opening_original" width="130" align="right">
+        <el-table ref="t6Ref" :data="changeSummaryRows" size="small" border stripe max-height="380" show-summary
+          :summary-method="changeSummaryMethod" @header-dragend="t6Drag">
+          <el-table-column label="类别" prop="category_name" min-width="120" :width="t6Widths.category_name" />
+          <el-table-column label="期初数量" prop="opening_count" :width="t6Cw('opening_count', 90)" align="center" />
+          <el-table-column label="期初原值" prop="opening_original" :width="t6Cw('opening_original', 130)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.opening_original) }}</template>
           </el-table-column>
-          <el-table-column label="本期增加(数量)" prop="increase_count" width="120" align="center">
+          <el-table-column label="本期增加(数量)" prop="increase_count" :width="t6Cw('increase_count', 120)" align="center">
             <template #default="{ row }">
               <el-link v-if="row.increase_count > 0" type="success" @click="showChangeDetail(row, 'increase')">
                 {{ row.increase_count }}
@@ -210,12 +207,12 @@
               <span v-else>0</span>
             </template>
           </el-table-column>
-          <el-table-column label="本期增加(金额)" prop="increase_amount" width="140" align="right">
+          <el-table-column label="本期增加(金额)" prop="increase_amount" :width="t6Cw('increase_amount', 140)" align="right">
             <template #default="{ row }">
               <span :class="row.increase_amount > 0 ? 'incr' : ''">{{ fmtAmt(row.increase_amount) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="本期减少(数量)" prop="decrease_count" width="120" align="center">
+          <el-table-column label="本期减少(数量)" prop="decrease_count" :width="t6Cw('decrease_count', 120)" align="center">
             <template #default="{ row }">
               <el-link v-if="row.decrease_count > 0" type="danger" @click="showChangeDetail(row, 'decrease')">
                 {{ row.decrease_count }}
@@ -223,13 +220,13 @@
               <span v-else>0</span>
             </template>
           </el-table-column>
-          <el-table-column label="本期减少(金额)" prop="decrease_amount" width="140" align="right">
+          <el-table-column label="本期减少(金额)" prop="decrease_amount" :width="t6Cw('decrease_amount', 140)" align="right">
             <template #default="{ row }">
               <span :class="row.decrease_amount > 0 ? 'decr' : ''">{{ fmtAmt(row.decrease_amount) }}</span>
             </template>
           </el-table-column>
-          <el-table-column label="期末数量" prop="closing_count" width="90" align="center" />
-          <el-table-column label="期末原值" prop="closing_original" width="130" align="right">
+          <el-table-column label="期末数量" prop="closing_count" :width="t6Cw('closing_count', 90)" align="center" />
+          <el-table-column label="期末原值" prop="closing_original" :width="t6Cw('closing_original', 130)" align="right">
             <template #default="{ row }">{{ fmtAmt(row.closing_original) }}</template>
           </el-table-column>
         </el-table>
@@ -257,19 +254,19 @@
           <el-input v-model="changesAssetNo" placeholder="资产编号" clearable style="width:150px" @keyup.enter="loadChanges" />
           <el-button type="primary" @click="loadChanges" size="small">查询</el-button>
         </div>
-        <el-table :data="changeRecordRows" size="small" border stripe max-height="360">
-          <el-table-column label="日期" prop="change_date" width="100" />
-          <el-table-column label="资产编号" prop="asset_no" width="110" />
-          <el-table-column label="资产名称" prop="asset_name" min-width="130" show-overflow-tooltip />
-          <el-table-column label="类别" prop="category_name" width="90" />
-          <el-table-column label="变动项目" prop="change_item" width="120" />
-          <el-table-column label="旧值" prop="old_value" width="110" align="right">
+        <el-table ref="t7Ref" :data="changeRecordRows" size="small" border stripe max-height="360" @header-dragend="t7Drag">
+          <el-table-column label="日期" prop="change_date" :width="t7Cw('change_date', 100)" />
+          <el-table-column label="资产编号" prop="asset_no" :width="t7Cw('asset_no', 110)" />
+          <el-table-column label="资产名称" prop="asset_name" min-width="130" :width="t7Widths.asset_name" show-overflow-tooltip />
+          <el-table-column label="类别" prop="category_name" :width="t7Cw('category_name', 90)" />
+          <el-table-column label="变动项目" prop="change_item" :width="t7Cw('change_item', 120)" />
+          <el-table-column label="旧值" prop="old_value" :width="t7Cw('old_value', 110)" align="right">
             <template #default="{ row }">{{ row.old_value != null ? fmtAmt(row.old_value) : '-' }}</template>
           </el-table-column>
-          <el-table-column label="新值" prop="new_value" width="110" align="right">
+          <el-table-column label="新值" prop="new_value" :width="t7Cw('new_value', 110)" align="right">
             <template #default="{ row }">{{ row.new_value != null ? fmtAmt(row.new_value) : '-' }}</template>
           </el-table-column>
-          <el-table-column label="增减金额" prop="amount" width="110" align="right">
+          <el-table-column label="增减金额" prop="amount" :width="t7Cw('amount', 110)" align="right">
             <template #default="{ row }">
               <span v-if="row.amount != null" :class="row.amount > 0 ? 'incr' : 'decr'">
                 {{ row.amount > 0 ? '+' : '' }}{{ fmtAmt(row.amount) }}
@@ -277,8 +274,8 @@
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作人" prop="operator" width="80" />
-          <el-table-column label="备注" prop="remark" min-width="100" show-overflow-tooltip />
+          <el-table-column label="操作人" prop="operator" :width="t7Cw('operator', 80)" />
+          <el-table-column label="备注" prop="remark" min-width="100" :width="t7Widths.remark" show-overflow-tooltip />
         </el-table>
         <div class="table-footer" v-if="changesTotal > 0">
           <el-pagination v-model:current-page="changesPage" :page-size="changesPageSize" :total="changesTotal"
@@ -295,14 +292,14 @@
           <span>个月</span>
           <el-button type="primary" size="small" @click="loadForecast">查询</el-button>
         </div>
-        <el-table :data="forecastRows" size="small" border stripe max-height="380" show-summary
-          :summary-method="forecastSummaryMethod">
-          <el-table-column label="预测期间" prop="period" width="100" />
-          <el-table-column label="资产数量" prop="asset_count" width="90" align="center" />
-          <el-table-column label="预测折旧额" prop="total_depr" width="140" align="right">
+        <el-table ref="t8Ref" :data="forecastRows" size="small" border stripe max-height="380" show-summary
+          :summary-method="forecastSummaryMethod" @header-dragend="t8Drag">
+          <el-table-column label="预测期间" prop="period" :width="t8Cw('period', 100)" />
+          <el-table-column label="资产数量" prop="asset_count" :width="t8Cw('asset_count', 90)" align="center" />
+          <el-table-column label="预测折旧额" prop="total_depr" :width="t8Cw('total_depr', 140)" align="right">
             <template #default="{ row }"><span class="depr-amt">{{ fmtAmt(row.total_depr) }}</span></template>
           </el-table-column>
-          <el-table-column label="明细" min-width="200">
+          <el-table-column label="明细" column-key="details" min-width="200" :width="t8Widths.details">
             <template #default="{ row }">
               <div class="forecast-details">
                 <el-tag v-for="d in row.details.slice(0, 5)" :key="d.asset_no" size="small" effect="plain" style="margin:1px">
@@ -336,6 +333,17 @@ import {
   type ForecastRow,
   DEPR_METHODS,
 } from '@/api/fixedAsset'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+// 各报表 Tab 表格列宽记忆
+const { tableRef: t1Ref, colWidth: t1Cw, onDragEnd: t1Drag, widths: t1Widths } = useListColumnWidth('asset_rpt_depr_summary')
+const { tableRef: t2Ref, colWidth: t2Cw, onDragEnd: t2Drag, widths: t2Widths } = useListColumnWidth('asset_rpt_depr_alloc')
+const { tableRef: t3Ref, colWidth: t3Cw, onDragEnd: t3Drag, widths: t3Widths } = useListColumnWidth('asset_rpt_cat_summary')
+const { tableRef: t4Ref, colWidth: t4Cw, onDragEnd: t4Drag, widths: t4Widths } = useListColumnWidth('asset_rpt_dept_summary')
+const { tableRef: t5Ref, colWidth: t5Cw, onDragEnd: t5Drag, widths: t5Widths } = useListColumnWidth('asset_rpt_expiry')
+const { tableRef: t6Ref, colWidth: t6Cw, onDragEnd: t6Drag, widths: t6Widths } = useListColumnWidth('asset_rpt_change_summary')
+const { tableRef: t7Ref, colWidth: t7Cw, onDragEnd: t7Drag, widths: t7Widths } = useListColumnWidth('asset_rpt_changes')
+const { tableRef: t8Ref, colWidth: t8Cw, onDragEnd: t8Drag, widths: t8Widths } = useListColumnWidth('asset_rpt_forecast')
 
 const now = new Date()
 const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
@@ -570,8 +578,6 @@ onMounted(async () => {
 
 <style scoped>
 .page-asset-report { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0; font-size: 15px; }
 .report-tabs { flex: 1; display: flex; flex-direction: column; padding: 0 16px; overflow: hidden; }
 .report-tabs :deep(.el-tabs__content) { flex: 1; overflow: auto; padding-top: 8px; }
 .filter-bar { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }

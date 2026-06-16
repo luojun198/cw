@@ -53,14 +53,14 @@
             <el-radio-button value="matched">已对</el-radio-button>
           </el-radio-group>
         </div>
-        <el-table :data="jRows" size="small" border class="rc-table" highlight-current-row
-          @row-click="onJClick" :row-class-name="jClass">
-          <el-table-column label="日期" prop="biz_date" width="84" />
-          <el-table-column label="摘要" prop="summary" min-width="80" show-overflow-tooltip />
-          <el-table-column label="借方" prop="debit" width="86" align="right">
+        <el-table ref="jTableRef" :data="jRows" size="small" border class="rc-table" highlight-current-row
+          @row-click="onJClick" :row-class-name="jClass" @header-dragend="jDrag">
+          <el-table-column label="日期" prop="biz_date" :width="jCw('biz_date', 84)" />
+          <el-table-column label="摘要" prop="summary" min-width="80" :width="jWidths.summary" show-overflow-tooltip />
+          <el-table-column label="借方" prop="debit" :width="jCw('debit', 86)" align="right">
             <template #default="{row}"><span v-if="row.debit" class="dc">{{ m(row.debit) }}</span></template>
           </el-table-column>
-          <el-table-column label="贷方" prop="credit" width="86" align="right">
+          <el-table-column label="贷方" prop="credit" :width="jCw('credit', 86)" align="right">
             <template #default="{row}"><span v-if="row.credit" class="cr">{{ m(row.credit) }}</span></template>
           </el-table-column>
           <el-table-column label="" width="42" align="center">
@@ -81,14 +81,14 @@
             <el-radio-button value="matched">已对</el-radio-button>
           </el-radio-group>
         </div>
-        <el-table :data="bRows" size="small" border class="rc-table" highlight-current-row
-          @row-click="onBClick" :row-class-name="bClass">
-          <el-table-column label="日期" prop="biz_date" width="84" />
-          <el-table-column label="票据号" prop="bill_no" min-width="80" show-overflow-tooltip />
-          <el-table-column label="借方" prop="debit" width="86" align="right">
+        <el-table ref="bTableRef" :data="bRows" size="small" border class="rc-table" highlight-current-row
+          @row-click="onBClick" :row-class-name="bClass" @header-dragend="bDrag">
+          <el-table-column label="日期" prop="biz_date" :width="bCw('biz_date', 84)" />
+          <el-table-column label="票据号" prop="bill_no" min-width="80" :width="bWidths.bill_no" show-overflow-tooltip />
+          <el-table-column label="借方" prop="debit" :width="bCw('debit', 86)" align="right">
             <template #default="{row}"><span v-if="row.debit" class="dc">{{ m(row.debit) }}</span></template>
           </el-table-column>
-          <el-table-column label="贷方" prop="credit" width="86" align="right">
+          <el-table-column label="贷方" prop="credit" :width="bCw('credit', 86)" align="right">
             <template #default="{row}"><span v-if="row.credit" class="cr">{{ m(row.credit) }}</span></template>
           </el-table-column>
           <el-table-column label="" width="42" align="center">
@@ -124,6 +124,10 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { Plus, Refresh } from '@element-plus/icons-vue'
 import { cashierApi, type JournalRow, type BankStatement, type SettleType } from '@/api/cashier'
+import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
+
+const { tableRef: jTableRef, colWidth: jCw, onDragEnd: jDrag, widths: jWidths } = useListColumnWidth('cashier_reconcile_journal')
+const { tableRef: bTableRef, colWidth: bCw, onDragEnd: bDrag, widths: bWidths } = useListColumnWidth('cashier_reconcile_bank')
 
 const route = useRoute()
 const router = useRouter()

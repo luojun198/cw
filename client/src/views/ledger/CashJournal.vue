@@ -1,106 +1,6 @@
 <template>
   <div class="page page-ledger">
-    <div class="page-header">
-      <h3>日记账</h3>
-      <div class="quick-filter-btns">
-        <el-button type="primary" plain @click="quickFilterCash">现金日记账</el-button>
-        <el-button type="success" plain @click="quickFilterBank">银行日记账</el-button>
-      </div>
-
-      <div class="filter-row">
-        <el-select
-          v-model="filters.account_id"
-          filterable
-          placeholder="选择具体科目"
-          class="filter-ctl--lg"
-          :popper-class="ACCOUNT_SELECT_POPPER_CLASS"
-          clearable
-          @visible-change="onAccountSelectOpen"
-        >
-          <el-option
-            v-for="a in cashBankAccounts"
-            :key="a.id"
-            :label="`${a.code} ${a.name}`"
-            :value="a.id"
-          >
-            <span
-              class="account-select-option__row"
-              :style="{ paddingLeft: `${a.level * 16}px` }"
-            >
-              {{ a.code }} {{ a.name }}
-            </span>
-          </el-option>
-        </el-select>
-        <el-select
-          v-model="filters.year"
-          placeholder="年份"
-          clearable
-          class="filter-ctl--xs"
-          @change="onYearPeriodChange"
-        >
-          <el-option v-for="y in years" :key="y" :label="`${y}年`" :value="y" />
-        </el-select>
-        <el-select
-          v-model="filters.period"
-          placeholder="月份"
-          clearable
-          class="filter-ctl--xs"
-          @change="onYearPeriodChange"
-        >
-          <el-option v-for="m in 12" :key="m" :label="`${m}月`" :value="m" />
-        </el-select>
-        <el-date-picker
-          v-model="filters.start_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="开始日期"
-          class="filter-ctl--md"
-          clearable
-          @change="onDateRangeChange"
-        />
-        <el-date-picker
-          v-model="filters.end_date"
-          type="date"
-          value-format="YYYY-MM-DD"
-          placeholder="结束日期"
-          class="filter-ctl--md"
-          clearable
-          @change="onDateRangeChange"
-        />
-        <el-select
-          v-model="filters.direction"
-          placeholder="收支类型"
-          clearable
-          class="filter-ctl--sm"
-        >
-          <el-option label="收入(借方)" value="debit" />
-          <el-option label="支出(贷方)" value="credit" />
-        </el-select>
-        <el-checkbox
-          v-model="filters.include_unposted"
-          style="margin-left: 12px"
-          @change="fetchData"
-        >
-          统计未记账凭证
-        </el-checkbox>
-        <el-button type="primary" @click="fetchData">
-          <el-icon><Search /></el-icon>
-          查询
-        </el-button>
-
-        <el-divider direction="vertical" />
-
-        <el-button plain @click="exportData">
-          <el-icon><Download /></el-icon>
-          导出 Excel
-        </el-button>
-        <el-button plain @click="printPage">
-          <el-icon><Printer /></el-icon>
-          打印
-        </el-button>
-      </div>
-    </div>
-
+    
     <AccountScopeAlert :accounts-count="cashBankAccounts.length" />
 
     <div class="print-title-row">
@@ -740,7 +640,6 @@ onActivated(() => {
 .page {
   padding: 16px;
 }
-.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -748,7 +647,6 @@ onActivated(() => {
   flex-wrap: wrap;
   gap: 12px;
 }
-.page-header h3 {
   margin: 0;
 }
 .quick-filter-btns {
@@ -786,7 +684,6 @@ onActivated(() => {
   }
 
   /* 隐藏筛选栏、按钮、分页等非打印元素 */
-  .page-header,
   .filter-row,
   .pagination,
   .el-button,

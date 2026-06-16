@@ -1,24 +1,6 @@
 <template>
   <div class="page page-asset-list">
-    <div class="page-header">
-      <h3>固定资产卡片</h3>
-      <div class="filter-row">
-        <el-input v-model="filters.keyword" placeholder="编号/名称" clearable style="width:160px" @keyup.enter="handleQuery" />
-        <el-select v-model="filters.category_code" placeholder="类别" clearable style="width:130px">
-          <el-option v-for="c in dicts.category" :key="c.code" :label="c.name" :value="c.code" />
-        </el-select>
-        <el-select v-model="filters.status_code" placeholder="状态" clearable style="width:110px">
-          <el-option v-for="s in dicts.status" :key="s.code" :label="s.name" :value="s.code" />
-        </el-select>
-        <el-select v-model="filters.dept_code" placeholder="部门" clearable style="width:110px">
-          <el-option v-for="d in dicts.dept" :key="d.code" :label="d.name" :value="d.code" />
-        </el-select>
-        <el-button type="primary" @click="handleQuery"><el-icon><Search /></el-icon>查询</el-button>
-        <el-button @click="openAdd"><el-icon><Plus /></el-icon>新增</el-button>
-        <el-button plain @click="$router.push('/asset/dict')"><el-icon><Setting /></el-icon>资产档案</el-button>
-      </div>
-    </div>
-
+    
     <div ref="tableContainerRef" class="table-container">
       <el-table ref="tableRef" :data="list" :height="tableHeight" border stripe size="small" class="compact-data-table"
         highlight-current-row @row-dblclick="openEdit" @header-dragend="onDragEnd">
@@ -70,7 +52,7 @@
     </div>
 
     <!-- 新增/编辑弹窗 -->
-    <el-dialog v-model="dialogVisible" :title="editId ? '编辑固定资产' : '新增固定资产'" width="760px" draggable>
+    <el-dialog v-model="dialogVisible" :title="editId ? '编辑固定资产' : '新增固定资产'" width="800px" draggable>
       <div v-if="editId && navigationInfo" style="margin-bottom: 16px; border-bottom: 1px solid var(--el-border-color-lighter); padding-bottom: 12px;">
         <DialogNavigation
           :current="navigationInfo.current"
@@ -80,150 +62,165 @@
           @navigate="handleNavigate"
         />
       </div>
-      <el-form :model="form" label-width="90px" size="small">
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <el-form-item label="资产编号" required>
-              <el-input v-model="form.asset_no" :disabled="!!editId" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="资产名称" required>
-              <el-input v-model="form.asset_name" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="资产类别" required>
-              <el-select v-model="form.category_code" clearable style="width:100%"
-                @change="onCategoryChange">
-                <el-option v-for="c in dicts.category" :key="c.code" :label="c.name" :value="c.code" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="资产状态">
-              <el-select v-model="form.status_code" clearable style="width:100%">
-                <el-option v-for="s in dicts.status" :key="s.code" :label="s.name" :value="s.code" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="使用部门">
-              <el-select v-model="form.dept_code" clearable style="width:100%">
-                <el-option v-for="d in dicts.dept" :key="d.code" :label="d.name" :value="d.code" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="用途" required>
-              <el-select v-model="form.purpose_code" clearable style="width:100%">
-                <el-option v-for="p in dicts.purpose" :key="p.code" :label="p.name" :value="p.code" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="购置日期">
-              <el-date-picker v-model="form.acquire_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="起折日期" required>
-              <el-date-picker v-model="form.start_depr_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="原值" required>
-              <el-input-number v-model="form.original_value" :precision="2" :min="0" style="width:100%" @change="onOriginalValueChange" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="期初累计折旧">
-              <el-input-number v-model="form.accum_depr" :precision="2" :min="0" style="width:100%" @change="onAccumDeprChange" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="已计提月份">
-              <el-input-number v-model="form.depr_months_done" :min="0" :precision="0" style="width:100%" @change="onDeprMonthsChange" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="残值率(%)">
-              <el-input-number v-model="form.salvage_rate" :precision="2" :min="0" :max="100" style="width:100%" @change="calcSalvage" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="预计净残值">
-              <el-input-number v-model="form.salvage_value" :precision="2" :min="0" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="折旧方法" required>
-              <el-select v-model="form.depr_method" clearable style="width:100%">
-                <el-option v-for="(label, val) in DEPR_METHODS" :key="val" :label="label" :value="val" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="使用月数" :required="form.depr_method !== '2'">
-              <el-input-number v-model="form.use_months" :min="1" :precision="0" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12" v-if="form.depr_method === '2'">
-            <el-form-item label="总工作量" required>
-              <el-input-number v-model="form.total_workload" :min="0.01" :precision="2" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="卡片号">
-              <el-input v-model="form.card_no" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="数量">
-              <el-input-number v-model="form.qty" :min="1" :precision="0" style="width:100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="计量单位">
-              <el-input v-model="form.unit" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="8">
-            <el-form-item label="使用人">
-              <el-input v-model="form.user_name" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="保管人">
-              <el-input v-model="form.keeper" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="安装地点">
-              <el-input v-model="form.install_place" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="24">
-            <el-form-item label="备注">
-              <el-input v-model="form.remark" type="textarea" :rows="2" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12" v-if="!editId">
-            <el-form-item label="生成购置凭证">
-              <el-switch v-model="(form as any).generate_voucher" />
-              <span v-if="(form as any).generate_voucher" style="margin-left:10px;color:var(--el-text-color-secondary);font-size:12px">借固定资产 / 贷资金来源</span>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12" v-if="!editId && (form as any).generate_voucher">
-            <el-form-item label="贷方(资金来源)">
-              <AccountSelect v-model="(form as any).credit_account" placeholder="默认 1001 银行存款" search-keyword="银行存款" />
-            </el-form-item>
-          </el-col>
-        </el-row>
+      <el-form :model="form" label-width="100px" size="small">
+        <div class="form-sector">
+          <div class="form-sector-title">资产基本信息</div>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="资产编号" required>
+                <el-input v-model="form.asset_no" :disabled="!!editId" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="资产名称" required>
+                <el-input v-model="form.asset_name" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="资产类别" required>
+                <el-select v-model="form.category_code" clearable style="width:100%"
+                  @change="onCategoryChange">
+                  <el-option v-for="c in dicts.category" :key="c.code" :label="c.name" :value="c.code" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="资产状态">
+                <el-select v-model="form.status_code" clearable style="width:100%">
+                  <el-option v-for="s in dicts.status" :key="s.code" :label="s.name" :value="s.code" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="使用部门">
+                <el-select v-model="form.dept_code" clearable style="width:100%">
+                  <el-option v-for="d in dicts.dept" :key="d.code" :label="d.name" :value="d.code" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="用途" required>
+                <el-select v-model="form.purpose_code" clearable style="width:100%">
+                  <el-option v-for="p in dicts.purpose" :key="p.code" :label="p.name" :value="p.code" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
+
+        <div class="form-sector">
+          <div class="form-sector-title">财务与折旧信息</div>
+          <el-row :gutter="16">
+            <el-col :span="12">
+              <el-form-item label="原值" required>
+                <el-input-number v-model="form.original_value" :precision="2" :min="0" style="width:100%" @change="onOriginalValueChange" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="折旧方法" required>
+                <el-select v-model="form.depr_method" clearable style="width:100%">
+                  <el-option v-for="(label, val) in DEPR_METHODS" :key="val" :label="label" :value="val" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="购置日期">
+                <el-date-picker v-model="form.acquire_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="起折日期" required>
+                <el-date-picker v-model="form.start_depr_date" type="date" value-format="YYYY-MM-DD" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="期初累计折旧">
+                <el-input-number v-model="form.accum_depr" :precision="2" :min="0" style="width:100%" @change="onAccumDeprChange" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12">
+              <el-form-item label="已计提月份">
+                <el-input-number v-model="form.depr_months_done" :min="0" :precision="0" style="width:100%" @change="onDeprMonthsChange" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="使用总月数" :required="form.depr_method !== '2'">
+                <el-input-number v-model="form.use_months" :min="1" :precision="0" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="残值率(%)">
+                <el-input-number v-model="form.salvage_rate" :precision="2" :min="0" :max="100" style="width:100%" @change="calcSalvage" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="预计净残值">
+                <el-input-number v-model="form.salvage_value" :precision="2" :min="0" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="12" v-if="form.depr_method === '2'">
+              <el-form-item label="总工作量" required>
+                <el-input-number v-model="form.total_workload" :min="0.01" :precision="2" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24" v-if="!editId">
+              <div class="voucher-gen-area">
+                <el-form-item label="生成购置凭证">
+                  <el-switch v-model="(form as any).generate_voucher" />
+                  <span v-if="(form as any).generate_voucher" class="sector-tip">借：固定资产 / 贷：资金来源</span>
+                </el-form-item>
+                <el-form-item v-if="(form as any).generate_voucher" label="贷方(资金)">
+                  <AccountSelect v-model="(form as any).credit_account" placeholder="默认 1001 银行存款" search-keyword="银行存款" />
+                </el-form-item>
+              </div>
+            </el-col>
+          </el-row>
+        </div>
+
+        <div class="form-sector">
+          <div class="form-sector-title">附属管理信息</div>
+          <el-row :gutter="16">
+            <el-col :span="8">
+              <el-form-item label="卡片号">
+                <el-input v-model="form.card_no" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="数量">
+                <el-input-number v-model="form.qty" :min="1" :precision="0" style="width:100%" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="计量单位">
+                <el-input v-model="form.unit" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="使用人">
+                <el-input v-model="form.user_name" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="保管人">
+                <el-input v-model="form.keeper" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="安装地点">
+                <el-input v-model="form.install_place" />
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="备注">
+                <el-input v-model="form.remark" type="textarea" :rows="2" />
+              </el-form-item>
+            </el-col>
+          </el-row>
+        </div>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" @click="handleSave">保存</el-button>
+        <el-button type="primary" :loading="saving" @click="handleSave">确认保存</el-button>
       </template>
     </el-dialog>
 
@@ -592,14 +589,23 @@ async function handleDispose() {
 
 <style scoped>
 .page-asset-list { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .table-container { flex: 1; overflow: hidden; padding: 0 16px 0; }
 .table-footer { padding: 8px 16px; display: flex; justify-content: flex-end; border-top: 1px solid var(--el-border-color-lighter); }
 .dispose-info { margin-bottom: 4px; }
 .dispose-preview { display: flex; align-items: center; gap: 4px; padding: 8px 12px; background: var(--el-color-warning-light-9); border-radius: 4px; font-size: 14px; margin-top: 8px; }
 .tip-text { margin-left: 8px; font-size: 12px; color: var(--el-text-color-secondary); }
-.incr { color: #67c23a; font-weight: 600; }
-.decr { color: #f56c6c; font-weight: 600; }
+.voucher-gen-area {
+  padding: 12px;
+  background: var(--ink-50);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-subtle);
+  margin-top: 8px;
+}
+.sector-tip {
+  margin-left: 10px;
+  color: var(--mint-700);
+  font-size: 12px;
+  font-weight: 500;
+}
 </style>

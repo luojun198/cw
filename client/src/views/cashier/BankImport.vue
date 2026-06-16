@@ -1,9 +1,6 @@
 <template>
   <div class="page page-bank-import">
-    <div class="page-header">
-      <h3>银行对账单导入</h3>
-    </div>
-
+    
     <!-- 步骤 1：选择文件 + 科目 -->
     <div class="import-step">
       <el-steps :active="step" finish-status="success" simple>
@@ -217,7 +214,6 @@ async function handleImport() {
 
 <style scoped>
 .page-bank-import { height: 100%; overflow: auto; padding: 16px; }
-.page-header h3 { margin: 0 0 12px; font-size: 15px; }
 .import-step { margin-bottom: 16px; }
 .step-body { max-width: 720px; }
 .upload-text { font-size: 13px; color: var(--el-text-color-secondary); margin-top: 8px; }

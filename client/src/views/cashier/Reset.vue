@@ -1,9 +1,6 @@
 <template>
   <div class="page page-cashier-reset">
-    <div class="page-header">
-      <h3>出纳初始化</h3>
-    </div>
-    <div class="content">
+        <div class="content">
       <el-alert
         title="危险操作"
         type="error"
@@ -45,7 +42,5 @@ async function handleReset() {
 
 <style scoped>
 .page-cashier-reset { display: flex; flex-direction: column; height: 100%; }
-.page-header { padding: 12px 16px 8px; border-bottom: 1px solid var(--el-border-color-light); }
-.page-header h3 { margin: 0 0 8px; font-size: 15px; }
 .content { padding: 32px 24px; }
 </style>
