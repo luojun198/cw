@@ -95,7 +95,9 @@
       <el-header class="header">
         <div class="header-left">
           <el-breadcrumb separator="/" class="apple-breadcrumb">
-            <el-breadcrumb-item v-if="currentParent">{{ currentParent }}</el-breadcrumb-item>
+            <el-breadcrumb-item v-if="currentParent">
+              <a class="breadcrumb-link" @click="navigateToModuleHome">{{ currentParent }}</a>
+            </el-breadcrumb-item>
             <el-breadcrumb-item>{{ currentTitle }}</el-breadcrumb-item>
           </el-breadcrumb>
         </div>
@@ -488,6 +490,12 @@ function handleGroupTitleClick(title: string) {
   router.push(`/group/${encodeURIComponent(title)}`)
 }
 
+function navigateToModuleHome() {
+  if (currentParent.value) {
+    router.push(`/group/${encodeURIComponent(currentParent.value)}`)
+  }
+}
+
 function onGroupOpen(index: string | number) {
   // Native logic is fine since we no longer navigate here.
 }
@@ -537,16 +545,36 @@ function getViewKey(fullPath: string) {
     const docType = new URLSearchParams(query).get('doc_type') || ''
     return `${viewCacheKey.value}:${path}:${docType}`
   }
+  // 新增单据页：路径相同、仅靠 query 区分（doc_type / 下推源单 source_doc_id）。
+  // 若忽略 query，不同单据类型/下推会复用同一 keep-alive 实例，onMounted 不重跑，
+  // 导致 form.doc_type 等沿用旧值（如报价单下推销售订单时仍按报价单类型保存，多生成报价单）。
+  if (path === '/scm/docs/new') {
+    const sp = new URLSearchParams(fullPath.split('?')[1] || '')
+    return `${viewCacheKey.value}:${path}:${sp.get('doc_type') || ''}:${sp.get('source_doc_id') || ''}`
+  }
   return `${viewCacheKey.value}:${path}`
 }
 
+function matchesRoute(menuPath: string, routePath: string, routeQuery: any): boolean {
+  const [mPath, mQueryStr] = menuPath.split('?')
+  if (mPath !== routePath) return false
+  
+  if (mQueryStr) {
+    const mParams = new URLSearchParams(mQueryStr)
+    for (const [key, value] of mParams.entries()) {
+      if (routeQuery[key] !== value) return false
+    }
+  }
+  return true
+}
+
 const currentTitle = computed(() => {
-  const item = menuGroups.value.flatMap(g => g.children).find(c => (c.path.split('?')[0]) === route.path)
+  const item = menuGroups.value.flatMap(g => g.children).find(c => matchesRoute(c.path, route.path, route.query))
   return item?.title || ''
 })
 
 const currentParent = computed(() => {
-  const group = menuGroups.value.find(g => g.children.some(c => (c.path.split('?')[0]) === route.path))
+  const group = menuGroups.value.find(g => g.children.some(c => matchesRoute(c.path, route.path, route.query)))
   return group?.title || ''
 })
 

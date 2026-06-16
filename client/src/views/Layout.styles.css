@@ -413,6 +413,21 @@
   font-weight: 600;
 }
 
+.breadcrumb-link {
+  color: #0aa694;
+  cursor: pointer;
+  text-decoration: none;
+  transition: all 0.3s ease;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.breadcrumb-link:hover {
+  color: #088a7d;
+  background-color: rgba(10, 166, 148, 0.1);
+  text-decoration: underline;
+}
+
 .header-right {
   display: flex;
   align-items: center;
@@ -845,7 +860,7 @@
 }
 
 /* 仪表盘：随主内容区整体滚动，不再单独嵌套滚动条 */
-.main-view .apple-dashboard,
+.main-view .mint-dashboard,
 .main-view .dashboard {
   flex: 1 0 auto;
   min-height: 100%;
