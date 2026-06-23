@@ -2,20 +2,26 @@ import { Router } from 'express'
 import { v4 as uuidv4 } from 'uuid'
 import { getDb } from '../db/index.js'
 import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
+import { createPreReinitializeBackup } from '../services/systemReinitialize.js'
 
 const router = Router()
 router.use(authMiddleware)
 
 // ── 供应链模块权限守卫（路径→权限，admin '*' 放行） ──────────────────────
 const SCM_PERMISSION_RULES: Array<{ re: RegExp; perm: string }> = [
+  { re: /^\/scm\/reset/,       perm: 'scm:param' },   // 供应链初始化（清空）
   { re: /^\/scm\/params/,      perm: 'scm:param' },
   { re: /^\/scm\/import/,      perm: 'scm:import' },
   { re: /^\/scm\/items/,       perm: 'scm:item' },
   { re: /^\/scm\/partners/,    perm: 'scm:partner' },
   { re: /^\/scm\/warehouses/,  perm: 'scm:warehouse' },
+  { re: /^\/scm\/bins/,        perm: 'scm:warehouse' },
   { re: /^\/scm\/units/,       perm: 'scm:item' },    // 单位与物料共用权限
   { re: /^\/scm\/categories/,  perm: 'scm:category' },
   { re: /^\/scm\/stock/,       perm: 'scm:stock' },
+  { re: /^\/scm\/batch-stock/, perm: 'scm:stock' },   // 批次库存查询
+  { re: /^\/scm\/serials/,     perm: 'scm:stock' },   // 序列号查询
+  { re: /^\/scm\/report/,      perm: 'scm:report' },  // 供应链报表
 ]
 router.use((req: AuthRequest, res, next) => {
   if (!req.path.startsWith('/scm/')) return next()
@@ -35,6 +41,8 @@ const SCM_PARAM_KEYS = [
   'scm:acc_ap', 'scm:acc_ar', 'scm:acc_revenue', 'scm:acc_cost',
   'scm:acc_production', 'scm:acc_other', 'scm:acc_tax_input', 'scm:acc_tax_output',
   'scm:item_levels', 'scm:item_code_lengths', 'scm:item_types',
+  'scm:negative_stock_warehouses',
+  'scm:currencies', 'scm:io_categories', 'scm:transport_methods', 'scm:doc_no_rule',
 ]
 router.get('/scm/params', (req: AuthRequest, res) => {
   const db = getDb()
@@ -55,10 +63,53 @@ router.put('/scm/params', operationLog('保存供应链参数', '供应链'), (r
     if (p.param_key === 'scm:costing_method' && val && !VALID_COSTING.includes(val)) {
       return res.status(400).json({ code: 400, message: '计价方式无效' })
     }
+    if (p.param_key === 'scm:negative_stock_warehouses') {
+      try {
+        const parsed = JSON.parse(val || '[]')
+        if (!Array.isArray(parsed)) {
+          return res.status(400).json({ code: 400, message: '允许负库存仓库参数无效' })
+        }
+      } catch {
+        return res.status(400).json({ code: 400, message: '允许负库存仓库参数无效' })
+      }
+    }
     const ex = db.prepare('SELECT id FROM system_params WHERE account_set_id=? AND param_key=?').get(asid(req), p.param_key) as any
     upsert.run(ex?.id || uuidv4(), asid(req), p.param_key, val)
   }
   res.json({ code: 0, message: '保存成功' })
+})
+
+// ── 供应链初始化：清空业务数据（business）或连同基础档案（all） ──────────
+// 始终保留 scm_doc_type（系统预置单据类型，清掉模块不可用）。
+router.post('/scm/reset', operationLog('供应链初始化', '供应链'), async (req: AuthRequest, res) => {
+  const mode = req.body?.mode === 'all' ? 'all' : 'business'
+  const db = getDb(); const aid = asid(req)
+  // 强制：清空前先完整备份本账套，备份失败则中止
+  let backupFile = ''
+  try {
+    const b = await createPreReinitializeBackup(aid, req.userId)
+    backupFile = b.filename
+  } catch (e: any) {
+    return res.status(500).json({ code: 500, message: e?.message || '初始化前自动备份失败，已中止操作' })
+  }
+  const businessTables = [
+    'scm_doc_line', 'scm_doc', 'scm_stock_move', 'scm_stock_batch', 'scm_stock',
+    'scm_production_plan', 'scm_ar_ap_log', 'scm_work_report',
+  ]
+  const masterTables = [
+    'scm_bom_line', 'scm_bom', 'scm_item_unit', 'scm_item_field_defs',
+    'scm_item_category', 'scm_item', 'scm_partner', 'scm_warehouse', 'scm_unit',
+  ]
+  const tables = mode === 'all' ? [...businessTables, ...masterTables] : businessTables
+  const existing = new Set(
+    (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map(r => r.name)
+  )
+  db.transaction(() => {
+    for (const t of tables) {
+      if (existing.has(t)) db.prepare(`DELETE FROM ${t} WHERE account_set_id=?`).run(aid)
+    }
+  })()
+  res.json({ code: 0, data: { ok: true, mode, cleared: tables.filter(t => existing.has(t)), backup: backupFile } })
 })
 
 // ── 通用：自动编号（前缀+数字，参照固定资产 next-no） ────────────────────
@@ -247,14 +298,18 @@ router.post('/scm/items', operationLog('物料新增', '供应链'), (req: AuthR
   const fieldValuesJson = JSON.stringify(b.field_values && typeof b.field_values === 'object' ? b.field_values : {})
   db.prepare(`INSERT INTO scm_item
     (id,account_set_id,code,name,spec,barcode,short_code,unit,category_code,subcategory_code,item_type,
-     purchase_price,sale_price,ref_cost,fixed_cost,inv_account,sale_account,batch_flag,is_asset,supplier_code,remark,enabled,parent_id,level,is_leaf,field_values)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+     purchase_price,sale_price,ref_cost,fixed_cost,inv_account,sale_account,batch_flag,is_asset,supplier_code,remark,enabled,parent_id,level,is_leaf,field_values,
+     volume,min_order_qty,lead_time_days,shelf_life_days,buyer,work_station,transfer_price,sale_price2,sale_price3,safety_stock,source_type,batch_out_mode,serial_flag)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?, ?,?,?)`).run(
     id, aid, b.code, b.name, b.spec ?? null, b.barcode ?? null, b.short_code ?? null, unitName,
     b.category_code ?? null, b.subcategory_code ?? null, b.item_type ?? null,
     Number(b.purchase_price) || 0, Number(b.sale_price) || 0, Number(b.ref_cost) || 0, Number(b.fixed_cost) || 0,
     b.inv_account ?? null, b.sale_account ?? null, b.batch_flag ? 1 : 0, b.is_asset ? 1 : 0,
     b.supplier_code ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1, parentId, level,
-    b.is_leaf !== undefined ? (b.is_leaf ? 1 : 0) : 1, fieldValuesJson
+    b.is_leaf !== undefined ? (b.is_leaf ? 1 : 0) : 1, fieldValuesJson,
+    Number(b.volume) || 0, Number(b.min_order_qty) || 0, Number(b.lead_time_days) || 0, Number(b.shelf_life_days) || 0,
+    b.buyer ?? null, b.work_station ?? null, Number(b.transfer_price) || 0, Number(b.sale_price2) || 0, Number(b.sale_price3) || 0, Number(b.safety_stock) || 0,
+    b.source_type || 'purchase', b.batch_out_mode === 'manual' ? 'manual' : 'fifo', b.serial_flag ? 1 : 0
   )
   // 同步主/副单位关联
   if (primaryUnitCode) syncItemUnits(db, aid, b.code, primaryUnitCode, b.secondary_units)
@@ -296,11 +351,15 @@ router.put('/scm/items/:id', operationLog('物料修改', '供应链'), (req: Au
 
   const fieldValuesJson = JSON.stringify(b.field_values && typeof b.field_values === 'object' ? b.field_values : {})
   const fields = `name=?,spec=?,barcode=?,short_code=?,unit=?,category_code=?,subcategory_code=?,item_type=?,
-    purchase_price=?,sale_price=?,ref_cost=?,fixed_cost=?,inv_account=?,sale_account=?,batch_flag=?,is_asset=?,supplier_code=?,remark=?,enabled=?,is_leaf=?,field_values=?,updated_at=datetime('now')`
+    purchase_price=?,sale_price=?,ref_cost=?,fixed_cost=?,inv_account=?,sale_account=?,batch_flag=?,is_asset=?,supplier_code=?,remark=?,enabled=?,is_leaf=?,field_values=?,
+    volume=?,min_order_qty=?,lead_time_days=?,shelf_life_days=?,buyer=?,work_station=?,transfer_price=?,sale_price2=?,sale_price3=?,safety_stock=?,source_type=?,batch_out_mode=?,serial_flag=?,updated_at=datetime('now')`
   const vals: any[] = [b.name, b.spec ?? null, b.barcode ?? null, b.short_code ?? null, unitName, b.category_code ?? null, b.subcategory_code ?? null, b.item_type ?? null,
     Number(b.purchase_price) || 0, Number(b.sale_price) || 0, Number(b.ref_cost) || 0, Number(b.fixed_cost) || 0,
     b.inv_account ?? null, b.sale_account ?? null, b.batch_flag ? 1 : 0, b.is_asset ? 1 : 0, b.supplier_code ?? null, b.remark ?? null,
-    b.enabled === 0 ? 0 : 1, b.is_leaf !== undefined ? (b.is_leaf ? 1 : 0) : 1, fieldValuesJson]
+    b.enabled === 0 ? 0 : 1, b.is_leaf !== undefined ? (b.is_leaf ? 1 : 0) : 1, fieldValuesJson,
+    Number(b.volume) || 0, Number(b.min_order_qty) || 0, Number(b.lead_time_days) || 0, Number(b.shelf_life_days) || 0,
+    b.buyer ?? null, b.work_station ?? null, Number(b.transfer_price) || 0, Number(b.sale_price2) || 0, Number(b.sale_price3) || 0, Number(b.safety_stock) || 0,
+    b.source_type || 'purchase', b.batch_out_mode === 'manual' ? 'manual' : 'fifo', b.serial_flag ? 1 : 0]
 
   if (parentId !== undefined) {
     db.prepare(`UPDATE scm_item SET ${fields}, parent_id=?, level=? WHERE id=?`).run(...vals, parentId, level, req.params.id)
@@ -351,12 +410,16 @@ router.post('/scm/partners', operationLog('往来单位新增', '供应链'), (r
   const id = uuidv4()
   db.prepare(`INSERT INTO scm_partner
     (id,account_set_id,code,name,short_name,partner_type,ar_account,ap_account,credit_limit,tax_rate,region_code,
-     contact,phone,address,bank_name,bank_account,tax_no,salesman,remark,enabled)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+     contact,phone,address,bank_name,bank_account,tax_no,salesman,remark,enabled,
+     ship_address,ship_phone,ship_contact,province,city,county,country,payment_type,credit_days,qq,email,wechat,is_outsource,price_level)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,?,?,?,?,?,?,?, ?,?)`).run(
     id, asid(req), b.code, b.name, b.short_name ?? null, b.partner_type || 'both', b.ar_account ?? null, b.ap_account ?? null,
     Number(b.credit_limit) || 0, Number(b.tax_rate) || 0, b.region_code ?? null,
     b.contact ?? null, b.phone ?? null, b.address ?? null, b.bank_name ?? null, b.bank_account ?? null,
-    b.tax_no ?? null, b.salesman ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1
+    b.tax_no ?? null, b.salesman ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1,
+    b.ship_address ?? null, b.ship_phone ?? null, b.ship_contact ?? null, b.province ?? null, b.city ?? null, b.county ?? null,
+    b.country ?? null, b.payment_type ?? null, Number(b.credit_days) || 0, b.qq ?? null, b.email ?? null, b.wechat ?? null,
+    b.is_outsource ? 1 : 0, [1, 2, 3].includes(Number(b.price_level)) ? Number(b.price_level) : 1
   )
   res.json({ code: 0, data: { id } })
 })
@@ -365,11 +428,15 @@ router.put('/scm/partners/:id', operationLog('往来单位修改', '供应链'),
   const ex = db.prepare('SELECT id FROM scm_partner WHERE id=? AND account_set_id=?').get(req.params.id, asid(req))
   if (!ex) return res.status(404).json({ code: 404, message: '往来单位不存在' })
   db.prepare(`UPDATE scm_partner SET name=?,short_name=?,partner_type=?,ar_account=?,ap_account=?,credit_limit=?,tax_rate=?,region_code=?,
-    contact=?,phone=?,address=?,bank_name=?,bank_account=?,tax_no=?,salesman=?,remark=?,enabled=?,updated_at=datetime('now') WHERE id=?`).run(
+    contact=?,phone=?,address=?,bank_name=?,bank_account=?,tax_no=?,salesman=?,remark=?,enabled=?,
+    ship_address=?,ship_phone=?,ship_contact=?,province=?,city=?,county=?,country=?,payment_type=?,credit_days=?,qq=?,email=?,wechat=?,is_outsource=?,price_level=?,updated_at=datetime('now') WHERE id=?`).run(
     b.name, b.short_name ?? null, b.partner_type || 'both', b.ar_account ?? null, b.ap_account ?? null,
     Number(b.credit_limit) || 0, Number(b.tax_rate) || 0, b.region_code ?? null,
     b.contact ?? null, b.phone ?? null, b.address ?? null, b.bank_name ?? null, b.bank_account ?? null,
-    b.tax_no ?? null, b.salesman ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1, req.params.id
+    b.tax_no ?? null, b.salesman ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1,
+    b.ship_address ?? null, b.ship_phone ?? null, b.ship_contact ?? null, b.province ?? null, b.city ?? null, b.county ?? null,
+    b.country ?? null, b.payment_type ?? null, Number(b.credit_days) || 0, b.qq ?? null, b.email ?? null, b.wechat ?? null,
+    b.is_outsource ? 1 : 0, [1, 2, 3].includes(Number(b.price_level)) ? Number(b.price_level) : 1, req.params.id
   )
   res.json({ code: 0, data: { ok: true } })
 })
@@ -393,8 +460,9 @@ router.post('/scm/warehouses', operationLog('仓库新增', '供应链'), (req: 
     return res.status(409).json({ code: 409, message: '仓库编号已存在' })
   }
   const id = uuidv4()
-  db.prepare('INSERT INTO scm_warehouse (id,account_set_id,code,name,attr,keeper,remark,enabled) VALUES (?,?,?,?,?,?,?,?)').run(
-    id, asid(req), b.code, b.name, b.attr ?? null, b.keeper ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1
+  db.prepare('INSERT INTO scm_warehouse (id,account_set_id,code,name,attr,keeper,remark,enabled,address,phone,partner_code) VALUES (?,?,?,?,?,?,?,?,?,?,?)').run(
+    id, asid(req), b.code, b.name, b.attr ?? null, b.keeper ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1,
+    b.address ?? null, b.phone ?? null, b.partner_code ?? null
   )
   res.json({ code: 0, data: { id } })
 })
@@ -403,8 +471,9 @@ router.put('/scm/warehouses/:id', operationLog('仓库修改', '供应链'), (re
   if (!db.prepare('SELECT id FROM scm_warehouse WHERE id=? AND account_set_id=?').get(req.params.id, asid(req))) {
     return res.status(404).json({ code: 404, message: '仓库不存在' })
   }
-  db.prepare('UPDATE scm_warehouse SET name=?,attr=?,keeper=?,remark=?,enabled=? WHERE id=?').run(
-    b.name, b.attr ?? null, b.keeper ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1, req.params.id
+  db.prepare('UPDATE scm_warehouse SET name=?,attr=?,keeper=?,remark=?,enabled=?,address=?,phone=?,partner_code=? WHERE id=?').run(
+    b.name, b.attr ?? null, b.keeper ?? null, b.remark ?? null, b.enabled === 0 ? 0 : 1,
+    b.address ?? null, b.phone ?? null, b.partner_code ?? null, req.params.id
   )
   res.json({ code: 0, data: { ok: true } })
 })
@@ -453,10 +522,73 @@ router.delete('/scm/units/:id', operationLog('单位删除', '供应链'), (req:
   res.json({ code: 0, data: { ok: true } })
 })
 
+// ── 库位档案（隶属仓库，参考用，不参与库存结存） ──────────────────────────
+router.get('/scm/bins', (req: AuthRequest, res) => {
+  const { warehouse_code } = req.query as any
+  const conds = ['b.account_set_id=?']; const params: any[] = [asid(req)]
+  if (warehouse_code) { conds.push('b.warehouse_code=?'); params.push(warehouse_code) }
+  const list = getDb().prepare(`
+    SELECT b.*, w.name AS warehouse_name FROM scm_bin b
+    LEFT JOIN scm_warehouse w ON w.account_set_id=b.account_set_id AND w.code=b.warehouse_code
+    WHERE ${conds.join(' AND ')} ORDER BY b.warehouse_code, b.code`).all(...params)
+  res.json({ code: 0, data: list })
+})
+router.post('/scm/bins', operationLog('库位新增', '供应链'), (req: AuthRequest, res) => {
+  const db = getDb(); const b = req.body
+  if (!b.warehouse_code || !b.code || !b.name) return res.status(400).json({ code: 400, message: '仓库、编码、名称不能为空' })
+  if (db.prepare('SELECT id FROM scm_bin WHERE account_set_id=? AND warehouse_code=? AND code=?').get(asid(req), b.warehouse_code, b.code)) {
+    return res.status(409).json({ code: 409, message: '该仓库下库位编码已存在' })
+  }
+  db.prepare('INSERT INTO scm_bin (id,account_set_id,warehouse_code,code,name,remark,enabled) VALUES (?,?,?,?,?,?,?)')
+    .run(uuidv4(), asid(req), b.warehouse_code, b.code, b.name, b.remark ?? null, b.enabled === 0 ? 0 : 1)
+  res.json({ code: 0, data: { ok: true } })
+})
+router.put('/scm/bins/:id', operationLog('库位修改', '供应链'), (req: AuthRequest, res) => {
+  const db = getDb(); const b = req.body
+  const ex = db.prepare('SELECT id FROM scm_bin WHERE id=? AND account_set_id=?').get(req.params.id, asid(req))
+  if (!ex) return res.status(404).json({ code: 404, message: '库位不存在' })
+  db.prepare('UPDATE scm_bin SET name=?, remark=?, enabled=? WHERE id=? AND account_set_id=?')
+    .run(b.name, b.remark ?? null, b.enabled === 0 ? 0 : 1, req.params.id, asid(req))
+  res.json({ code: 0, data: { ok: true } })
+})
+router.delete('/scm/bins/:id', operationLog('库位删除', '供应链'), (req: AuthRequest, res) => {
+  getDb().prepare('DELETE FROM scm_bin WHERE id=? AND account_set_id=?').run(req.params.id, asid(req))
+  res.json({ code: 0, data: { ok: true } })
+})
+
 // ── 物料分类 ────────────────────────────────────────────────────────────
 router.get('/scm/categories', (req: AuthRequest, res) => {
   const list = getDb().prepare('SELECT * FROM scm_item_category WHERE account_set_id=? ORDER BY code').all(asid(req))
   res.json({ code: 0, data: list })
+})
+router.post('/scm/categories', operationLog('物料分类新增', '供应链'), (req: AuthRequest, res) => {
+  const db = getDb(); const b = req.body
+  if (!b.code || !b.name) return res.status(400).json({ code: 400, message: '编码和名称不能为空' })
+  if (db.prepare('SELECT id FROM scm_item_category WHERE account_set_id=? AND code=?').get(asid(req), b.code)) {
+    return res.status(409).json({ code: 409, message: '分类编码已存在' })
+  }
+  db.prepare('INSERT INTO scm_item_category (id,account_set_id,code,name,parent_code) VALUES (?,?,?,?,?)')
+    .run(uuidv4(), asid(req), b.code, b.name, b.parent_code ?? null)
+  res.json({ code: 0, data: { ok: true } })
+})
+router.put('/scm/categories/:id', operationLog('物料分类修改', '供应链'), (req: AuthRequest, res) => {
+  const db = getDb(); const b = req.body
+  const ex = db.prepare('SELECT id FROM scm_item_category WHERE id=? AND account_set_id=?').get(req.params.id, asid(req))
+  if (!ex) return res.status(404).json({ code: 404, message: '分类不存在' })
+  db.prepare('UPDATE scm_item_category SET name=?, parent_code=? WHERE id=? AND account_set_id=?')
+    .run(b.name, b.parent_code ?? null, req.params.id, asid(req))
+  res.json({ code: 0, data: { ok: true } })
+})
+router.delete('/scm/categories/:id', operationLog('物料分类删除', '供应链'), (req: AuthRequest, res) => {
+  const db = getDb(); const aid = asid(req)
+  const cat = db.prepare('SELECT code FROM scm_item_category WHERE id=? AND account_set_id=?').get(req.params.id, aid) as any
+  if (!cat) return res.status(404).json({ code: 404, message: '分类不存在' })
+  const used = db.prepare('SELECT COUNT(*) c FROM scm_item WHERE account_set_id=? AND (category_code=? OR subcategory_code=?)').get(aid, cat.code, cat.code) as any
+  if (used && used.c > 0) return res.status(400).json({ code: 400, message: `该分类已被 ${used.c} 个物料引用，无法删除` })
+  const child = db.prepare('SELECT COUNT(*) c FROM scm_item_category WHERE account_set_id=? AND parent_code=?').get(aid, cat.code) as any
+  if (child && child.c > 0) return res.status(400).json({ code: 400, message: '存在子分类，请先删除子分类' })
+  db.prepare('DELETE FROM scm_item_category WHERE id=? AND account_set_id=?').run(req.params.id, aid)
+  res.json({ code: 0, data: { ok: true } })
 })
 
 // ── 库存报表 ────────────────────────────────────────────────────────────
@@ -572,6 +704,146 @@ router.get('/scm/stock/ledger', (req: AuthRequest, res) => {
     LEFT JOIN scm_warehouse w ON w.account_set_id=m.account_set_id AND w.code=m.warehouse_code
     WHERE ${conds.join(' AND ')}
     ORDER BY m.move_date, m.created_at
+  `).all(...params)
+  res.json({ code: 0, data: list })
+})
+
+// ── 报表：库存预警（现存 < 安全库存） ──────────────────────────────
+router.get('/scm/report/stock-alert', (req: AuthRequest, res) => {
+  const db = getDb(); const aid = asid(req)
+  const rows = db.prepare(`
+    SELECT i.code AS item_code, i.name AS item_name, i.spec, i.unit, i.safety_stock, i.supplier_code, i.lead_time_days,
+           COALESCE((SELECT SUM(s.qty) FROM scm_stock s WHERE s.account_set_id=i.account_set_id AND s.item_code=i.code),0) AS on_hand,
+           pp.name AS supplier_name
+    FROM scm_item i
+    LEFT JOIN scm_partner pp ON pp.account_set_id=i.account_set_id AND pp.code=i.supplier_code
+    WHERE i.account_set_id=? AND i.enabled<>0 AND COALESCE(i.safety_stock,0) > 0
+  `).all(aid) as any[]
+  const data = rows
+    .map(r => ({ ...r, on_hand: Number(r.on_hand) || 0, safety_stock: Number(r.safety_stock) || 0, shortage: Math.round(((Number(r.safety_stock) || 0) - (Number(r.on_hand) || 0)) * 1000000) / 1000000 }))
+    .filter(r => r.shortage > 0)
+    .sort((a, b) => b.shortage - a.shortage)
+  res.json({ code: 0, data })
+})
+
+// ── 报表：购销明细（按单据类型/日期，已审核）────────────────────────
+function buyOrSellReport(req: AuthRequest, res: any, docType: string) {
+  const db = getDb(); const aid = asid(req)
+  const { start_date, end_date, item_code, partner_code } = req.query as any
+  const conds = ['d.account_set_id=?', "d.doc_type=?", "d.status='audited'"]; const ps: any[] = [aid, docType]
+  if (start_date) { conds.push('d.doc_date>=?'); ps.push(start_date) }
+  if (end_date) { conds.push('d.doc_date<=?'); ps.push(end_date) }
+  if (item_code) { conds.push('l.item_code=?'); ps.push(item_code) }
+  if (partner_code) { conds.push('d.partner_code=?'); ps.push(partner_code) }
+  const rows = db.prepare(`
+    SELECT d.doc_no, d.doc_date, d.partner_code, p.name AS partner_name,
+           l.item_code, i.name AS item_name, i.spec, l.qty, l.price,
+           l.amount AS amount, ROUND(COALESCE(l.unit_cost,0)*l.qty, 2) AS cost
+    FROM scm_doc_line l
+    JOIN scm_doc d ON d.id=l.doc_id
+    LEFT JOIN scm_item i ON i.account_set_id=l.account_set_id AND i.code=l.item_code
+    LEFT JOIN scm_partner p ON p.account_set_id=d.account_set_id AND p.code=d.partner_code
+    WHERE ${conds.join(' AND ')}
+    ORDER BY d.doc_date, d.doc_no, l.seq
+  `).all(...ps) as any[]
+  res.json({ code: 0, data: rows.map(r => ({ ...r, profit: Math.round(((Number(r.amount) || 0) - (Number(r.cost) || 0)) * 100) / 100 })) })
+}
+// 销售报表（销售出库 SO，含成本/毛利）
+router.get('/scm/report/sales', (req: AuthRequest, res) => buyOrSellReport(req, res, 'SO'))
+// 采购报表（采购入库 PI）
+router.get('/scm/report/purchase', (req: AuthRequest, res) => buyOrSellReport(req, res, 'PI'))
+
+// ── 报表：采购建议（建议量 = 安全库存 − 现存 − 在途PO；在途=已审核PO未入库余量）──
+router.get('/scm/report/purchase-advice', (req: AuthRequest, res) => {
+  const db = getDb(); const aid = asid(req)
+  // 在途：已审核采购订单(PO)行数量 − 其已下推采购入库(行级 source_line_id 引用)数量
+  const onway = db.prepare(`
+    SELECT l.item_code AS item_code,
+      COALESCE(SUM(l.qty - (SELECT COALESCE(SUM(c.qty),0) FROM scm_doc_line c WHERE c.source_line_id=l.id)),0) AS qty
+    FROM scm_doc_line l JOIN scm_doc d ON d.id=l.doc_id
+    WHERE d.account_set_id=? AND d.doc_type='PO' AND d.status='audited'
+    GROUP BY l.item_code
+  `).all(aid) as any[]
+  const onwayMap = new Map<string, number>(onway.map(r => [r.item_code, Number(r.qty) || 0]))
+  const rows = db.prepare(`
+    SELECT i.code AS item_code, i.name AS item_name, i.spec, i.unit, i.safety_stock, i.min_order_qty,
+           i.lead_time_days, i.supplier_code, pp.name AS supplier_name,
+           COALESCE((SELECT SUM(s.qty) FROM scm_stock s WHERE s.account_set_id=i.account_set_id AND s.item_code=i.code),0) AS on_hand
+    FROM scm_item i
+    LEFT JOIN scm_partner pp ON pp.account_set_id=i.account_set_id AND pp.code=i.supplier_code
+    WHERE i.account_set_id=? AND i.enabled<>0 AND COALESCE(i.safety_stock,0) > 0
+  `).all(aid) as any[]
+  const data = rows.map(r => {
+    const onHand = Number(r.on_hand) || 0
+    const onWay = onwayMap.get(r.item_code) || 0
+    const safety = Number(r.safety_stock) || 0
+    const moq = Number(r.min_order_qty) || 0
+    const gap = safety - onHand - onWay
+    let advice = gap > 0 ? gap : 0
+    if (advice > 0 && moq > 0 && advice < moq) advice = moq  // 不足起订量则按起订量
+    return { ...r, on_hand: onHand, on_way: Math.round(onWay * 1000000) / 1000000, safety_stock: safety, advice_qty: Math.round(advice * 1000000) / 1000000 }
+  }).filter(r => r.advice_qty > 0).sort((a, b) => b.advice_qty - a.advice_qty)
+  res.json({ code: 0, data })
+})
+
+// 批次库存查询：各仓库/物料/批次的现存数量与到期日（权限 scm:stock）
+router.get('/scm/batch-stock', (req: AuthRequest, res) => {
+  const db = getDb(); const aid = asid(req)
+  const { keyword, warehouse_code, batch_no } = req.query as any
+  const conds = ['b.account_set_id=?', 'b.qty > 0.000001']; const params: any[] = [aid]
+  if (warehouse_code) { conds.push('b.warehouse_code=?'); params.push(warehouse_code) }
+  if (batch_no) { conds.push('b.batch_no LIKE ?'); params.push(`%${batch_no}%`) }
+  if (keyword) { conds.push('(b.item_code LIKE ? OR i.name LIKE ?)'); params.push(`%${keyword}%`, `%${keyword}%`) }
+  const list = db.prepare(`
+    SELECT b.warehouse_code, w.name AS warehouse_name, b.item_code, i.name AS item_name, i.spec, i.unit,
+           b.batch_no, b.qty, b.amount, b.produce_date, b.expire_date,
+           CAST(julianday(b.expire_date) - julianday('now') AS INTEGER) AS days_to_expire
+    FROM scm_stock_batch b
+    LEFT JOIN scm_item i ON i.account_set_id=b.account_set_id AND i.code=b.item_code
+    LEFT JOIN scm_warehouse w ON w.account_set_id=b.account_set_id AND w.code=b.warehouse_code
+    WHERE ${conds.join(' AND ')}
+    ORDER BY (b.expire_date IS NULL), b.expire_date ASC, b.warehouse_code, b.item_code, b.batch_no
+  `).all(...params)
+  res.json({ code: 0, data: list })
+})
+
+// 临期/过期预警：有到期日且现存>0 的批次，默认提前 30 天（权限 scm:report）
+router.get('/scm/report/batch-alert', (req: AuthRequest, res) => {
+  const db = getDb(); const aid = asid(req)
+  const days = Math.max(0, Number((req.query as any).days) || 30)
+  const list = db.prepare(`
+    SELECT b.warehouse_code, w.name AS warehouse_name, b.item_code, i.name AS item_name, i.spec, i.unit,
+           b.batch_no, b.qty, b.produce_date, b.expire_date,
+           CAST(julianday(b.expire_date) - julianday('now') AS INTEGER) AS days_to_expire
+    FROM scm_stock_batch b
+    LEFT JOIN scm_item i ON i.account_set_id=b.account_set_id AND i.code=b.item_code
+    LEFT JOIN scm_warehouse w ON w.account_set_id=b.account_set_id AND w.code=b.warehouse_code
+    WHERE b.account_set_id=? AND b.qty > 0.000001 AND b.expire_date IS NOT NULL
+      AND julianday(b.expire_date) - julianday('now') <= ?
+    ORDER BY b.expire_date ASC
+  `).all(aid, days) as any[]
+  const data = list.map(r => ({ ...r, expired: Number(r.days_to_expire) < 0 }))
+  res.json({ code: 0, data })
+})
+
+// 序列号查询：在库/已出库序列号及其所在仓与出入单据（权限 scm:stock）
+router.get('/scm/serials', (req: AuthRequest, res) => {
+  const db = getDb(); const aid = asid(req)
+  const { keyword, serial_no, status, warehouse_code } = req.query as any
+  const conds = ['s.account_set_id=?']; const params: any[] = [aid]
+  if (status === 'in_stock' || status === 'out') { conds.push('s.status=?'); params.push(status) }
+  if (warehouse_code) { conds.push('s.warehouse_code=?'); params.push(warehouse_code) }
+  if (serial_no) { conds.push('s.serial_no LIKE ?'); params.push(`%${serial_no}%`) }
+  if (keyword) { conds.push('(s.item_code LIKE ? OR i.name LIKE ?)'); params.push(`%${keyword}%`, `%${keyword}%`) }
+  const list = db.prepare(`
+    SELECT s.item_code, i.name AS item_name, i.spec, s.serial_no, s.warehouse_code, w.name AS warehouse_name,
+           s.status, s.in_doc_no, s.out_doc_no, s.updated_at
+    FROM scm_serial s
+    LEFT JOIN scm_item i ON i.account_set_id=s.account_set_id AND i.code=s.item_code
+    LEFT JOIN scm_warehouse w ON w.account_set_id=s.account_set_id AND w.code=s.warehouse_code
+    WHERE ${conds.join(' AND ')}
+    ORDER BY s.item_code, s.serial_no
+    LIMIT 500
   `).all(...params)
   res.json({ code: 0, data: list })
 })

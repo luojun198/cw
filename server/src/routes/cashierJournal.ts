@@ -7,6 +7,7 @@ import { getDb } from '../db/index.js'
 import { authMiddleware, AuthRequest, operationLog } from '../middleware/index.js'
 import { deleteVoucherRecords } from '../services/voucherEntry.js'
 import { assertAccountIdInScope, type AccountScopeContext } from '../services/accountAuthorization.js'
+import { createPreReinitializeBackup } from '../services/systemReinitialize.js'
 import {
   listCashierAccounts,
   listJournal,
@@ -647,15 +648,23 @@ router.get('/cashier/settle-types', (req: AuthRequest, res) => {
 router.post(
   '/cashier/reset',
   operationLog('出纳初始化', '出纳管理'),
-  (req: AuthRequest, res) => {
+  async (req: AuthRequest, res) => {
     const db = getDb()
     const asid = req.accountSetId || ''
+    // 强制：清空前先完整备份本账套，备份失败则中止
+    let backupFile = ''
+    try {
+      const b = await createPreReinitializeBackup(asid, req.userId)
+      backupFile = b.filename
+    } catch (e: any) {
+      return res.status(500).json({ code: 500, message: e?.message || '初始化前自动备份失败，已中止操作' })
+    }
     db.transaction(() => {
       db.prepare('DELETE FROM cashier_journal WHERE account_set_id=?').run(asid)
       db.prepare('DELETE FROM cashier_init_balance WHERE account_set_id=?').run(asid)
       db.prepare('DELETE FROM bank_statement WHERE account_set_id=?').run(asid)
     })()
-    res.json({ code: 0, data: { ok: true } })
+    res.json({ code: 0, data: { ok: true, backup: backupFile } })
   }
 )
 

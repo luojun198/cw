@@ -446,3 +446,138 @@ a {
 }
 
 /* 按钮样式已由 apple-element-override.css 统一接管 */
+
+/* ============================================================
+   深度 UX/UI 优化 - 弹窗、表格、表单与主页面 (Mint-dashboard)
+   ============================================================ */
+
+/* ========== 1. 模态框 (Dialog) 玻璃态与圆角升级 ========== */
+.el-dialog {
+  background: rgba(255, 255, 255, 0.85) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 16px 48px rgba(18, 199, 174, 0.08), 0 0 0 1px rgba(255, 255, 255, 0.5) inset !important;
+  border: 1px solid rgba(0, 0, 0, 0.04) !important;
+  overflow: hidden;
+}
+
+.el-dialog__header {
+  padding: 24px 24px 16px !important;
+  margin-right: 0 !important;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.el-dialog__title {
+  font-size: 18px !important;
+  font-weight: 700 !important;
+  color: var(--mint-700, #0A8576) !important;
+  letter-spacing: 0.5px;
+}
+
+.el-dialog__body {
+  padding: 24px !important;
+}
+
+.el-dialog__footer {
+  padding: 16px 24px 24px !important;
+  border-top: none !important;
+}
+
+/* ========== 2. 数据表格 (Table) 网格线与呼吸感 ========== */
+.el-table {
+  --el-table-border-color: rgba(0, 0, 0, 0.06);
+  --el-table-header-bg-color: var(--mint-50, #E8FBF7);
+  --el-table-header-text-color: var(--mint-700, #0A8576);
+  border: 1px solid var(--el-table-border-color) !important;
+  border-radius: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.02) !important;
+}
+
+.el-table__inner-wrapper::before {
+  background-color: var(--el-table-border-color) !important;
+}
+
+.el-table th.el-table__cell {
+  background: var(--el-table-header-bg-color) !important;
+  font-weight: 700 !important;
+  border-bottom: 1px solid var(--el-table-border-color) !important;
+  border-right: 1px solid var(--el-table-border-color) !important;
+}
+
+.el-table td.el-table__cell {
+  border-bottom: 1px solid var(--el-table-border-color) !important;
+  border-right: 1px solid var(--el-table-border-color) !important;
+}
+
+/* 统一全局斑马线底色 (与 /voucher/entry 保持一致) */
+.el-table--striped .el-table__body tr.el-table__row--striped td.el-table__cell {
+  background-color: #f0f5ff !important;
+}
+
+/* 悬停薄荷青 */
+.el-table__body tr:hover > td.el-table__cell:not(.el-table-fixed-column--left):not(.el-table-fixed-column--right) {
+  background-color: rgba(18, 199, 174, 0.06) !important;
+}
+
+/* ========== 3. 表单与输入控件 (Input / Select) 精致化 ========== */
+.el-input__wrapper,
+.el-select__wrapper,
+.el-textarea__inner {
+  border-radius: 8px !important;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.06) inset !important;
+  background-color: #f8fafc !important;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1) !important;
+}
+
+.el-input__wrapper.is-focus,
+.el-select__wrapper.is-focus,
+.el-textarea__inner:focus {
+  box-shadow: 0 0 0 1px var(--mint-500, #12C7AE) inset, 0 0 0 3px rgba(18, 199, 174, 0.2) !important;
+  background-color: #ffffff !important;
+}
+
+.el-input__wrapper:hover,
+.el-select__wrapper:hover,
+.el-textarea__inner:hover {
+  box-shadow: 0 0 0 1px rgba(18, 199, 174, 0.4) inset !important;
+}
+
+/* ========== 4. 主操作页面容器的悬浮感 (Page Container) ========== */
+.main > .page,
+.main > .main-view,
+.main .voucher-list-page {
+  background: rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
+  border-radius: 16px;
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.02), 0 1px 0 rgba(255,255,255,0.6) inset;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  padding: 20px;
+  margin: 12px;
+  height: calc(100% - 24px) !important;
+  box-sizing: border-box;
+}
+
+/* 暗色模式适配扩展 */
+[data-theme='dark'] .el-dialog {
+  background: rgba(30, 30, 30, 0.85) !important;
+  border: 1px solid rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-theme='dark'] .main > .page,
+[data-theme='dark'] .main > .main-view,
+[data-theme='dark'] .main .voucher-list-page {
+  background: rgba(30, 30, 30, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.2);
+}
+
+/* 仪表盘 / 模块导航页（.mint-dashboard）随内容自适应高度：
+   这类页面自带悬浮卡片与背景，外层白色面板不应被锁定为视口满高，
+   否则内容偏短时面板底部会留出一段空白带（视觉上「卡片超出/未铺满总面板」）。
+   改为按内容撑高后，底部空白由灰色主区背景接管，且内容超长时也能正常增高滚动。 */
+.main > .main-view:has(> .mint-dashboard) {
+  flex: 0 0 auto;
+  height: auto !important;
+  min-height: 0;
+}

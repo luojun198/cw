@@ -63,6 +63,7 @@ export function applyInvoice(db: Database.Database, accountSetId: string, doc: a
 
 /** 审核销售发货单（SO 销售出库）：按发货金额生成应收账款台账（无出纳流水、无税） */
 export function applyReceivableFromShipment(db: Database.Database, accountSetId: string, doc: any, lines: any[]) {
+  if (!doc.partner_code) return  // 无客户则不挂应收
   const partner = db.prepare('SELECT * FROM scm_partner WHERE account_set_id=? AND code=?').get(accountSetId, doc.partner_code) as any
   let total = 0
   for (const l of lines) total += Math.round(Number(l.amount || 0) * 100) / 100
@@ -74,6 +75,35 @@ export function applyReceivableFromShipment(db: Database.Database, accountSetId:
     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
     uuidv4(), accountSetId, doc.partner_code, doc.doc_type, doc.doc_no, doc.doc_date,
     'in', total, partner?.ar_account || '1131', null, null, doc.remark
+  )
+}
+
+/** 审核采购入库单（PI 采购入库）：按入库金额生成应付账款台账（无出纳流水、无税） */
+export function applyPayableFromReceipt(db: Database.Database, accountSetId: string, doc: any, lines: any[]) {
+  if (!doc.partner_code) return  // 无供应商（如现购/无往来）则不挂应付
+  const partner = db.prepare('SELECT * FROM scm_partner WHERE account_set_id=? AND code=?').get(accountSetId, doc.partner_code) as any
+  let total = 0
+  for (const l of lines) total += Math.round(Number(l.amount || 0) * 100) / 100
+  total = Math.round(total * 100) / 100
+  if (total <= 0) return
+
+  db.prepare(`INSERT INTO scm_ar_ap_log
+    (id, account_set_id, partner_code, doc_type, doc_no, doc_date, direction, amount, ar_account, ap_account, cashier_journal_id, remark)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    uuidv4(), accountSetId, doc.partner_code, doc.doc_type, doc.doc_no, doc.doc_date,
+    'in', total, null, partner?.ap_account || '2121', null, doc.remark
+  )
+}
+
+/** 审核委外入库(WI)：按加工费生成委外厂应付账款台账（无出纳流水、无税） */
+export function applyOutsourceFeePayable(db: Database.Database, accountSetId: string, doc: any, feeAmount: number) {
+  if (!doc.partner_code || !(feeAmount > 0)) return  // 无委外厂或无加工费则不挂应付
+  const partner = db.prepare('SELECT * FROM scm_partner WHERE account_set_id=? AND code=?').get(accountSetId, doc.partner_code) as any
+  db.prepare(`INSERT INTO scm_ar_ap_log
+    (id, account_set_id, partner_code, doc_type, doc_no, doc_date, direction, amount, ar_account, ap_account, cashier_journal_id, remark)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    uuidv4(), accountSetId, doc.partner_code, doc.doc_type, doc.doc_no, doc.doc_date,
+    'in', Math.round(feeAmount * 100) / 100, null, partner?.ap_account || '2121', null, `${doc.doc_no} 委外加工费`
   )
 }
 

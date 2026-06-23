@@ -167,6 +167,62 @@ import {
   up as addScmItemCustomFieldsUp,
   down as addScmItemCustomFieldsDown,
 } from './migrations/20260609_add_scm_item_custom_fields.js'
+import {
+  up as addScmDocTypeFieldConfigUp,
+  down as addScmDocTypeFieldConfigDown,
+} from './migrations/20260618_add_scm_doctype_field_config.js'
+import {
+  up as extendScmDocFieldsUp,
+  down as extendScmDocFieldsDown,
+} from './migrations/20260618_extend_scm_doc_fields.js'
+import {
+  up as extendScmProductionUp,
+  down as extendScmProductionDown,
+} from './migrations/20260618_extend_scm_production.js'
+import {
+  up as extendScmMasterUp,
+  down as extendScmMasterDown,
+} from './migrations/20260618_extend_scm_master.js'
+import {
+  up as addProductionPlanTypeUp,
+  down as addProductionPlanTypeDown,
+} from './migrations/20260619_add_production_plan_type.js'
+import {
+  up as addDocLineSupplierAndMrUp,
+  down as addDocLineSupplierAndMrDown,
+} from './migrations/20260619_add_doc_line_supplier_and_mr.js'
+import {
+  up as addItemSourcePartnerOutsourceUp,
+  down as addItemSourcePartnerOutsourceDown,
+} from './migrations/20260619_add_item_source_partner_outsource.js'
+import {
+  up as addDocPlanIdUp,
+  down as addDocPlanIdDown,
+} from './migrations/20260620_add_doc_plan_id.js'
+import {
+  up as backfillScmFinePermsUp,
+  down as backfillScmFinePermsDown,
+} from './migrations/20260620_backfill_scm_fine_perms.js'
+import {
+  up as addPartnerPriceLevelUp,
+  down as addPartnerPriceLevelDown,
+} from './migrations/20260621_add_partner_price_level.js'
+import {
+  up as addBatchTrackingUp,
+  down as addBatchTrackingDown,
+} from './migrations/20260621_add_batch_tracking.js'
+import {
+  up as addSerialTrackingUp,
+  down as addSerialTrackingDown,
+} from './migrations/20260621_add_serial_tracking.js'
+import {
+  up as addScmDictAndBinUp,
+  down as addScmDictAndBinDown,
+} from './migrations/20260621_add_scm_dict_and_bin.js'
+import {
+  up as addScmColSchemeUp,
+  down as addScmColSchemeDown,
+} from './migrations/20260622_add_scm_col_scheme.js'
 
 /**
  * 迁移示例：添加新字段
@@ -1462,5 +1518,89 @@ export const migrations: Migration[] = [
     name: 'add_scm_item_custom_fields',
     up: addScmItemCustomFieldsUp,
     down: addScmItemCustomFieldsDown,
+  },
+  {
+    version: 62,
+    name: 'add_scm_doctype_field_config',
+    up: addScmDocTypeFieldConfigUp,
+    down: addScmDocTypeFieldConfigDown,
+  },
+  {
+    version: 63,
+    name: 'extend_scm_doc_fields',
+    up: extendScmDocFieldsUp,
+    down: extendScmDocFieldsDown,
+  },
+  {
+    version: 64,
+    name: 'extend_scm_production',
+    up: extendScmProductionUp,
+    down: extendScmProductionDown,
+  },
+  {
+    version: 65,
+    name: 'extend_scm_master',
+    up: extendScmMasterUp,
+    down: extendScmMasterDown,
+  },
+  {
+    version: 66,
+    name: 'add_production_plan_type',
+    up: addProductionPlanTypeUp,
+    down: addProductionPlanTypeDown,
+  },
+  {
+    version: 67,
+    name: 'add_doc_line_supplier_and_mr',
+    up: addDocLineSupplierAndMrUp,
+    down: addDocLineSupplierAndMrDown,
+  },
+  {
+    version: 68,
+    name: 'add_item_source_partner_outsource',
+    up: addItemSourcePartnerOutsourceUp,
+    down: addItemSourcePartnerOutsourceDown,
+  },
+  {
+    version: 69,
+    name: 'add_doc_plan_id',
+    up: addDocPlanIdUp,
+    down: addDocPlanIdDown,
+  },
+  {
+    version: 70,
+    name: 'backfill_scm_fine_perms',
+    up: backfillScmFinePermsUp,
+    down: backfillScmFinePermsDown,
+  },
+  {
+    version: 71,
+    name: 'add_partner_price_level',
+    up: addPartnerPriceLevelUp,
+    down: addPartnerPriceLevelDown,
+  },
+  {
+    version: 72,
+    name: 'add_batch_tracking',
+    up: addBatchTrackingUp,
+    down: addBatchTrackingDown,
+  },
+  {
+    version: 73,
+    name: 'add_serial_tracking',
+    up: addSerialTrackingUp,
+    down: addSerialTrackingDown,
+  },
+  {
+    version: 74,
+    name: 'add_scm_dict_and_bin',
+    up: addScmDictAndBinUp,
+    down: addScmDictAndBinDown,
+  },
+  {
+    version: 75,
+    name: 'add_scm_col_scheme',
+    up: addScmColSchemeUp,
+    down: addScmColSchemeDown,
   },
   ]

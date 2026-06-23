@@ -10,7 +10,9 @@
       <el-table-column label="规格" prop="spec" :width="cw('spec', 120)" show-overflow-tooltip />
       <el-table-column label="单位" prop="unit" :width="cw('unit', 70)" />
       <el-table-column label="数量" prop="qty" :width="cw('qty', 110)" align="right">
-        <template #default="{ row }">{{ fmt(row.qty) }}</template>
+        <template #default="{ row }">
+          <span :class="{ 'negative-number': isNegative(row.qty) }">{{ fmt(row.qty) }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="销售未出货" prop="unshipped_sales_qty" :width="cw('unshipped_sales_qty', 120)" align="right">
         <template #header>
@@ -26,7 +28,9 @@
         </template>
       </el-table-column>
       <el-table-column label="金额" prop="amount" :width="cw('amount', 120)" align="right">
-        <template #default="{ row }">{{ fmt(row.amount) }}</template>
+        <template #default="{ row }">
+          <span :class="{ 'negative-number': isNegative(row.amount) }">{{ fmt(row.amount) }}</span>
+        </template>
       </el-table-column>
       <el-table-column label="平均成本" prop="avg_cost" :width="cw('avg_cost', 110)" align="right">
         <template #default="{ row }">{{ fmt(row.avg_cost, 4) }}</template>
@@ -51,6 +55,7 @@ const keyword = ref('')
 const warehouse = ref('')
 
 const fmt = (v: number, p = 2) => (v ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: p, maximumFractionDigits: p })
+const isNegative = (v: number) => Number(v || 0) < 0
 const totalAmount = computed(() => fmt(list.value.reduce((s, r) => s + (r.amount || 0), 0)))
 
 async function load() {
@@ -71,4 +76,8 @@ onMounted(async () => {
 <style scoped>
 .scm-stock-page { padding: 12px 16px; }
 .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.negative-number {
+  color: var(--el-color-danger);
+  font-weight: 600;
+}
 </style>

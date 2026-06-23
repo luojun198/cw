@@ -11,6 +11,7 @@
         <el-table-column label="BOM名称" prop="name" min-width="150" :width="widths.name" />
         <el-table-column label="成品物料" prop="item_code" :width="cw('item_code', 130)" />
         <el-table-column label="物料名称" prop="item_name" :width="cw('item_name', 150)" />
+        <el-table-column label="规格" prop="spec" :width="cw('spec', 120)" show-overflow-tooltip />
         <el-table-column label="状态" prop="status" :width="cw('status', 80)" />
         <el-table-column label="操作" width="120" fixed="right">
           <template #default="{ row }">
@@ -73,6 +74,7 @@ async function handleDelete(row: any) {
 
 <style scoped>
 .scm-bom-page { display: flex; flex-direction: column; height: 100%; }
+.page-header {
   display: flex; align-items: center; justify-content: space-between;
   padding: 10px 16px; border-bottom: 1px solid var(--el-border-color-light);
   background: var(--el-bg-color); flex-shrink: 0;

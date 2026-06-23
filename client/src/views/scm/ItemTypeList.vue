@@ -168,6 +168,8 @@ onMounted(load)
   overflow: hidden;
   background: var(--el-fill-color-lighter);
 }
+
+.item-header {
   display: flex;
   justify-content: space-between;
   align-items: center;

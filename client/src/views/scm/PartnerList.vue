@@ -17,6 +17,7 @@
           <el-tag v-if="row.partner_type === 'supplier'" type="warning" size="small">供应商</el-tag>
           <el-tag v-else-if="row.partner_type === 'customer'" type="success" size="small">客户</el-tag>
           <el-tag v-else type="" size="small">双向</el-tag>
+          <el-tag v-if="row.is_outsource === 1" type="danger" size="small" effect="plain" style="margin-left:4px">委外厂</el-tag>
         </template>
       </el-table-column>
       <el-table-column label="应收科目" prop="ar_account" :width="cw('ar_account', 100)" />
@@ -45,6 +46,12 @@
                   <el-radio value="customer">客户</el-radio>
                   <el-radio value="both">双向</el-radio>
                 </el-radio-group>
+                <el-checkbox
+                  :model-value="form.is_outsource === 1"
+                  :disabled="form.partner_type === 'customer'"
+                  style="margin-left:12px"
+                  @update:model-value="(v:any) => form.is_outsource = v ? 1 : 0"
+                >委外厂</el-checkbox>
               </el-form-item>
             </el-col>
             <el-col :span="6"><el-form-item label="简称"><el-input v-model="form.short_name" /></el-form-item></el-col>
@@ -58,8 +65,27 @@
             <el-col :span="8"><el-form-item label="业务员"><el-input v-model="form.salesman" /></el-form-item></el-col>
             <el-col :span="8"><el-form-item label="信用额度"><el-input-number v-model="form.credit_limit" :precision="2" :controls="false" style="width:100%" /></el-form-item></el-col>
             <el-col :span="8"><el-form-item label="默认税率%"><el-input-number v-model="form.tax_rate" :precision="2" :controls="false" style="width:100%" /></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label="应收科目"><AccountSelect v-model="form.ar_account" /></el-form-item></el-col>
-            <el-col :span="12"><el-form-item label="应付科目"><AccountSelect v-model="form.ap_account" /></el-form-item></el-col>
+            <el-col :span="8">
+              <el-form-item label="付款方式">
+                <el-select v-model="form.payment_type" clearable style="width:100%">
+                  <el-option label="现金" value="cash" />
+                  <el-option label="转账" value="transfer" />
+                  <el-option label="挂账" value="credit" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8"><el-form-item label="账期(天)"><el-input-number v-model="form.credit_days" :min="0" :precision="0" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8">
+              <el-form-item label="价格等级">
+                <el-select v-model="form.price_level" style="width:100%">
+                  <el-option :value="1" label="1 级售价（默认）" />
+                  <el-option :value="2" label="2 级售价" />
+                  <el-option :value="3" label="3 级售价" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8"><el-form-item label="应收科目"><AccountSelect v-model="form.ar_account" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="应付科目"><AccountSelect v-model="form.ap_account" /></el-form-item></el-col>
           </el-row>
         </div>
 
@@ -67,8 +93,24 @@
           <div class="form-sector-title">联系方式</div>
           <el-row :gutter="16">
             <el-col :span="8"><el-form-item label="联系人"><el-input v-model="form.contact" /></el-form-item></el-col>
-            <el-col :span="16"><el-form-item label="联系电话"><el-input v-model="form.phone" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="联系电话"><el-input v-model="form.phone" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="邮箱"><el-input v-model="form.email" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="QQ"><el-input v-model="form.qq" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="微信"><el-input v-model="form.wechat" /></el-form-item></el-col>
             <el-col :span="24"><el-form-item label="详细地址"><el-input v-model="form.address" type="textarea" :rows="1" /></el-form-item></el-col>
+          </el-row>
+        </div>
+
+        <div class="form-sector">
+          <div class="form-sector-title">收货信息</div>
+          <el-row :gutter="16">
+            <el-col :span="8"><el-form-item label="收货联系人"><el-input v-model="form.ship_contact" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="收货电话"><el-input v-model="form.ship_phone" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="国家"><el-input v-model="form.country" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="省"><el-input v-model="form.province" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="市"><el-input v-model="form.city" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="区/县"><el-input v-model="form.county" /></el-form-item></el-col>
+            <el-col :span="24"><el-form-item label="收货地址"><el-input v-model="form.ship_address" type="textarea" :rows="1" /></el-form-item></el-col>
           </el-row>
         </div>
       </el-form>
@@ -134,7 +176,7 @@ const form = ref<Partial<ScmPartner>>({})
 
 async function openAdd() {
   editId.value = null
-  form.value = { partner_type: propType.value || 'both', credit_limit: 0, tax_rate: 0 }
+  form.value = { partner_type: propType.value || 'both', credit_limit: 0, tax_rate: 0, price_level: 1 }
   dialogVisible.value = true
   try { const r = await scmApi.getPartnerNextNo(propType.value || undefined); if (r.code === 0) form.value.code = r.data.next_no } catch {}
 }

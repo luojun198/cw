@@ -501,6 +501,7 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -508,6 +509,7 @@ onMounted(() => {
   gap: 12px;
 }
 
+.page-header h2 {
   margin: 0;
 }
 

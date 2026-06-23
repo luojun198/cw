@@ -58,13 +58,57 @@ export const groupFlowMap: Record<string, ModuleFlowConfig> = {
   '凭证管理': {
     layout: 'flow',
     mainNodes: [
-      { id: 'entry', path: '/voucher/entry', icon: 'EditPen', color: 'blue', next: ['audit'] },
-      { id: 'audit', path: '/voucher/audit', title: '审核记账', icon: 'Finished', color: 'blue', next: ['transfer'] },
-      { id: 'transfer', path: '/voucher/auto-transfer', icon: 'Switch', color: 'purple', next: ['close'] },
-      { id: 'close', path: '/voucher/period-close', icon: 'Lock', color: 'red' },
+      {
+        id: 'account',
+        path: '/base/account',
+        title: '科目与基础资料',
+        icon: 'Reading',
+        color: 'cyan',
+        next: ['init'],
+        branches: [
+          { id: 'voucherType', path: '/base/voucher-type', title: '凭证类型', icon: 'Tickets', color: 'cyan' },
+          { id: 'template', path: '/voucher/template', title: '凭证模板', icon: 'Postcard', color: 'cyan' }
+        ]
+      },
+      { id: 'init', path: '/base/init-balance', title: '期初余额', icon: 'Coin', color: 'orange', next: ['entry'] },
+      { id: 'entry', path: '/voucher/entry', title: '凭证录入', icon: 'Memo', color: 'blue', next: ['audit'] },
+      { id: 'audit', path: '/voucher/audit', title: '审核记账', icon: 'DocumentChecked', color: 'blue', next: ['ledgerCheck'] },
+      {
+        id: 'ledgerCheck',
+        path: '/ledger/general',
+        title: '账簿核对',
+        icon: 'ScaleToOriginal',
+        color: 'green',
+        next: ['transfer'],
+        branches: [
+          { id: 'detail', path: '/ledger/detail', title: '明细账', icon: 'Notebook', color: 'green' },
+          { id: 'chronological', path: '/ledger/chronological', title: '序时账', icon: 'Files', color: 'green' }
+        ]
+      },
+      {
+        id: 'transfer',
+        path: '/voucher/auto-transfer',
+        title: '期末结转',
+        icon: 'Wallet',
+        color: 'purple',
+        next: ['report'],
+        branches: [
+          { id: 'transferType', path: '/base/transfer-type', title: '结转维护', icon: 'Operation', color: 'purple' }
+        ]
+      },
+      { id: 'report', path: '/ledger/standard-report', title: '标准报表', icon: 'Histogram', color: 'purple', next: ['close'] },
+      { id: 'close', path: '/voucher/period-close', title: '期间结账', icon: 'Lock', color: 'red' },
     ],
     auxNodes: [
-      { id: 'query', path: '/voucher/query', icon: 'Search', color: 'cyan' }
+      { id: 'query', path: '/voucher/query', title: '凭证查询', icon: 'Search', color: 'cyan' },
+      { id: 'balance', path: '/ledger/balance', title: '总分类账', icon: 'Reading', color: 'green' },
+      { id: 'general', path: '/ledger/general', title: '科目余额表', icon: 'DataBoard', color: 'green' },
+      { id: 'cashJournal', path: '/ledger/cash-journal', title: '现金银行日记账', icon: 'CreditCard', color: 'green' },
+      { id: 'auxBalance', path: '/ledger/aux-balance', title: '辅助项目余额表', icon: 'FolderChecked', color: 'orange' },
+      { id: 'auxDetail', path: '/ledger/aux-detail', title: '辅助项目明细账', icon: 'Notebook', color: 'orange' },
+      { id: 'cashFlowTrial', path: '/ledger/cash-flow-trial-balance', title: '现金流量试算平衡表', icon: 'PieChart', color: 'blue' },
+      { id: 'reportMaintain', path: '/report/dynamic', title: '报表维护', icon: 'TrendCharts', color: 'purple' },
+      { id: 'printTemplate', path: '/base/print-template', title: '打印模板', icon: 'Printer', color: 'cyan' }
     ]
   },
   '生产管理': {

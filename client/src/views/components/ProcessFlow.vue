@@ -16,13 +16,14 @@
             <div class="flow-step">
               <router-link
                 :to="getRoutePath(node)"
-                class="node-action"
+                class="node-action animate-stagger"
                 :class="[{ 'is-disabled': !canAccess(node) }]"
                 :aria-disabled="!canAccess(node)"
+                :style="{ animationDelay: `${index * 0.1}s` }"
                 @click.prevent="!canAccess(node) && $event.preventDefault()"
               >
                 <div class="node-icon-wrapper" :class="`is-${node.color || 'blue'}`">
-                  <span class="node-step-no">{{ String(index + 1).padStart(2, '0') }}</span>
+                  <span class="node-status-dot" aria-hidden="true"></span>
                   <el-icon class="node-icon">
                     <component :is="getIcon(node)" />
                   </el-icon>
@@ -36,12 +37,13 @@
               <div v-if="node.branches && node.branches.length > 0" class="branch-container">
                 <div class="branch-line"></div>
                 <router-link
-                  v-for="branch in node.branches"
+                  v-for="(branch, bIndex) in node.branches"
                   :key="branch.id"
                   :to="getRoutePath(branch)"
-                  class="node-action branch-action"
+                  class="node-action branch-action animate-stagger"
                   :class="[{ 'is-disabled': !canAccess(branch) }]"
                   :aria-disabled="!canAccess(branch)"
+                  :style="{ animationDelay: `${index * 0.1 + (bIndex + 1) * 0.05}s` }"
                   @click.prevent="!canAccess(branch) && $event.preventDefault()"
                 >
                   <div class="node-icon-wrapper" :class="`is-${branch.color || 'orange'}`">
@@ -66,34 +68,36 @@
           </template>
         </div>
       </div>
-    </div>
 
-    <!-- 辅助节点区使用 Bento 风格 -->
-    <div class="aux-track" v-if="config.auxNodes && config.auxNodes.length > 0">
-      <div class="section-head">
-        <span class="section-dot"></span>
-        <h3 class="section-title">辅助操作</h3>
-      </div>
-      <div class="bento-grid">
-        <router-link
-          v-for="aux in config.auxNodes"
-          :key="aux.id"
-          :to="getRoutePath(aux)"
-          class="bento-card"
-          :class="[{ 'is-disabled': !canAccess(aux) }]"
-          :aria-disabled="!canAccess(aux)"
-          @click.prevent="!canAccess(aux) && $event.preventDefault()"
-        >
-          <div class="bento-icon-wrapper" :class="`is-${aux.color || 'cyan'}`">
-            <el-icon class="bento-icon">
-              <component :is="getIcon(aux)" />
-            </el-icon>
-          </div>
-          <div class="bento-info">
-            <span class="bento-title">{{ getTitle(aux) }}</span>
-          </div>
-          <el-icon class="bento-action-icon"><Right /></el-icon>
-        </router-link>
+      <!-- 辅助节点区使用 Bento 风格，移入 unified-card 内部 -->
+      <div class="aux-track" v-if="config.auxNodes && config.auxNodes.length > 0">
+        <div class="aux-track-divider"></div>
+        <div class="section-head">
+          <span class="section-dot"></span>
+          <h3 class="section-title">辅助操作</h3>
+        </div>
+        <div class="bento-grid">
+          <router-link
+            v-for="(aux, aIndex) in config.auxNodes"
+            :key="aux.id"
+            :to="getRoutePath(aux)"
+            class="bento-card animate-stagger"
+            :class="[{ 'is-disabled': !canAccess(aux) }]"
+            :aria-disabled="!canAccess(aux)"
+            :style="{ animationDelay: `${(config.mainNodes?.length || 0) * 0.1 + aIndex * 0.05}s` }"
+            @click.prevent="!canAccess(aux) && $event.preventDefault()"
+          >
+            <div class="bento-icon-wrapper" :class="`is-${aux.color || 'cyan'}`">
+              <el-icon class="bento-icon">
+                <component :is="getIcon(aux)" />
+              </el-icon>
+            </div>
+            <div class="bento-info">
+              <span class="bento-title">{{ getTitle(aux) }}</span>
+            </div>
+            <el-icon class="bento-action-icon"><Right /></el-icon>
+          </router-link>
+        </div>
       </div>
     </div>
   </div>
@@ -138,19 +142,24 @@ function getIcon(node: FlowNode) {
 </script>
 
 <style scoped>
+@import '../Dashboard.styles.css';
+
 .unified-track-container {
   display: flex;
   flex-direction: column;
   gap: var(--space-8);
+  min-width: 0;
 }
 
 /* 统一进度轨主卡片 — 泡沫白卡 */
 .unified-card {
-  background: var(--surface-card);
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(20px);
   border-radius: var(--radius-xl);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid rgba(255, 255, 255, 0.9);
   box-shadow: var(--shadow-sm), var(--sheen);
   padding: var(--space-8);
+  min-width: 0;
 }
 
 .track-header {
@@ -188,6 +197,7 @@ function getIcon(node: FlowNode) {
 .track-body {
   overflow-x: auto;
   padding-bottom: var(--space-5);
+  min-width: 0;
 }
 
 .flow-main-track {
@@ -211,7 +221,7 @@ function getIcon(node: FlowNode) {
   gap: var(--space-4);
   text-decoration: none;
   cursor: pointer;
-  padding: var(--space-4) var(--space-6);
+  padding: var(--space-4) var(--space-4);
   border-radius: var(--radius-md);
   transition: transform var(--dur-base) var(--ease-bubble),
     background var(--dur-base) var(--ease-out);
@@ -219,7 +229,7 @@ function getIcon(node: FlowNode) {
 
 .node-action:hover:not(.is-disabled) {
   background: var(--surface-brand-soft);
-  transform: translateY(-4px);
+  transform: scale(1.02) translateY(-4px);
 }
 
 .node-action:focus-visible {
@@ -236,8 +246,8 @@ function getIcon(node: FlowNode) {
 /* 圆形泡泡图标底座 + 步骤序号 */
 .node-icon-wrapper {
   position: relative;
-  width: 56px;
-  height: 56px;
+  width: 40px;
+  height: 40px;
   border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
@@ -250,27 +260,20 @@ function getIcon(node: FlowNode) {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65), var(--shadow-mint);
 }
 
-.node-step-no {
+.node-status-dot {
   position: absolute;
-  top: -6px;
-  right: -8px;
-  min-width: 22px;
-  height: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-pill);
-  background: var(--grad-bubble);
-  color: var(--white);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.5px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: var(--shadow-xs);
+  top: 4px;
+  right: 5px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.88);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.24);
 }
 
 .node-icon {
-  font-size: 24px;
+  font-size: 18px;
 }
 
 .node-info {
@@ -279,7 +282,7 @@ function getIcon(node: FlowNode) {
 
 .node-title {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-strong);
   white-space: nowrap;
 }
@@ -288,8 +291,8 @@ function getIcon(node: FlowNode) {
 .flow-connector {
   display: flex;
   align-items: center;
-  margin: 44px 12px 0;
-  width: 76px;
+  margin: 44px 8px 0;
+  width: 56px;
   position: relative;
 }
 
@@ -347,19 +350,27 @@ function getIcon(node: FlowNode) {
   padding: var(--space-3) var(--space-4);
 }
 .branch-action .node-icon-wrapper {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
 }
 .branch-action .node-icon {
-  font-size: 20px;
+  font-size: 16px;
 }
 .branch-action .node-title {
   font-size: 13px;
+  font-weight: 500;
 }
 
 /* === Bento 辅助区（与 BentoGrid 同语言） === */
 .aux-track {
-  margin-top: var(--space-2);
+  margin-top: var(--space-4);
+}
+
+.aux-track-divider {
+  height: 1px;
+  background: var(--border-subtle);
+  margin: var(--space-2) 0 var(--space-5);
+  width: 100%;
 }
 
 .section-head {
@@ -386,31 +397,49 @@ function getIcon(node: FlowNode) {
 
 .bento-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
   gap: var(--space-4);
+  min-width: 0;
 }
 
 .bento-card {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--space-4);
-  background: var(--surface-card);
-  border: 1px solid var(--border-subtle);
+  background: rgba(255, 255, 255, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.9);
+  backdrop-filter: blur(20px);
   border-radius: var(--radius-lg);
   padding: var(--space-4) var(--space-5);
   min-height: 84px;
   text-decoration: none;
   cursor: pointer;
   box-shadow: var(--shadow-xs), var(--sheen);
-  transition: transform var(--dur-base) var(--ease-bubble),
-    box-shadow var(--dur-base) var(--ease-out),
-    border-color var(--dur-base) var(--ease-out);
+  transition: all var(--dur-base) var(--ease-bubble);
+  overflow: hidden;
+}
+
+.bento-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: var(--grad-bubble);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
 }
 
 .bento-card:hover:not(.is-disabled) {
   transform: translateY(-3px);
   box-shadow: var(--shadow-md);
   border-color: var(--border-brand);
+}
+
+.bento-card:hover:not(.is-disabled)::before {
+  opacity: 1;
 }
 
 .bento-card:focus-visible {
@@ -426,18 +455,23 @@ function getIcon(node: FlowNode) {
 }
 
 .bento-icon-wrapper {
-  width: 44px;
-  height: 44px;
+  width: 32px;
+  height: 32px;
   border-radius: var(--radius-pill);
   display: flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.65);
+  transition: transform var(--dur-base) var(--ease-bubble);
+}
+
+.bento-card:hover:not(.is-disabled) .bento-icon-wrapper {
+  transform: scale(1.08) rotate(-2deg);
 }
 
 .bento-icon {
-  font-size: 20px;
+  font-size: 16px;
 }
 
 .bento-info {
@@ -447,7 +481,7 @@ function getIcon(node: FlowNode) {
 
 .bento-title {
   font-size: 14px;
-  font-weight: 600;
+  font-weight: 500;
   color: var(--text-strong);
   display: block;
   white-space: nowrap;
@@ -456,13 +490,18 @@ function getIcon(node: FlowNode) {
 }
 
 .bento-action-icon {
+  position: relative;
+  z-index: 1;
   color: var(--ink-300);
   font-size: 16px;
-  transition: transform var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+  opacity: 0;
+  transform: translateX(-8px);
+  transition: all var(--dur-base) var(--ease-out);
 }
 
-.bento-card:hover .bento-action-icon {
-  transform: translateX(3px);
+.bento-card:hover:not(.is-disabled) .bento-action-icon {
+  transform: translateX(0);
+  opacity: 1;
   color: var(--brand);
 }
 
@@ -476,6 +515,70 @@ function getIcon(node: FlowNode) {
 .is-yellow { background: var(--warning-soft); color: #B97A14; }
 .is-pink { background: var(--danger-soft); color: #D7434A; }
 .is-indigo { background: var(--blue-100); color: var(--blue-700); }
+
+@media (max-width: 768px) {
+  .unified-card {
+    padding: var(--space-4);
+  }
+  .track-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .bento-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    background: rgba(255, 255, 255, 0.7);
+    border: 1px solid rgba(255, 255, 255, 0.9);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-sm);
+    backdrop-filter: blur(20px);
+    overflow: hidden;
+  }
+  .bento-card {
+    border: none;
+    border-bottom: 1px solid var(--border-subtle);
+    border-radius: 0;
+    padding: 14px 16px;
+    min-height: auto;
+    box-shadow: none;
+    gap: 12px;
+    align-items: center;
+  }
+  .bento-card:last-child {
+    border-bottom: none;
+  }
+  .bento-card::before {
+    display: none;
+  }
+  .bento-card:hover:not(.is-disabled) {
+    transform: none;
+    box-shadow: none;
+    background: var(--surface-brand-soft);
+  }
+  .bento-icon-wrapper {
+    width: 36px;
+    height: 36px;
+    flex: 0 0 36px;
+  }
+  .bento-icon {
+    font-size: 18px;
+  }
+  .bento-info {
+    padding-right: 0;
+  }
+  .bento-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .bento-action-icon {
+    opacity: 1;
+    transform: none;
+    font-size: 16px;
+    color: var(--text-muted);
+  }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .node-action,

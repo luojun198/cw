@@ -283,6 +283,7 @@ onMounted(() => {
   flex-direction: column;
 }
 
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -290,6 +291,7 @@ onMounted(() => {
   border-bottom: 1px solid #e0e0e0;
 }
 
+.page-header h2 {
   margin: 0;
   font-size: 20px;
   font-weight: 500;

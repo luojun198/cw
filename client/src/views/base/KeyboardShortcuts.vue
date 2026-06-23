@@ -385,17 +385,20 @@ onMounted(() => {
   padding: 16px;
 }
 
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
 
+.page-header h2 {
   margin: 0;
   font-size: 18px;
   font-weight: 600;
 }
 
+.page-actions {
   display: flex;
   gap: 12px;
   align-items: center;

@@ -15,7 +15,23 @@
       <template #prefix>
         <el-icon><Search /></el-icon>
       </template>
+      <template v-if="browsable" #suffix>
+        <el-icon
+          class="ip-browse-btn"
+          title="浏览选择物料"
+          @mousedown.prevent.stop
+          @click.stop="openBrowse"
+        ><Grid /></el-icon>
+      </template>
     </el-input>
+
+    <!-- 系统通用物料选择模态框（浏览按钮调起） -->
+    <ItemBatchPicker
+      v-if="browsable"
+      v-model="browseVisible"
+      :multiple="browseMultiple"
+      @confirm="onBrowseConfirm"
+    />
 
     <Teleport to="body">
       <div
@@ -42,7 +58,7 @@
           :data="candidates"
           size="small"
           highlight-current-row
-          max-height="250"
+          max-height="340"
           border
           :row-class-name="rowClassName"
           @row-click="pickItem"
@@ -80,7 +96,8 @@
 import { ref, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
 import type { ElInput } from 'element-plus'
 import { scmApi } from '@/api/scm'
-import { Search } from '@element-plus/icons-vue'
+import { Search, Grid } from '@element-plus/icons-vue'
+import ItemBatchPicker from '@/components/scm/ItemBatchPicker.vue'
 
 const props = withDefaults(defineProps<{
   modelValue?: string
@@ -90,9 +107,37 @@ const props = withDefaults(defineProps<{
   autoOpen?: boolean
   /** 展开后聚焦下拉内检索框（双击物料单元格时使用） */
   focusSearch?: boolean
-}>(), { modelValue: '', placeholder: '输入编号/名称进行搜索', autoOpen: false, focusSearch: false })
+  /** 是否显示「浏览」按钮调起系统模态框（默认显示） */
+  browsable?: boolean
+  /** 浏览模态框是否多选（默认单选，返回一个物料） */
+  browseMultiple?: boolean
+}>(), { modelValue: '', placeholder: '输入编号/名称进行搜索', autoOpen: false, focusSearch: false, browsable: true, browseMultiple: false })
 
-const emit = defineEmits<{ (e: 'update:modelValue', v: string): void; (e: 'pick', item: any): void }>()
+const emit = defineEmits<{
+  (e: 'update:modelValue', v: string): void
+  (e: 'pick', item: any): void
+  /** 浏览模态框多选确认时返回多个物料 */
+  (e: 'pick-multiple', items: any[]): void
+}>()
+
+const browseVisible = ref(false)
+function openBrowse() {
+  showPanel.value = false
+  browseVisible.value = true
+}
+function onBrowseConfirm(items: any[]) {
+  if (!items || !items.length) return
+  if (props.browseMultiple) {
+    emit('pick-multiple', items)
+    return
+  }
+  const it = items[0]
+  display.value = `${it.code} ${it.name}`
+  keyword.value = it.code
+  emit('update:modelValue', it.code)
+  emit('pick', it)
+  showPanel.value = false
+}
 
 const pickerRef = ref<HTMLElement | null>(null)
 const dropdownRef = ref<HTMLElement | null>(null)
@@ -241,7 +286,8 @@ async function search(kw: string) {
     loading.value = true
     try {
       const searchKw = kw.trim()
-      const res = await scmApi.getItems({ keyword: searchKw || undefined, page_size: 20 })
+      // 全量加载（与批量选择器一致），避免成品等编码靠后的物料因分页被截断而选不到
+      const res = await scmApi.getItems({ keyword: searchKw || undefined, all: '1' })
       if (res.code === 0) {
         const items = res.data.list as any[]
         if (props.warehouseCode) {
@@ -284,6 +330,14 @@ defineExpose({ openPanel })
 
 <style scoped>
 .item-picker { position: relative; width: 100%; }
+.ip-browse-btn {
+  cursor: pointer;
+  color: var(--el-text-color-placeholder);
+  transition: color 0.15s;
+}
+.ip-browse-btn:hover {
+  color: var(--el-color-primary);
+}
 .item-picker-dropdown {
   background: var(--el-bg-color);
   border: 1px solid var(--el-border-color-light);

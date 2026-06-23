@@ -1117,3 +1117,28 @@
     width: auto;
   }
 }
+
+/* ========== 全局交错入场动效 (Staggered Entrance) ========== */
+@keyframes staggerFadeInUp {
+  0% {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.animate-stagger {
+  opacity: 0;
+  animation: staggerFadeInUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-stagger {
+    animation: none;
+    opacity: 1;
+    transform: none;
+  }
+}

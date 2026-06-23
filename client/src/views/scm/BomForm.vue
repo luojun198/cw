@@ -37,6 +37,7 @@
 
       <div class="bom-lines-toolbar">
         <el-button size="small" type="primary" plain @click="addLine"><el-icon><Plus /></el-icon>添加组件物料</el-button>
+        <el-button size="small" plain @click="batchVisible = true"><el-icon><Grid /></el-icon>批量选择组件</el-button>
         <span class="bom-lines-summary">
           共 {{ form.lines.length }} 个组件
         </span>
@@ -49,13 +50,18 @@
         </el-table-column>
         <el-table-column label="组件物料" min-width="150" prop="item_code">
           <template #default="{ row, $index }">
-            <ItemPicker v-if="isEditing($index, 'item_code')" v-model="row.item_code" auto-open @pick="(item:any) => { row.item_code = item.code; row.item_name = item.name; row.unit = item.unit; stopEdit() }" v-focus />
+            <ItemPicker v-if="isEditing($index, 'item_code')" v-model="row.item_code" auto-open :browsable="false" @pick="(item:any) => { row.item_code = item.code; row.item_name = item.name; row.spec = item.spec || ''; row.unit = item.unit; stopEdit() }" v-focus />
             <div v-else class="editable-cell">{{ row.item_code }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="物料名称" min-width="180" prop="item_name">
+        <el-table-column label="物料名称" min-width="170" prop="item_name">
           <template #default="{ row }">
             <div class="static-cell">{{ row.item_name }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="规格" min-width="120" prop="spec" show-overflow-tooltip>
+          <template #default="{ row }">
+            <div class="static-cell">{{ row.spec || '' }}</div>
           </template>
         </el-table-column>
         <el-table-column label="用量" width="120" align="right" prop="qty">
@@ -89,6 +95,9 @@
         </el-table-column>
       </el-table>
     </div>
+
+    <!-- 批量选择组件物料（系统通用模态框，多选） -->
+    <ItemBatchPicker v-model="batchVisible" @confirm="onBatchAddLines" />
   </div>
 </template>
 
@@ -96,9 +105,10 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { ArrowLeft, Plus } from '@element-plus/icons-vue'
+import { ArrowLeft, Plus, Grid } from '@element-plus/icons-vue'
 import { scmApi } from '@/api/scm'
 import ItemPicker from '@/components/scm/ItemPicker.vue'
+import ItemBatchPicker from '@/components/scm/ItemBatchPicker.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -153,7 +163,7 @@ onMounted(async () => {
       }
     }
   } else {
-    form.value.lines = [{ item_code: '', qty: 1, unit: '', scrap_rate: 0, remark: '' }]
+    form.value.lines = [{ item_code: '', item_name: '', spec: '', qty: 1, unit: '', scrap_rate: 0, remark: '' }]
     try {
       const r = await scmApi.getBomNextNo()
       if (r.code === 0) form.value.code = r.data.next_no
@@ -162,7 +172,29 @@ onMounted(async () => {
 })
 
 function addLine() {
-  form.value.lines.push({ item_code: '', qty: 1, unit: '', scrap_rate: 0, remark: '' })
+  form.value.lines.push({ item_code: '', item_name: '', spec: '', qty: 1, unit: '', scrap_rate: 0, remark: '' })
+}
+
+const batchVisible = ref(false)
+// 批量选择组件：去重后追加到明细，并移除初始的空行
+function onBatchAddLines(items: any[]) {
+  if (!items || !items.length) return
+  const existed = new Set(form.value.lines.map((l: any) => l.item_code).filter(Boolean))
+  // 去掉只有空行占位的首行
+  form.value.lines = form.value.lines.filter((l: any) => l.item_code)
+  for (const it of items) {
+    if (existed.has(it.code)) continue
+    existed.add(it.code)
+    form.value.lines.push({
+      item_code: it.code,
+      item_name: it.name,
+      spec: it.spec || '',
+      qty: 1,
+      unit: it.unit_name || it.unit || '',
+      scrap_rate: 0,
+      remark: '',
+    })
+  }
 }
 
 async function handleSave() {

@@ -29,6 +29,9 @@
           <el-row :gutter="16">
             <el-col :span="12"><el-form-item label="仓库属性"><el-input v-model="form.attr" /></el-form-item></el-col>
             <el-col :span="12"><el-form-item label="负责人"><el-input v-model="form.keeper" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="联系电话"><el-input v-model="form.phone" /></el-form-item></el-col>
+            <el-col :span="12"><el-form-item label="对应往来单位"><el-input v-model="form.partner_code" placeholder="外仓可填供应商/客户编号" /></el-form-item></el-col>
+            <el-col :span="24"><el-form-item label="仓库地址"><el-input v-model="form.address" /></el-form-item></el-col>
             <el-col :span="24"><el-form-item label="备注"><el-input v-model="form.remark" type="textarea" :rows="1" /></el-form-item></el-col>
           </el-row>
         </div>

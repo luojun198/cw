@@ -37,12 +37,14 @@ import {
   queryDeprForecast,
 } from '../services/assetReportQuery.js'
 import { ensureDefaultAssetDicts } from '../services/accountSetDefaults.js'
+import { createPreReinitializeBackup } from '../services/systemReinitialize.js'
 
 const router = Router()
 router.use(authMiddleware)
 
 // ── 固定资产模块权限守卫：按路径(+方法)映射所需权限（admin '*' 自动放行） ──────
 const ASSET_PERMISSION_RULES: Array<{ re: RegExp; perm: string; methods?: string[] }> = [
+  { re: /^\/asset\/reset/,                  perm: 'asset:param' },     // 资产初始化（清空）
   { re: /^\/asset\/params/,                 perm: 'asset:param' },
   { re: /^\/asset\/dict/,                   perm: 'asset:dict' },     // dicts / dict/:type / dict/init
   { re: /^\/asset\/depr/,                   perm: 'asset:depr' },
@@ -94,6 +96,38 @@ router.put('/asset/params', operationLog('保存资产参数', '固定资产'), 
     upsert.run(existing?.id || uuidv4(), req.accountSetId, p.param_key, val)
   }
   res.json({ code: 0, message: '保存成功' })
+})
+
+// ── 固定资产初始化：清空业务数据（business）或连同基础档案（all） ──────────
+router.post('/asset/reset', operationLog('资产初始化', '固定资产'), async (req: AuthRequest, res) => {
+  const mode = req.body?.mode === 'all' ? 'all' : 'business'
+  const db = getDb(); const aid = req.accountSetId || ''
+  // 强制：清空前先完整备份本账套，备份失败则中止
+  let backupFile = ''
+  try {
+    const b = await createPreReinitializeBackup(aid, req.userId)
+    backupFile = b.filename
+  } catch (e: any) {
+    return res.status(500).json({ code: 500, message: e?.message || '初始化前自动备份失败，已中止操作' })
+  }
+  const businessTables = [
+    'fixed_asset_inventory_item', 'fixed_asset_inventory', 'fixed_asset_workload',
+    'fixed_asset_change', 'fixed_asset_depr', 'fixed_asset',
+  ]
+  const masterTables = [
+    'fixed_asset_category', 'fixed_asset_dept', 'fixed_asset_purpose',
+    'fixed_asset_status', 'fixed_asset_change_type',
+  ]
+  const tables = mode === 'all' ? [...businessTables, ...masterTables] : businessTables
+  const existing = new Set(
+    (db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all() as any[]).map(r => r.name)
+  )
+  db.transaction(() => {
+    for (const t of tables) {
+      if (existing.has(t)) db.prepare(`DELETE FROM ${t} WHERE account_set_id=?`).run(aid)
+    }
+  })()
+  res.json({ code: 0, data: { ok: true, mode, cleared: tables.filter(t => existing.has(t)), backup: backupFile } })
 })
 
 /** 读取单个资产参数值（空则返回 null） */

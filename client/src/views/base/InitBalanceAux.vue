@@ -1539,6 +1539,8 @@ watch(keyword, () => {
   background: var(--el-fill-color-lighter);
   box-sizing: border-box;
 }
+
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;

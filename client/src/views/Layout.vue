@@ -22,30 +22,25 @@
 
       <!-- 菜单 -->
       <el-menu
-        ref="menuRef"
         :default-active="activeMenu"
         :collapse="isCollapsed"
         background-color="transparent"
-        text-color="rgba(255, 255, 255, 0.7)"
-        active-text-color="#ffd700"
+        text-color="#4a4a4a"
+        active-text-color="#12C7AE"
         popper-class="apple-menu-popper"
-        popper-effect="dark"
+        popper-effect="light"
         router
         unique-opened
         class="apple-menu"
-        @open="onGroupOpen"
-        @close="onGroupClose"
       >
         <el-sub-menu
           v-for="group in menuGroups"
           :key="group.title === '报表管理' ? `report-${reportMenuRevision}` : group.title"
           :index="group.title"
           :class="{ 'sub-menu-current': currentGroupTitle === group.title }"
-          @mouseenter="onGroupMouseEnter(group.title)"
-          @mouseleave="onGroupMouseLeave(group.title)"
         >
           <template #title>
-            <div class="menu-title-inner" style="width: 100%; height: 100%; display: flex; align-items: center;" @click.stop="handleGroupTitleClick(group.title)">
+            <div class="menu-title-inner" style="width: 100%; height: 100%; display: flex; align-items: center;" @click="handleGroupTitleClick(group.title)">
               <div class="menu-icon-wrap">
                 <component :is="group.icon" />
               </div>
@@ -315,28 +310,38 @@ function isReportEnabledFlag(value: unknown) {
   return value === true || value === 1 || value === '1'
 }
 
+function buildDynamicReportMenuItems(raw: any[]) {
+  return raw
+    .filter((t: any) => isReportEnabledFlag(t.is_enabled))
+    .sort(
+      (a: any, b: any) =>
+        Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) ||
+        String(a.code).localeCompare(String(b.code))
+    )
+    .map((t: any) => ({
+      path: `/report/dynamic/${t.code}?view=1`,
+      title: t.name,
+    }))
+}
+
+function syncDynamicReportMenuItems(nextItems: { path: string; title: string }[]) {
+  const prev = JSON.stringify(dynamicReportMenuItems.value)
+  const next = JSON.stringify(nextItems)
+  if (prev === next) return
+  dynamicReportMenuItems.value = nextItems
+  reportMenuRevision.value += 1
+}
+
 async function fetchReportTemplates() {
   if (!userStore.token || !userStore.accountSetId) return
   try {
     const res = await request.get<any[]>('/report/templates')
     if (res.data && Array.isArray(res.data)) {
-      dynamicReportMenuItems.value = res.data
-        .filter((t: any) => isReportEnabledFlag(t.is_enabled))
-        .sort(
-          (a: any, b: any) =>
-            Number(a.sort_order ?? 0) - Number(b.sort_order ?? 0) ||
-            String(a.code).localeCompare(String(b.code))
-        )
-        .map((t: any) => ({
-          path: `/report/dynamic/${t.code}?view=1`,
-          title: t.name,
-        }))
-      reportMenuRevision.value += 1
+      syncDynamicReportMenuItems(buildDynamicReportMenuItems(res.data))
     }
   } catch (error) {
     console.error('获取报表模板列表失败:', error)
-    dynamicReportMenuItems.value = []
-    reportMenuRevision.value += 1
+    syncDynamicReportMenuItems([])
   }
 }
 
@@ -346,7 +351,7 @@ watch(
     if (token && accountSetId) {
       void fetchReportTemplates()
     } else {
-      dynamicReportMenuItems.value = []
+      syncDynamicReportMenuItems([])
     }
   },
   { immediate: true }
@@ -375,8 +380,6 @@ const switchOperatorRules: FormRules = {
   username: [{ required: true, message: '请选择操作员', trigger: 'change' }],
   password: [{ required: true, message: '请输入密码', trigger: 'blur' }],
 }
-
-const openGroups = ref<string[]>([])
 
 useKeyboardShortcuts([
   {
@@ -468,26 +471,11 @@ async function handleChangeAccount() {
   await router.push('/login')
 }
 
-const menuRef = ref<any>()
-let hoverTimer: ReturnType<typeof setTimeout> | null = null
-
-function onGroupMouseEnter(title: string) {
-  if (hoverTimer) clearTimeout(hoverTimer)
-  hoverTimer = setTimeout(() => {
-    menuRef.value?.open(title)
-  }, 150)
-}
-
-function onGroupMouseLeave(title: string) {
-  if (hoverTimer) clearTimeout(hoverTimer)
-  hoverTimer = setTimeout(() => {
-    menuRef.value?.close(title)
-  }, 250)
-}
-
 function handleGroupTitleClick(title: string) {
-  // Always navigate to the group dashboard on click
-  router.push(`/group/${encodeURIComponent(title)}`)
+  // 展开/收起交给 el-menu 原生处理；标题点击仅跳转分组首页
+  const target = `/group/${encodeURIComponent(title)}`
+  if (route.path === target) return
+  void router.push(target)
 }
 
 function navigateToModuleHome() {
@@ -495,16 +483,6 @@ function navigateToModuleHome() {
     router.push(`/group/${encodeURIComponent(currentParent.value)}`)
   }
 }
-
-function onGroupOpen(index: string | number) {
-  // Native logic is fine since we no longer navigate here.
-}
-
-function onGroupClose(index: string | number) {
-  // Native logic is fine
-}
-
-const openeds = computed(() => openGroups.value)
 
 const menuGroups = computed(() =>
   buildMenuGroups(
@@ -577,14 +555,6 @@ const currentParent = computed(() => {
   const group = menuGroups.value.find(g => g.children.some(c => matchesRoute(c.path, route.path, route.query)))
   return group?.title || ''
 })
-
-watch(
-  () => currentParent.value,
-  title => {
-    openGroups.value = title ? [title] : []
-  },
-  { immediate: true }
-)
 
 async function openSwitchOperatorDialog() {
   if (!userStore.accountSetId) {

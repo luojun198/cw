@@ -86,6 +86,8 @@ export const fixedAssetApi = {
     request.get<{ param_key: string; param_value: string }[]>('/asset/params'),
   saveAssetParams: (params: { param_key: string; param_value: string }[]) =>
     request.put('/asset/params', { params }),
+  // 固定资产初始化（清空业务数据 business / 连同档案 all）
+  reset: (mode: 'business' | 'all') => request.post<{ ok: boolean; cleared: string[] }>('/asset/reset', { mode }),
 
   // 折旧
   previewDepr: (year: number, month: number) =>

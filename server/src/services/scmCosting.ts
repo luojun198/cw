@@ -64,7 +64,8 @@ export function applyMovingAvgOut(
   db: Database.Database, accountSetId: string,
   warehouse: string, itemCode: string,
   outQty: number,
-  doc: { type: string; no: string; seq: number; date: string }
+  doc: { type: string; no: string; seq: number; date: string },
+  options: { allowNegative?: boolean } = {}
 ): { move: StockMoveRow; unitCost: number } {
   const stock = db.prepare(
     'SELECT qty, amount, avg_cost FROM scm_stock WHERE account_set_id=? AND warehouse_code=? AND item_code=?'
@@ -73,14 +74,19 @@ export function applyMovingAvgOut(
   const oldQty = stock?.qty || 0
   const oldAmt = stock?.amount || 0
   const unitCost = stock?.avg_cost || 0
-  const newQty = Math.max(0, Math.round((oldQty - outQty) * 10000) / 10000)
+  const newQtyRaw = Math.round((oldQty - outQty) * 10000) / 10000
+  const newQty = options.allowNegative ? newQtyRaw : Math.max(0, newQtyRaw)
   const outAmt = Math.round(unitCost * outQty * 100) / 100
-  const newAmt = Math.max(0, Math.round((oldAmt - outAmt) * 10000) / 10000)
-  const avg = newQty > 0 ? Math.round((newAmt / newQty) * 10000) / 10000 : 0
+  const newAmtRaw = Math.round((oldAmt - outAmt) * 10000) / 10000
+  const newAmt = options.allowNegative ? newAmtRaw : Math.max(0, newAmtRaw)
+  const avg = newQty !== 0 ? Math.round((newAmt / newQty) * 10000) / 10000 : 0
 
   if (stock) {
     db.prepare('UPDATE scm_stock SET qty=?,amount=?,avg_cost=?,updated_at=datetime(\'now\') WHERE account_set_id=? AND warehouse_code=? AND item_code=?')
       .run(newQty, newAmt, avg, accountSetId, warehouse, itemCode)
+  } else if (options.allowNegative) {
+    db.prepare('INSERT INTO scm_stock (id,account_set_id,warehouse_code,item_code,qty,amount,avg_cost) VALUES (?,?,?,?,?,?,?)')
+      .run(uuidv4(), accountSetId, warehouse, itemCode, newQty, newAmt, avg)
   }
 
   const moveId = uuidv4()
@@ -94,7 +100,12 @@ export function applyMovingAvgOut(
 }
 
 /** 撤销某张单据的全部库存移动（反审核/删单时回退库存） */
-export function reverseDocMoves(db: Database.Database, accountSetId: string, docId: string) {
+export function reverseDocMoves(
+  db: Database.Database,
+  accountSetId: string,
+  docId: string,
+  options: { allowNegativeWarehouses?: Set<string> } = {}
+) {
   const moves = db.prepare(
     'SELECT * FROM scm_stock_move WHERE account_set_id=? AND doc_type||\'-\'||doc_no IN (SELECT doc_type||\'-\'||doc_no FROM scm_doc WHERE id=?)'
   ).all(accountSetId, docId) as StockMoveRow[]
@@ -109,11 +120,19 @@ export function reverseDocMoves(db: Database.Database, accountSetId: string, doc
     ).get(accountSetId, m.warehouse_code, m.item_code) as StockRow | undefined
     const oldQty = stock?.qty || 0
     const oldAmt = stock?.amount || 0
-    const newQty = m.direction === 'in' ? Math.max(0, oldQty - m.qty) : oldQty + m.qty
-    const newAmt = m.direction === 'in' ? Math.max(0, oldAmt - m.amount) : oldAmt + m.amount
-    const avg = newQty > 0 ? newAmt / newQty : 0
-    db.prepare('UPDATE scm_stock SET qty=?,amount=?,avg_cost=?,updated_at=datetime(\'now\') WHERE account_set_id=? AND warehouse_code=? AND item_code=?')
-      .run(newQty, newAmt, avg, accountSetId, m.warehouse_code, m.item_code)
+    const allowNegative = options.allowNegativeWarehouses?.has(m.warehouse_code) || false
+    const newQtyRaw = m.direction === 'in' ? oldQty - m.qty : oldQty + m.qty
+    const newAmtRaw = m.direction === 'in' ? oldAmt - m.amount : oldAmt + m.amount
+    const newQty = m.direction === 'in' && !allowNegative ? Math.max(0, newQtyRaw) : newQtyRaw
+    const newAmt = m.direction === 'in' && !allowNegative ? Math.max(0, newAmtRaw) : newAmtRaw
+    const avg = newQty !== 0 ? newAmt / newQty : 0
+    if (stock) {
+      db.prepare('UPDATE scm_stock SET qty=?,amount=?,avg_cost=?,updated_at=datetime(\'now\') WHERE account_set_id=? AND warehouse_code=? AND item_code=?')
+        .run(newQty, newAmt, avg, accountSetId, m.warehouse_code, m.item_code)
+    } else if (allowNegative) {
+      db.prepare('INSERT INTO scm_stock (id,account_set_id,warehouse_code,item_code,qty,amount,avg_cost) VALUES (?,?,?,?,?,?,?)')
+        .run(uuidv4(), accountSetId, m.warehouse_code, m.item_code, newQty, newAmt, avg)
+    }
   }
   db.prepare('DELETE FROM scm_stock_move WHERE account_set_id=? AND doc_type||\'-\'||doc_no IN (SELECT doc_type||\'-\'||doc_no FROM scm_doc WHERE id=?)')
     .run(accountSetId, docId)

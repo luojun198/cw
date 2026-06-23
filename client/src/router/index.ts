@@ -329,6 +329,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '物料属性', icon: 'PriceTag', parent: '供应链' },
       },
       {
+        path: 'scm/categories',
+        name: 'ScmCategoryList',
+        component: () => import('@/views/scm/CategoryList.vue'),
+        meta: { title: '物料分类', icon: 'Files', parent: '供应链' },
+      },
+      {
+        path: 'scm/bins',
+        name: 'ScmBinList',
+        component: () => import('@/views/scm/BinList.vue'),
+        meta: { title: '库位档案', icon: 'Grid', parent: '供应链' },
+      },
+      {
         path: 'scm/partners',
         name: 'ScmPartnerList',
         component: () => import('@/views/scm/PartnerList.vue'),
@@ -371,10 +383,64 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '生产计划', icon: 'SetUp', parent: '生产管理' },
       },
       {
+        path: 'scm/production-plans/:id',
+        name: 'ScmProductionOrder',
+        component: () => import('@/views/scm/ProductionOrder.vue'),
+        meta: { title: '工单', icon: 'SetUp', parent: '生产管理' },
+      },
+      {
         path: 'scm/report',
         name: 'ScmStockReport',
         component: () => import('@/views/scm/StockReport.vue'),
         meta: { title: '收发存汇总', icon: 'DataAnalysis', parent: '供应链' },
+      },
+      {
+        path: 'scm/report/stock-alert',
+        name: 'ScmStockAlert',
+        component: () => import('@/views/scm/StockAlert.vue'),
+        meta: { title: '库存预警', icon: 'Warning', parent: '库存' },
+      },
+      {
+        path: 'scm/report/buysell',
+        name: 'ScmBuySellReport',
+        component: () => import('@/views/scm/BuySellReport.vue'),
+        meta: { title: '购销报表', icon: 'DataAnalysis', parent: '供应链' },
+      },
+      {
+        path: 'scm/report/purchase-advice',
+        name: 'ScmPurchaseAdvice',
+        component: () => import('@/views/scm/PurchaseAdvice.vue'),
+        meta: { title: '采购建议', icon: 'ShoppingCart', parent: '采购管理' },
+      },
+      {
+        path: 'scm/batch-stock',
+        name: 'ScmBatchStock',
+        component: () => import('@/views/scm/BatchStock.vue'),
+        meta: { title: '批次库存', icon: 'Files', parent: '库存' },
+      },
+      {
+        path: 'scm/report/batch-alert',
+        name: 'ScmBatchAlert',
+        component: () => import('@/views/scm/BatchAlert.vue'),
+        meta: { title: '批次临期预警', icon: 'Warning', parent: '库存' },
+      },
+      {
+        path: 'scm/serials',
+        name: 'ScmSerialList',
+        component: () => import('@/views/scm/SerialList.vue'),
+        meta: { title: '序列号查询', icon: 'Tickets', parent: '库存' },
+      },
+      {
+        path: 'scm/arap',
+        name: 'ScmPartnerLedger',
+        component: () => import('@/views/scm/PartnerLedger.vue'),
+        meta: { title: '往来对账', icon: 'Money', parent: '往来管理' },
+      },
+      {
+        path: 'scm/arap-aging',
+        name: 'ScmArApAging',
+        component: () => import('@/views/scm/ArApAging.vue'),
+        meta: { title: '应收应付账龄', icon: 'Money', parent: '往来管理' },
       },
       {
         path: 'scm/boms',
@@ -401,6 +467,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '供应链单据', icon: 'Document', parent: '供应链' },
       },
       {
+        path: 'scm/col-schemes',
+        name: 'ScmColSchemeManager',
+        component: () => import('@/views/scm/ColSchemeManager.vue'),
+        meta: { title: '列方案设置', parent: '供应链' },
+      },
+      {
         path: 'scm/docs/new',
         name: 'ScmDocNew',
         component: () => import('@/views/scm/DocForm.vue'),
@@ -411,6 +483,30 @@ const routes: RouteRecordRaw[] = [
         name: 'ScmDocEdit',
         component: () => import('@/views/scm/DocForm.vue'),
         meta: { title: '编辑单据', parent: '供应链' },
+      },
+      {
+        path: 'scm/docs/:id/dispatch',
+        name: 'ScmDocDispatch',
+        component: () => import('@/views/scm/StockDispatch.vue'),
+        meta: { title: '缺货分析/智能下推', parent: '供应链' },
+      },
+      {
+        path: 'scm/docs/:id/mr-push-preview',
+        name: 'ScmMrPushPreview',
+        component: () => import('@/views/scm/MrPushPreview.vue'),
+        meta: { title: '缺料下推预览', parent: '供应链' },
+      },
+      {
+        path: 'scm/docs/:id/downstream',
+        name: 'ScmDocDownstream',
+        component: () => import('@/views/scm/DownstreamTrace.vue'),
+        meta: { title: '下游单据追溯', parent: '供应链' },
+      },
+      {
+        path: 'scm/docs/:id/print',
+        name: 'ScmDocPrint',
+        component: () => import('@/views/scm/ScmDocPrint.vue'),
+        meta: { title: '单据打印', parent: '供应链' },
       },
       {
         path: 'scm/docs/:id',

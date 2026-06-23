@@ -165,11 +165,15 @@ onMounted(fetchData)
 .page {
   padding: 16px;
 }
+
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 16px;
 }
+
+.page-header h2 {
   margin: 0;
 }
 </style>

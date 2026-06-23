@@ -899,8 +899,12 @@ onActivated(() => {
 .page {
   padding: 16px;
 }
+
+.page-header {
   margin-bottom: 16px;
 }
+
+.page-header h2 {
   margin: 0 0 12px 0;
 }
 .filter-row {

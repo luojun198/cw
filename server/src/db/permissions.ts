@@ -120,6 +120,18 @@ export const PERMISSIONS: PermissionDef[] = [
   { code: 'scm:opening',      name: '期初库存',     module: 'scm',     moduleName: '供应链' },
   { code: 'scm:import',       name: '供应链ACD导入',module: 'scm',     moduleName: '供应链' },
   { code: 'scm:param',        name: '供应链参数',   module: 'scm',     moduleName: '供应链' },
+  // 业务域单据权限（细化自原 scm:stock 一刀切）
+  { code: 'scm:purchase',     name: '采购业务单据', module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:sale',         name: '销售业务单据', module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:inventory',    name: '库存业务单据', module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:production',   name: '生产业务单据', module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:outsource',    name: '委外业务单据', module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:arap',         name: '往来收付/对账', module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:report',       name: '供应链报表',   module: 'scm',     moduleName: '供应链' },
+  // 跨单据操作权限
+  { code: 'scm:audit',        name: '单据审核/反审核', module: 'scm',  moduleName: '供应链' },
+  { code: 'scm:delete',       name: '单据删除',     module: 'scm',     moduleName: '供应链' },
+  { code: 'scm:colscheme',    name: '列方案设置',   module: 'scm',     moduleName: '供应链' },
 ]
 
 /** 按模块分组 */

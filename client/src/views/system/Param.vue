@@ -140,6 +140,22 @@
               </el-form>
             </div>
           </section>
+
+          <section class="param-section param-section--danger">
+            <header class="param-section__head">
+              <span class="param-section__marker" aria-hidden="true"></span>
+              <h4 class="param-section__title">出纳初始化
+                <span class="param-section__sub">清空本账套出纳数据（危险操作，不可恢复）</span>
+              </h4>
+            </header>
+            <div class="param-section__body param-section__body--compact">
+              <ModuleResetPanel
+                module-label="出纳"
+                business-desc="清空出纳单据、期初余额、银行对账单"
+                :reset-fn="() => cashierApi.reset()"
+              />
+            </div>
+          </section>
         </div>
         <div style="padding:0 0 12px 0;display:flex;justify-content:flex-end">
           <el-button type="primary" size="small" @click="handleSaveCashier">保存</el-button>
@@ -222,6 +238,24 @@
               </el-form>
             </div>
           </section>
+
+          <section class="param-section param-section--danger">
+            <header class="param-section__head">
+              <span class="param-section__marker" aria-hidden="true"></span>
+              <h4 class="param-section__title">资产初始化
+                <span class="param-section__sub">清空本账套固定资产数据（危险操作，不可恢复）</span>
+              </h4>
+            </header>
+            <div class="param-section__body param-section__body--compact">
+              <ModuleResetPanel
+                module-label="固定资产"
+                two-mode
+                business-desc="清空资产卡片、折旧、变动、盘点、工作量记录"
+                all-desc="另清空 资产分类/部门/用途/状态/变动方式 等基础档案"
+                :reset-fn="m => fixedAssetApi.reset(m)"
+              />
+            </div>
+          </section>
         </div>
         <div style="padding:0 0 12px 0;display:flex;justify-content:flex-end">
           <el-button type="primary" size="small" @click="handleSaveAsset">保存</el-button>
@@ -242,12 +276,68 @@
               <el-form label-width="130px" size="small">
                 <el-form-item label="计价方式">
                   <el-select v-model="scmForm.costing_method" style="width:220px" placeholder="默认移动加权平均">
-                    <el-option v-for="(n,k) in SCM_COSTING" :key="k" :label="n" :value="k" />
+                    <el-option v-for="(n,k) in SCM_COSTING" :key="k"
+                      :label="COSTING_IMPLEMENTED.includes(k) ? n : n + '（开发中）'"
+                      :value="k" :disabled="!COSTING_IMPLEMENTED.includes(k)" />
                   </el-select>
                 </el-form-item>
                 <el-form-item label=" ">
                   <span style="font-size:12px;color:var(--el-text-color-secondary);line-height:1.7">
-                    指定成本：取物料档案的「指定成本」字段。先进先出/后进先出需启用批次库存。
+                    目前仅「移动加权平均」已实现；全月平均/先进先出/后进先出/指定成本开发中（选用未实现方式将无法过账）。
+                  </span>
+                </el-form-item>
+                <el-form-item label="可选币别">
+                  <el-input v-model="scmForm.currencies" style="width:420px" placeholder="逗号分隔，如 CNY,USD,EUR；留空用默认" />
+                </el-form-item>
+                <el-form-item label="收发类别">
+                  <el-input v-model="scmForm.io_categories" style="width:420px" placeholder="逗号分隔，如 领用,报废,盘盈,盘亏（其他出入库用）" />
+                </el-form-item>
+                <el-form-item label="运输方式">
+                  <el-input v-model="scmForm.transport_methods" style="width:420px" placeholder="逗号分隔，如 自提,快递,物流,专车" />
+                </el-form-item>
+                <el-form-item label="单据编号规则">
+                  <el-input v-model="scmForm.doc_no_rule" style="width:420px" placeholder="默认 {YYYY}{MM}-{CODE}-{SEQ:3}" />
+                </el-form-item>
+                <el-form-item label=" ">
+                  <span style="font-size:12px;color:var(--el-text-color-secondary);line-height:1.7">
+                    编号规则占位符：{YYYY}年 {YY}年后两位 {MM}月 {DD}日 {CODE}单据类型 {SEQ:n}序号(n位)。留空用默认。
+                  </span>
+                </el-form-item>
+              </el-form>
+            </div>
+          </section>
+
+          <section class="param-section param-section--basic">
+            <header class="param-section__head">
+              <span class="param-section__marker" aria-hidden="true"></span>
+              <h4 class="param-section__title">负库存控制
+                <span class="param-section__sub">按仓库控制出库、调拨、组装、拆卸、盘点等审核时是否允许库存为负</span>
+              </h4>
+            </header>
+            <div class="param-section__body">
+              <el-form label-width="130px" size="small">
+                <el-form-item label="允许负库存仓库">
+                  <el-select
+                    v-model="scmForm.negative_stock_warehouses"
+                    multiple
+                    filterable
+                    clearable
+                    collapse-tags
+                    collapse-tags-tooltip
+                    placeholder="未选择则所有仓库均不允许负库存"
+                    style="width:420px"
+                  >
+                    <el-option
+                      v-for="warehouse in scmWarehouses"
+                      :key="warehouse.code"
+                      :label="`${warehouse.code} ${warehouse.name}`"
+                      :value="warehouse.code"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label=" ">
+                  <span style="font-size:12px;color:var(--el-text-color-secondary);line-height:1.7">
+                    勾选后，该仓库出库或因修改、反审核入库单造成库存为负时仍允许审核；未勾选仓库继续按库存不足拦截。
                   </span>
                 </el-form-item>
               </el-form>
@@ -344,6 +434,24 @@
               </el-form>
             </div>
           </section>
+
+          <section class="param-section param-section--danger">
+            <header class="param-section__head">
+              <span class="param-section__marker" aria-hidden="true"></span>
+              <h4 class="param-section__title">供应链初始化
+                <span class="param-section__sub">清空本账套供应链数据（危险操作，不可恢复）</span>
+              </h4>
+            </header>
+            <div class="param-section__body param-section__body--compact">
+              <ModuleResetPanel
+                module-label="供应链"
+                two-mode
+                business-desc="清空 单据/库存/出入库流水/批次/生产计划/往来台账/报工"
+                all-desc="另清空 物料/物料分类/计量单位/往来单位/仓库/BOM 等基础档案（单据类型为系统预置，始终保留）"
+                :reset-fn="m => scmApi.resetData(m)"
+              />
+            </div>
+          </section>
         </div>
         <div style="padding:0 0 12px 0;display:flex;justify-content:flex-end">
           <el-button type="primary" size="small" @click="handleSaveScm">保存</el-button>
@@ -373,8 +481,12 @@ import { useBaseDataStore } from '@/stores/baseData'
 import DashboardRulesDialog from '@/components/system/DashboardRulesDialog.vue'
 import BrandSettingsPanel from '@/components/system/BrandSettingsPanel.vue'
 import SystemReinitializePanel from '@/components/system/SystemReinitializePanel.vue'
+import ModuleResetPanel from '@/components/system/ModuleResetPanel.vue'
 import AccountSelect from '@/components/base/AccountSelect.vue'
 import type { Account } from '@/types/base'
+import { scmApi, type ScmWarehouse } from '@/api/scm'
+import { cashierApi } from '@/api/cashier'
+import { fixedAssetApi } from '@/api/fixedAsset'
 
 interface SystemParam {
   id?: string
@@ -444,8 +556,28 @@ interface VoucherType { id: string; code: string; name: string }
 const voucherTypes = ref<VoucherType[]>([])
 const cashierForm = ref({ default_voucher_type_id: '' })
 const assetForm = ref({ depr_voucher_type_id: '', purchase_voucher_type_id: '', depr_start_period: '', inventory_surplus_account: '', inventory_deficit_account: '' })
-const scmForm = ref({ costing_method: '', acc_ap: '', acc_ar: '', acc_revenue: '', acc_cost: '', acc_production: '', acc_other: '', acc_tax_input: '', acc_tax_output: '', item_levels: 4, item_code_lengths: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2] })
+const scmForm = ref({
+  costing_method: '',
+  acc_ap: '',
+  acc_ar: '',
+  acc_revenue: '',
+  acc_cost: '',
+  acc_production: '',
+  acc_other: '',
+  acc_tax_input: '',
+  acc_tax_output: '',
+  item_levels: 4,
+  item_code_lengths: [2, 2, 2, 2, 2, 2, 2, 2, 2, 2],
+  negative_stock_warehouses: [] as string[],
+  currencies: '',
+  io_categories: '',
+  transport_methods: '',
+  doc_no_rule: '',
+})
+const scmWarehouses = ref<ScmWarehouse[]>([])
 const SCM_COSTING: Record<string, string> = { moving_avg: '移动加权平均', month_avg: '全月平均', fifo: '先进先出', lifo: '后进先出', specified: '指定成本' }
+// 已实现的计价方式（其余在参数页禁选、过账时拦截）
+const COSTING_IMPLEMENTED = ['moving_avg']
 const SCM_ACC_KEYS = ['acc_ap','acc_ar','acc_revenue','acc_cost','acc_production','acc_other','acc_tax_input','acc_tax_output'] as const
 
 async function fetchVoucherTypes() {
@@ -459,7 +591,20 @@ async function fetchVoucherTypes() {
   } catch { /* ignore */ }
 }
 
-watch(activeTab, v => { if (v === 'cashier' || v === 'asset') fetchVoucherTypes() })
+async function fetchScmWarehouses() {
+  if (scmWarehouses.value.length) return
+  try {
+    const res = await scmApi.getWarehouses()
+    scmWarehouses.value = (res.data || []).filter(w => w.enabled !== 0)
+  } catch (error) {
+    showOperationError('加载仓库列表', error)
+  }
+}
+
+watch(activeTab, v => {
+  if (v === 'cashier' || v === 'asset') fetchVoucherTypes()
+  if (v === 'supply') fetchScmWarehouses()
+})
 const route = useRoute()
 const baseDataStore = useBaseDataStore()
 
@@ -700,6 +845,23 @@ async function fetchData() {
       } else if (p.param_key === 'scm:item_code_lengths') {
         const lengths = (p.param_value || '2,2,2,2').split(',').map(n => parseInt(n) || 2)
         lengths.forEach((len, i) => { if (i < 10) scmForm.value.item_code_lengths[i] = len })
+      } else if (p.param_key === 'scm:negative_stock_warehouses') {
+        try {
+          const parsed = JSON.parse(p.param_value || '[]')
+          scmForm.value.negative_stock_warehouses = Array.isArray(parsed)
+            ? parsed.map(code => String(code || '').trim()).filter(Boolean)
+            : []
+        } catch {
+          scmForm.value.negative_stock_warehouses = []
+        }
+      } else if (p.param_key === 'scm:currencies') {
+        scmForm.value.currencies = p.param_value || ''
+      } else if (p.param_key === 'scm:io_categories') {
+        scmForm.value.io_categories = p.param_value || ''
+      } else if (p.param_key === 'scm:transport_methods') {
+        scmForm.value.transport_methods = p.param_value || ''
+      } else if (p.param_key === 'scm:doc_no_rule') {
+        scmForm.value.doc_no_rule = p.param_value || ''
       } else if (p.param_key.startsWith('scm:acc_')) {
         const k = p.param_key.slice('scm:'.length) as keyof typeof scmForm.value
         if (k in scmForm.value) (scmForm.value as any)[k] = p.param_value || ''
@@ -793,6 +955,11 @@ async function handleSaveScm() {
       ...SCM_ACC_KEYS.map(k => ({ param_key: `scm:${k}`, param_value: (scmForm.value as any)[k] || '' })),
       { param_key: 'scm:item_levels', param_value: String(scmForm.value.item_levels || 4) },
       { param_key: 'scm:item_code_lengths', param_value: scmForm.value.item_code_lengths.slice(0, scmForm.value.item_levels || 4).join(',') },
+      { param_key: 'scm:negative_stock_warehouses', param_value: JSON.stringify(scmForm.value.negative_stock_warehouses || []) },
+      { param_key: 'scm:currencies', param_value: scmForm.value.currencies || '' },
+      { param_key: 'scm:io_categories', param_value: scmForm.value.io_categories || '' },
+      { param_key: 'scm:transport_methods', param_value: scmForm.value.transport_methods || '' },
+      { param_key: 'scm:doc_no_rule', param_value: scmForm.value.doc_no_rule || '' },
     ]
     await request.put('/scm/params', { params })
     showSuccess('保存成功')
@@ -870,39 +1037,42 @@ onMounted(async () => {
   flex-direction: column;
 }
 .param-tabs :deep(.el-tabs__header) {
-  margin-bottom: 0;
-  background: var(--el-fill-color-lighter);
-  border-bottom: 2px solid var(--el-border-color-light);
-  padding: 0 4px;
+  margin-bottom: 20px;
+  background: transparent;
+  border-bottom: none;
+  padding: 0;
+}
+.param-tabs :deep(.el-tabs__nav-wrap::after) {
+  display: none;
 }
 .param-tabs :deep(.el-tabs__item) {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 500;
-  height: 42px;
-  line-height: 42px;
-  padding: 0 20px;
-  color: var(--el-text-color-secondary);
-  border-radius: 8px 8px 0 0;
-  transition: background 0.15s, color 0.15s;
+  height: 48px;
+  line-height: 48px;
+  padding: 0 24px;
+  color: var(--text-muted, #909399);
+  border-radius: 12px;
+  transition: all 0.2s;
+  margin-right: 8px;
 }
 .param-tabs :deep(.el-tabs__item:hover) {
-  background: var(--el-color-primary-light-9);
-  color: var(--el-color-primary);
+  background: rgba(18, 199, 174, 0.04);
+  color: var(--mint-600, #0e9f8b);
 }
 .param-tabs :deep(.el-tabs__item.is-active) {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
-  color: var(--el-color-primary);
-  background: var(--el-color-primary-light-8);
+  color: var(--mint-700, #0A8576);
+  background: var(--surface-brand-soft, #E8FBF7);
 }
 .param-tabs :deep(.el-tabs__active-bar) {
-  height: 3px;
-  border-radius: 2px;
+  display: none;
 }
 .param-tabs :deep(.el-tabs__content) {
   flex: 1;
-  overflow-y: auto;
-  padding: 12px 0 0;
+  overflow-y: visible;
+  padding: 0;
 }
 .param-placeholder {
   display: flex;
@@ -915,88 +1085,85 @@ onMounted(async () => {
   font-size: 13px;
 }
 .param-sections {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+  gap: 24px;
+  align-items: start;
 }
 
 .param-section {
-  border-radius: 10px;
-  border: 1px solid var(--el-border-color-lighter, #e4e7ed);
-  background: var(--el-bg-color, #fff);
+  border-radius: 16px;
+  background: #ffffff;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06), 0 2px 8px rgba(0, 0, 0, 0.04);
+  border: 1px solid rgba(0, 0, 0, 0.12);
   overflow: hidden;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
 }
 
 .param-section--basic {
-  --param-accent: #007aff;
-  --param-accent-bg: rgba(0, 122, 255, 0.05);
-  --param-accent-border: rgba(0, 122, 255, 0.12);
+  --param-accent: var(--mint-500, #12C7AE);
 }
 
 .param-section--dashboard {
-  --param-accent: #5856d6;
-  --param-accent-bg: rgba(88, 86, 214, 0.05);
-  --param-accent-border: rgba(88, 86, 214, 0.14);
+  --param-accent: var(--mint-500, #12C7AE);
 }
 
 .param-section--switches {
-  --param-accent: #34c759;
-  --param-accent-bg: rgba(52, 199, 89, 0.05);
-  --param-accent-border: rgba(52, 199, 89, 0.14);
+  --param-accent: var(--mint-500, #12C7AE);
 }
 
 .param-section--danger {
-  --param-accent: #ff3b30;
-  --param-accent-bg: rgba(255, 59, 48, 0.05);
-  --param-accent-border: rgba(255, 59, 48, 0.16);
+  --param-accent: #ff4d4f;
 }
 
 .param-section__head {
   display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 8px 12px;
-  background: var(--param-accent-bg);
-  border-bottom: 1px solid var(--param-accent-border);
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px 24px 16px;
+  background: transparent;
+  border-bottom: none;
 }
 
 .param-section__marker {
   flex-shrink: 0;
-  width: 3px;
-  height: 16px;
-  border-radius: 3px;
+  width: 4px;
+  height: 20px;
+  border-radius: 4px;
   background: var(--param-accent);
+  margin-top: 2px;
 }
 
 .param-section__title {
   margin: 0;
-  font-size: 13px;
+  font-size: 16px;
   font-weight: 600;
-  color: var(--el-text-color-primary, #303133);
+  color: var(--mint-800, #0A8576);
   line-height: 1.4;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
 
 .param-section__sub {
-  margin-left: 8px;
-  font-size: 12px;
+  margin-left: 0;
+  font-size: 13px;
   font-weight: 400;
-  color: var(--el-text-color-secondary, #909399);
+  color: var(--text-muted, #909399);
 }
 
 .param-section__body {
-  padding: 10px 12px 12px;
+  padding: 0 24px 24px;
 }
 
 .param-section__body--compact {
-  padding: 8px 12px;
+  padding: 0 24px 24px;
 }
 
 .param-form--inline {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 4px 16px;
+  gap: 16px 24px;
 }
 
 .param-form :deep(.el-form-item) {
@@ -1007,51 +1174,54 @@ onMounted(async () => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 12px 20px;
+  gap: 16px 24px;
 }
 
 .param-meta-inline {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 12px;
+  gap: 12px;
   margin-left: auto;
 }
 
 .param-meta-chip {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 6px;
-  font-size: 12px;
-  color: var(--el-text-color-primary, #303133);
-  background: var(--el-fill-color-lighter, #fafafa);
-  border: 1px solid var(--el-border-color-extra-light, #f0f2f5);
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--mint-800, #0A8576);
+  background: var(--mint-50, #E8FBF7);
+  border: 1px solid rgba(18, 199, 174, 0.1);
   white-space: nowrap;
 }
 
 .param-meta-chip label {
-  font-size: 11px;
-  color: var(--el-text-color-secondary, #909399);
+  font-size: 12px;
+  color: var(--mint-600, #0e9f8b);
   font-weight: 500;
 }
 
 .dashboard-rule-panel {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   flex-wrap: wrap;
+  background: #f8fafc;
+  padding: 12px 16px;
+  border-radius: 12px;
 }
 
 .dashboard-rule-label {
-  font-size: 12px;
+  font-size: 13px;
   color: var(--el-text-color-secondary, #909399);
   flex-shrink: 0;
 }
 
 .dashboard-rule-current {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--param-accent);
   flex: 1;
@@ -1063,23 +1233,30 @@ onMounted(async () => {
 
 .param-switch-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 16px;
 }
 
 .param-switch-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding: 6px 10px;
-  border-radius: 8px;
-  background: var(--el-fill-color-lighter, #fafafa);
-  border: 1px solid var(--el-border-color-extra-light, #f0f2f5);
+  gap: 12px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f8fafc;
+  border: 1px solid rgba(0, 0, 0, 0.04);
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.param-switch-card:hover {
+  background: #fff;
+  box-shadow: 0 4px 12px rgba(18, 199, 174, 0.06);
+  border-color: rgba(18, 199, 174, 0.2);
 }
 
 .param-switch-card__label {
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   color: var(--el-text-color-primary, #303133);
   white-space: nowrap;

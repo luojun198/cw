@@ -2176,6 +2176,8 @@ onBeforeUnmount(() => {
 .voucher-audit-return-btn:hover .voucher-audit-return-btn__action {
   background: #337ecc;
 }
+
+.page-header {
   display: flex;
   align-items: center;
   justify-content: space-between;

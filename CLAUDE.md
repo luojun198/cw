@@ -11,6 +11,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 代码注释（除非已有英文注释风格）
 - 错误分析和建议
 
+## 界面规则（重要）
+
+- **优先使用「带导航的全页面」，尽量少用弹窗 / 模态框（el-dialog）。**
+  - 复杂交互（多字段表单、明细表格、分析/下推等工作流）一律做成独立路由页面，页面顶部带「返回 + 标题 + 关键信息」导航条，操作按钮放页面顶部右侧或底部。
+  - 仅以下情况可用弹窗：简单确认（ElMessageBox.confirm）、单字段快速输入、轻量选择器（如选源单/选物料）。
+  - 新增需求时若需要承载较多内容，默认新建 `views/` 全页面 + 在 `router/index.ts` 注册路由，而不是新增 el-dialog。
+  - 参考实现：`views/scm/StockDispatch.vue`（缺货分析/智能下推）= 全页面 + 顶部导航。
+
 ## 项目上下文
 
 每次会话开始时，先读取以下文件了解项目状态：

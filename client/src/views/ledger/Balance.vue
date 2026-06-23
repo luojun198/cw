@@ -462,14 +462,19 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
 }
+
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   margin-bottom: 12px;
   flex-shrink: 0;
 }
+
+.page-header h2 {
   margin: 0;
 }
+
 .balance-tag {
   padding: 2px 10px;
   border-radius: 4px;

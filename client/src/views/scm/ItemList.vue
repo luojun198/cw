@@ -1,6 +1,93 @@
 <template>
   <div class="page scm-item-page">
-    
+
+    <!-- 顶部工具栏 -->
+    <div class="item-header">
+      <div class="item-title">
+        <h3>物料管理</h3>
+        <span>{{ itemCountLabel }}</span>
+      </div>
+      <div class="item-toolbar">
+        <!-- 筛选过滤 -->
+        <el-input
+          v-model="filters.keyword"
+          class="item-search"
+          size="small"
+          clearable
+          placeholder="搜索编号/名称"
+          @input="onSearchInput"
+          @clear="onSearchClear"
+        />
+        <el-select
+          v-model="filters.item_type"
+          class="item-filter"
+          size="small"
+          clearable
+          placeholder="属性"
+          @change="load"
+        >
+          <el-option v-for="(n, k) in dynamicItemTypes" :key="k" :label="n" :value="k" />
+        </el-select>
+        <el-select
+          v-model="filters.is_leaf"
+          class="item-filter"
+          size="small"
+          clearable
+          placeholder="性质"
+          @change="load"
+        >
+          <el-option label="明细" :value="1" />
+          <el-option label="目录" :value="0" />
+        </el-select>
+
+        <!-- 一键 / 层级 展开收纳（仅树形模式有效，搜索模式禁用） -->
+        <el-button-group class="level-actions">
+          <el-button size="small" :disabled="hasSearch" @click="collapseAll">一键收纳</el-button>
+          <el-button size="small" :disabled="hasSearch" @click="goUpLevel">层级收纳</el-button>
+          <el-button size="small" :disabled="hasSearch" @click="goDownLevel">层级展开</el-button>
+          <el-button size="small" :disabled="hasSearch" @click="expandAll">一键展开</el-button>
+        </el-button-group>
+
+        <!-- 新增物料（同级 / 子级） -->
+        <el-dropdown @command="handleAddCommand">
+          <el-button type="primary" size="small">
+            新增物料<el-icon class="el-icon--right"><ArrowDown /></el-icon>
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="sibling">新增同级物料</el-dropdown-item>
+              <el-dropdown-item command="child">新增子物料</el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
+
+        <!-- 字段配置 -->
+        <el-button size="small" plain @click="openFieldConfig">
+          <el-icon><Setting /></el-icon>字段配置
+        </el-button>
+
+        <!-- 列设置 -->
+        <el-popover placement="bottom-end" :width="240" trigger="click">
+          <template #reference>
+            <el-button size="small" plain><el-icon><Setting /></el-icon>列设置</el-button>
+          </template>
+          <div class="col-setting">
+            <div class="col-setting__hd"><span>显示列</span></div>
+            <div class="col-setting__body">
+              <el-checkbox
+                v-for="c in allColumnSettings"
+                :key="c.prop"
+                v-model="colVisible[c.prop]"
+                :disabled="(c as any).fixed === true"
+                size="small"
+                @change="saveColumnConfig"
+              >{{ c.label }}</el-checkbox>
+            </div>
+          </div>
+        </el-popover>
+      </div>
+    </div>
+
     <!-- 树形模式 -->
     <el-table
       v-if="!hasSearch"
@@ -225,12 +312,45 @@
               </el-form-item>
             </el-col>
             <el-col :span="8">
+              <el-form-item label="物料来源">
+                <el-select v-model="form.source_type" style="width:100%" @change="form.supplier_code = ''">
+                  <el-option v-for="(n, k) in SOURCE_TYPES" :key="k" :label="n" :value="k" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item :label="form.source_type === 'outsource' ? '委外厂' : '供应商'">
+                <el-select v-model="form.supplier_code" filterable clearable :disabled="form.source_type === 'self'"
+                  :placeholder="form.source_type === 'self' ? '自制无需供应商' : '选择供应商'" style="width:100%">
+                  <el-option v-for="p in supplierOptions" :key="p.code" :label="`${p.code} ${p.name}`" :value="p.code" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
               <el-form-item label="主单位" required>
                 <div style="display:flex;gap:4px;width:100%">
                   <el-select v-model="form.primary_unit_code" filterable placeholder="选择单位" style="flex:1" clearable>
                     <el-option v-for="u in unitOptions" :key="u.code" :label="u.name" :value="u.code" />
                   </el-select>
                   <el-button size="small" @click="showQuickUnit = true"><el-icon><Plus /></el-icon></el-button>
+                </div>
+              </el-form-item>
+            </el-col>
+            <el-col :span="24">
+              <el-form-item label="辅单位换算">
+                <div style="width:100%">
+                  <div v-for="(su, i) in form.secondary_units" :key="i" style="display:flex;gap:8px;align-items:center;margin-bottom:6px">
+                    <span style="color:var(--el-text-color-secondary);font-size:13px">1</span>
+                    <el-select v-model="su.unit_code" filterable placeholder="辅单位" style="width:160px" clearable>
+                      <el-option v-for="u in unitOptions" :key="u.code" :label="u.name" :value="u.code" />
+                    </el-select>
+                    <span style="color:var(--el-text-color-secondary);font-size:13px">=</span>
+                    <el-input-number v-model="su.conversion_rate" :min="0" :precision="6" :controls="false" style="width:140px" placeholder="含主单位数量" />
+                    <span style="color:var(--el-text-color-secondary);font-size:13px">{{ form.primary_unit_code || '主单位' }}</span>
+                    <el-button link type="danger" size="small" @click="removeSecondaryUnit(i)">删除</el-button>
+                  </div>
+                  <el-button size="small" @click="addSecondaryUnit"><el-icon><Plus /></el-icon>添加辅单位</el-button>
+                  <span style="margin-left:8px;font-size:12px;color:var(--el-text-color-secondary)">换算率＝1 个辅单位 = 多少主单位</span>
                 </div>
               </el-form-item>
             </el-col>
@@ -275,11 +395,38 @@
                 <el-form-item label="批号管理" label-width="70px">
                   <el-switch v-model="form.batch_flag" :active-value="1" :inactive-value="0" />
                 </el-form-item>
+                <el-form-item label="序列号" label-width="56px">
+                  <el-switch v-model="form.serial_flag" :active-value="1" :inactive-value="0" />
+                </el-form-item>
                 <el-form-item label="生成资产" label-width="70px">
                   <el-switch v-model="form.is_asset" :active-value="1" :inactive-value="0" />
                 </el-form-item>
               </div>
             </el-col>
+          </el-row>
+        </div>
+
+        <div class="form-sector">
+          <div class="form-sector-title">采购 / 库存 / 物流</div>
+          <el-row :gutter="12">
+            <el-col :span="8"><el-form-item label="安全库存"><el-input-number v-model="form.safety_stock" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="最小订货量"><el-input-number v-model="form.min_order_qty" :min="0" :precision="2" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="订货提前期" label-width="84px"><el-input-number v-model="form.lead_time_days" :min="0" :precision="0" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="保质期(天)"><el-input-number v-model="form.shelf_life_days" :min="0" :precision="0" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8">
+              <el-form-item label="扣批方式" label-width="70px">
+                <el-select v-model="form.batch_out_mode" :disabled="!form.batch_flag" style="width:100%">
+                  <el-option value="fifo" label="先进先出(FIFO)" />
+                  <el-option value="manual" label="手工选批" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8"><el-form-item label="体积"><el-input-number v-model="form.volume" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="调拨价"><el-input-number v-model="form.transfer_price" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="二级售价"><el-input-number v-model="form.sale_price2" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="三级售价"><el-input-number v-model="form.sale_price3" :min="0" :precision="4" :controls="false" style="width:100%" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="采购员"><el-input v-model="form.buyer" /></el-form-item></el-col>
+            <el-col :span="8"><el-form-item label="工位"><el-input v-model="form.work_station" /></el-form-item></el-col>
           </el-row>
         </div>
 
@@ -402,7 +549,7 @@
 import { ref, reactive, computed, onMounted, watch, nextTick } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, ArrowDown, Setting } from '@element-plus/icons-vue'
-import { scmApi, ITEM_TYPES, type ScmItem, type ScmUnit, type ScmItemFieldDef } from '@/api/scm'
+import { scmApi, ITEM_TYPES, SOURCE_TYPES, type ScmItem, type ScmUnit, type ScmItemFieldDef } from '@/api/scm'
 import AccountSelect from '@/components/base/AccountSelect.vue'
 import { useListColumnWidth } from '@/composables/useColumnWidthMemory'
 
@@ -417,6 +564,12 @@ const filters = reactive<{ keyword: string; item_type: string; is_leaf: number |
   is_leaf: '',
 })
 const unitOptions = ref<ScmUnit[]>([])
+const allPartners = ref<any[]>([])
+// 物料来源对应的供应商候选：采购→供应商类、委外→委外厂
+const supplierOptions = computed(() => {
+  if (form.value.source_type === 'outsource') return allPartners.value.filter(p => p.is_outsource === 1)
+  return allPartners.value.filter(p => p.partner_type === 'supplier' || p.partner_type === 'both')
+})
 const customItemTypes = ref<Record<string, string>>({})
 const dynamicItemTypes = computed(() => ({ ...ITEM_TYPES, ...customItemTypes.value }))
 const currentRow = ref<ScmItem | null>(null)
@@ -731,8 +884,11 @@ async function openAdd(parent?: ScmItem | null) {
     sale_price: 0,
     fixed_cost: 0,
     batch_flag: 0,
+    batch_out_mode: 'fifo',
+    serial_flag: 0,
     is_asset: 0,
     is_leaf: 1,
+    source_type: 'purchase',
     primary_unit_code: '',
     secondary_units: [],
     parent_id: parent?.id || '',
@@ -846,6 +1002,9 @@ const showQuickUnit = ref(false)
 const quickUnitName = ref('')
 const quickUnitSaving = ref(false)
 
+async function loadPartners() {
+  try { const r = await scmApi.getPartners(); if (r.code === 0) allPartners.value = r.data as any[] } catch {}
+}
 async function loadUnits() {
   try { const r = await scmApi.getUnits(); if (r.code === 0) unitOptions.value = r.data } catch {}
 }
@@ -991,6 +1150,7 @@ onMounted(async () => {
   await loadParams()
   load()
   loadUnits()
+  loadPartners()
   loadFieldDefs()
 })
 </script>
@@ -1005,6 +1165,7 @@ onMounted(async () => {
   background: var(--el-fill-color-lighter);
 }
 
+.item-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1045,6 +1206,29 @@ onMounted(async () => {
 
 .item-search {
   width: 200px;
+}
+
+.item-filter {
+  width: 110px;
+}
+
+/* 列设置弹层 */
+.col-setting__hd {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.col-setting__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
 }
 
 .item-table {

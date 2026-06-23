@@ -81,6 +81,7 @@ import cashierRoutes from './routes/cashierJournal.js'
 import fixedAssetRoutes from './routes/fixedAsset.js'
 import scmBaseRoutes from './routes/scmBase.js'
 import scmDocRoutes from './routes/scmDoc.js'
+import scmColSchemeRoutes from './routes/scmColScheme.js'
 import acdExportRoutes from './routes/acdExport.js'
 import cashierImportRoutes from './routes/cashierImport.js'
 import backupRoutes from './routes/backup.js'
@@ -256,6 +257,7 @@ app.use('/api', cashierRoutes)
 app.use('/api', fixedAssetRoutes)
 app.use('/api', scmBaseRoutes)
 app.use('/api', scmDocRoutes)
+app.use('/api', scmColSchemeRoutes)
 app.use('/api', acdExportRoutes)
 app.use('/api', cashierImportRoutes)
 

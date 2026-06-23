@@ -1223,6 +1223,8 @@ onMounted(async () => {
 .page {
   padding: 16px;
 }
+
+.page-header {
   display: flex;
   justify-content: space-between;
   align-items: center;
